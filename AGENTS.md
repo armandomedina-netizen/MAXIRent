@@ -33,6 +33,33 @@ Ante un error, analizar la causa, corregirla y volver a verificar. No ocultar fa
 
 Mientras no exista autorización adicional, Platform MCP debe mantenerse restringido a herramientas de lectura. No crear, actualizar, eliminar, notificar ni ejecutar mutaciones GraphQL.
 
+## Aislamiento obligatorio del desarrollo
+
+Todos los proyectos, pruebas y recursos operativos asociados al desarrollo de aplicaciones deben mantenerse exclusivamente dentro del workspace de monday llamado exactamente `Desarrollo de Software`.
+
+Antes de cualquier escritura en monday:
+
+1. Localizar el workspace mediante Platform MCP y obtener su ID real.
+2. Verificar inmediatamente antes de la operación que el nombre y el ID corresponden a `Desarrollo de Software`.
+3. Identificar el recurso objetivo, su ID real si ya existe y su marca `DEV`, `TEST` o `SANDBOX`.
+4. Informar la operación prevista y sus posibles efectos secundarios.
+5. Detenerse si el workspace no existe, no es accesible, es ambiguo o no coincide. No crear un workspace alternativo sin autorización explícita.
+
+Dentro de este workspace deben permanecer los boards, folders, WorkDocs, WorkForms y backing boards, dashboards, workflows, automatizaciones, datos de prueba y recursos auxiliares usados por la aplicación.
+
+Está prohibido:
+
+- Crear recursos de desarrollo en otros workspaces.
+- Usar boards productivos como backing boards o fuentes de pruebas.
+- Conectar workflows o automatizaciones de desarrollo con recursos operativos.
+- Modificar, activar, desactivar, duplicar, mover o eliminar workflows existentes.
+- Cambiar columnas, permisos, propietarios, vistas, grupos o automatizaciones de boards existentes.
+- Suscribir una aplicación en desarrollo a eventos de boards productivos.
+- Probar features o deployments sobre producción sin autorización explícita.
+- Ejecutar una escritura cuando no se haya validado el workspace objetivo.
+
+Las definiciones de monday Apps pueden existir a nivel de cuenta en el Developer Center. Aun así, todos los recursos y datos utilizados para desarrollar o probarlas deben permanecer en `Desarrollo de Software`.
+
 ## Separación de MCPs
 
 ### Platform MCP
