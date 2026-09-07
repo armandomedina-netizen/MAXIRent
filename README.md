@@ -30,9 +30,13 @@ Requisitos:
 - OpenAI Codex CLI.
 - Acceso autorizado a monday.com.
 
-Preparación:
+Clonar y preparar en una Mac nueva:
 
 ```bash
+mkdir -p ~/Projects
+git clone https://github.com/armandomedina-netizen/MAXIRent.git ~/Projects/maxi-rent-monday
+cd ~/Projects/maxi-rent-monday
+nvm install
 nvm use
 npm install
 cp .env.example .env.local
