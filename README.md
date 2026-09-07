@@ -1,4 +1,8 @@
-# Maxi Rent - Centro de Solicitudes
+# MAXIRent
+
+Desarrollo y gestión de proyectos MAXIRent.
+
+## Centro Interno de Solicitudes
 
 Proyecto para diseñar y desarrollar un centro interno de solicitudes sobre monday.com.
 
