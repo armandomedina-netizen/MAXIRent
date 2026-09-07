@@ -1,0 +1,19 @@
+.DS_Store
+node_modules/
+dist/
+build/
+coverage/
+*.log
+
+# Local secrets and credentials
+.env
+.env.*
+!.env.example
+
+# Codex/MCP authentication and machine-local configuration
+.codex/
+
+# Local monday inventories and exports
+private/
+exports/
+*.monday-export.*

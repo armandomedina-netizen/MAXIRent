@@ -1,0 +1,11 @@
+{
+  "name": "maxi-rent-monday",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Centro interno de solicitudes de Maxi Rent sobre monday.com",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "npm@11.19.0"
+}
