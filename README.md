@@ -44,6 +44,30 @@ cp .env.example .env.local
 
 No añadas tokens reales a archivos versionados. El Platform MCP utiliza OAuth almacenado localmente por Codex; el Apps MCP utilizará `MONDAY_TOKEN` sólo cuando esa fase sea autorizada.
 
+## Codex y monday en cada Mac
+
+Registrar y autenticar el Platform MCP oficial:
+
+```bash
+codex mcp add monday --url https://mcp.monday.com/mcp
+codex mcp login monday
+codex mcp list
+```
+
+Mientras el proyecto esté en fase de inspección, configura en `~/.codex/config.toml` una allowlist de sólo lectura:
+
+```toml
+[mcp_servers.monday]
+url = "https://mcp.monday.com/mcp"
+enabled_tools = ["get_user_context", "list_workspaces", "workspace_info", "get_board_info"]
+```
+
+Instalar las skills oficiales de monday y seleccionar **Codex** con alcance **Global** cuando el instalador lo solicite:
+
+```bash
+npx skills add mondaycom/skills
+```
+
 ## Seguridad
 
 - Inspeccionar antes de proponer cambios.
