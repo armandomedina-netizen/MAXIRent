@@ -17,3 +17,9 @@ coverage/
 private/
 exports/
 *.monday-export.*
+
+# Maxinet Sync automation: local secrets and runtime artifacts
+automations/maxinet-sync/google-creds.json
+automations/maxinet-sync/*.venv/
+automations/maxinet-sync/logs/
+*.venv/

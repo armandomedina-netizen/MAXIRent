@@ -1,0 +1,41 @@
+name: Maxinet Sync
+
+on:
+  schedule:
+    # 8:00 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
+    - cron: "0 14 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: automations/maxinet-sync
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Ejecutar sincronización
+        env:
+          MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
+          MAXINET_USER: ${{ secrets.MAXINET_USER }}
+          MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-sync/google-creds.json
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          WORKSHEET_NAME: ${{ secrets.WORKSHEET_NAME }}
+          SPREADSHEET_ID_SECUNDARIO: ${{ secrets.SPREADSHEET_ID_SECUNDARIO }}
+          WORKSHEET_FLOTA_LP: ${{ secrets.WORKSHEET_FLOTA_LP }}
+          WORKSHEET_UTILIZACION: ${{ secrets.WORKSHEET_UTILIZACION }}
+        run: python maxinet_sync.py
