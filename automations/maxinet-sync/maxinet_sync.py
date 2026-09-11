@@ -449,6 +449,17 @@ def main():
         df_nuevo = descargar_datos_flota(session)
         df_nuevo = leer_datos(df_nuevo)
 
+        # IMPORTANTE: avanzar_columna_formulas() va ANTES de actualizar_sheet().
+        # avanzar_columna_formulas copia la fórmula viva a la columna de mañana
+        # y congela a valores fijos la columna de hoy -- usando los datos de
+        # FLOTA LP tal como están AHORA (todavía los de ayer). Si actualizamos
+        # el Sheet primero, FLOTA LP ya tendría los datos nuevos del día y la
+        # columna que se está por congelar recalcularía contra la fecha
+        # equivocada, dando 0 en vez del valor histórico real (confirmado con
+        # el equipo). Este orden preserva el histórico correctamente.
+        worksheet_util = conectar_sheet_secundario(os.environ["WORKSHEET_UTILIZACION"])
+        avanzar_columna_formulas(worksheet_util)
+
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
 
@@ -457,9 +468,6 @@ def main():
         # usuario). Escribir aquí choca con el array del IMPORTRANGE y lo
         # rompe (#REF!). actualizar_sheet_flota_lp() se deja definida por si
         # se necesita en el futuro, pero no se llama.
-
-        worksheet_util = conectar_sheet_secundario(os.environ["WORKSHEET_UTILIZACION"])
-        avanzar_columna_formulas(worksheet_util)
 
         log.info("Automatización completada con éxito")
     except Exception:
