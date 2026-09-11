@@ -2,8 +2,8 @@ name: Maxinet Sync
 
 on:
   schedule:
-    # 8:00 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
-    - cron: "0 14 * * *"
+    # 9:00 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
+    - cron: "0 15 * * *"
   workflow_dispatch: {}
 
 jobs:
