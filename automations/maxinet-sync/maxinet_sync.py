@@ -55,6 +55,7 @@ import os
 import sys
 import json
 import logging
+from collections import Counter
 from datetime import date, timedelta
 
 import requests
@@ -443,6 +444,82 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     )
 
 
+# =========================================================================
+# "UTILIZACION V3": indicador VOR Cliente (filas 50-56)
+# =========================================================================
+# Fuente de datos distinta a la del resto del Sheet: no viene del reporte de
+# flota (reporte-flota-maxirent.php / COLUMNAS), sino de la tabla "VOR
+# Cliente" del portal (dashboard-flota-lp.php), endpoint confirmado a partir
+# del JS real de esa página:
+#   POST {MAXINET_BASE_URL}/includes/flotaLP/historico-vor-cliente-data.php
+#   body: Fecha=YYYY-MM-DD
+#   respuesta: JSON estilo DataTables (procesamiento del lado del cliente,
+#   sin paginar) con "data" = lista de filas:
+#   [Fecha, Folio Mtto, Tipo Servicio, Placa, Grupo, Modelo, Reserva,
+#    No Cliente, Cliente, Fecha Ingreso, Fecha Salida, Estatus Actual]
+# Igual que el resto de la hoja: la fila que se escribe es la del día
+# "ayer" (misma columna que ya dejó lista avanzar_columna_formulas).
+
+FILA_VOR_CORRECTIVO_LOCAL = 50
+FILA_VOR_PREVENTIVO_LOCAL = 51
+FILA_VOR_CORRECTIVO_FORANEO = 53
+FILA_VOR_PREVENTIVO_FORANEO = 54
+
+
+def descargar_vor_cliente(session: requests.Session, fecha_str: str) -> list:
+    """Pide al endpoint de VOR Cliente todos los registros de una fecha."""
+    base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
+    resp = session.post(
+        f"{base_url}/includes/flotaLP/historico-vor-cliente-data.php",
+        data={"Fecha": fecha_str},
+    )
+    payload = _parse_json_bom(resp)
+    return payload["data"]
+
+
+def actualizar_vor_cliente(worksheet, session: requests.Session, col_referencia="AYT", fecha_objetivo=None):
+    """
+    Cuenta los registros de VOR Cliente del día "ayer" por Tipo Servicio y
+    los escribe en la misma columna "viva" que avanzar_columna_formulas ya
+    dejó lista para ese día (filas 50, 51, 53, 54). Las filas 52/55/56 son
+    fórmulas de suma dentro de la misma columna -- ya se copiaron solas con
+    el avance de columna, no se tocan aquí.
+    """
+    fecha_ayer = fecha_objetivo or (date.today() - timedelta(days=1))
+    fecha_str = fecha_ayer.strftime("%Y-%m-%d")
+    idx_col = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
+    col_letra = _indice_a_col_letra(idx_col)
+
+    filas = descargar_vor_cliente(session, fecha_str)
+    # Tipo Servicio viene con espacios de relleno inconsistentes desde
+    # Maxinet (ej. "Preventivo Foráneo "), misma situación que Segmento en
+    # el reporte de flota -> se limpia antes de contar.
+    conteos = Counter(fila[2].strip() for fila in filas if len(fila) > 2)
+
+    worksheet.update(
+        values=[
+            [conteos.get("Correctivo Local", 0)],
+            [conteos.get("Preventivo Local", 0)],
+        ],
+        range_name=f"{col_letra}{FILA_VOR_CORRECTIVO_LOCAL}:{col_letra}{FILA_VOR_PREVENTIVO_LOCAL}",
+    )
+    worksheet.update(
+        values=[
+            [conteos.get("Correctivo Foráneo", 0)],
+            [conteos.get("Preventivo Foráneo", 0)],
+        ],
+        range_name=f"{col_letra}{FILA_VOR_CORRECTIVO_FORANEO}:{col_letra}{FILA_VOR_PREVENTIVO_FORANEO}",
+    )
+
+    log.info(
+        "VOR Cliente actualizado en columna %s (fecha %s): CorrectivoLocal=%d PreventivoLocal=%d "
+        "CorrectivoForaneo=%d PreventivoForaneo=%d",
+        col_letra, fecha_str,
+        conteos.get("Correctivo Local", 0), conteos.get("Preventivo Local", 0),
+        conteos.get("Correctivo Foráneo", 0), conteos.get("Preventivo Foráneo", 0),
+    )
+
+
 def main():
     try:
         session = login_maxinet()
@@ -459,6 +536,7 @@ def main():
         # el equipo). Este orden preserva el histórico correctamente.
         worksheet_util = conectar_sheet_secundario(os.environ["WORKSHEET_UTILIZACION"])
         avanzar_columna_formulas(worksheet_util)
+        actualizar_vor_cliente(worksheet_util, session)
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
