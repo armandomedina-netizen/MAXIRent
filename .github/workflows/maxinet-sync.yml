@@ -38,4 +38,5 @@ jobs:
           SPREADSHEET_ID_SECUNDARIO: ${{ secrets.SPREADSHEET_ID_SECUNDARIO }}
           WORKSHEET_FLOTA_LP: ${{ secrets.WORKSHEET_FLOTA_LP }}
           WORKSHEET_UTILIZACION: ${{ secrets.WORKSHEET_UTILIZACION }}
+          WORKSHEET_GRUPO_AUTOS: ${{ secrets.WORKSHEET_GRUPO_AUTOS }}
         run: python maxinet_sync.py

@@ -24,6 +24,7 @@ Variables de entorno esperadas (usar un gestor de secretos, nunca hardcodear):
     SPREADSHEET_ID_SECUNDARIO -> ID del segundo archivo de Sheets (FLOTA LP / UTILIZACION V3)
     WORKSHEET_FLOTA_LP       -> nombre de la pestaña "FLOTA LP"
     WORKSHEET_UTILIZACION    -> nombre de la pestaña "UTILIZACION V3"
+    WORKSHEET_GRUPO_AUTOS    -> nombre de la pestaña "UTI. GRUPO DE AUTOS V1"
 
 Flujo completo de la automatización diaria:
     1. Login en Maxinet + descarga de datos de flota del día anterior.
@@ -445,6 +446,100 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
 
 
 # =========================================================================
+# "UTI. GRUPO DE AUTOS V1": avance diario de la columna de fórmulas
+# =========================================================================
+# Mismo mecanismo de calendario que UTILIZACION V3 (fila 2 = fechas "d-mmm"),
+# pero con 3 bloques de filas que se comportan distinto (confirmado contra
+# el sheet real, comparando la columna ya procesada de un día vs. el día
+# anterior):
+#   Fila 3 (FLOTA ACTIVA LP): fórmula SUM que NUNCA se congela -> solo se
+#       copia a la columna nueva.
+#   Filas 4-83 (métricas por grupo, COUNTIFS/sumas): mismo patrón que
+#       UTILIZACION V3 -> se copian a la columna nueva Y el origen se
+#       congela a valores fijos.
+#   Filas 84-115 (ratios/porcentajes que referencian otras filas de su
+#       propia columna, ej. "=IFERROR(WX3/WX52*100%,0)"): tampoco se
+#       congelan nunca -> solo se copian a la columna nueva.
+
+FILA_GRUPO_FLOTA_ACTIVA = 3
+FILA_GRUPO_METRICAS_INICIO = 4
+FILA_GRUPO_METRICAS_FIN = 83
+FILA_GRUPO_RATIOS_INICIO = 84
+FILA_GRUPO_RATIOS_FIN = 115
+
+
+def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=None):
+    """
+    Avanza un día la pestaña 'UTI. GRUPO DE AUTOS V1'. A diferencia de
+    avanzar_columna_formulas (UTILIZACION V3), aquí solo el bloque de filas
+    4-83 se congela a valores; la fila 3 y las filas 84-115 se copian a la
+    columna nueva pero se dejan como fórmulas vivas en ambas columnas.
+    """
+    fecha_ayer = fecha_objetivo or (date.today() - timedelta(days=1))
+    idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
+    idx_origen = idx_destino - 1
+
+    # Salvaguarda: misma razón que en avanzar_columna_formulas -- si la
+    # columna destino ya tiene contenido, no repetir el avance.
+    col_destino = _indice_a_col_letra(idx_destino)
+    celda_destino = worksheet.get(f"{col_destino}{FILA_GRUPO_METRICAS_INICIO}", value_render_option="FORMULA")
+    if celda_destino and celda_destino[0] and celda_destino[0][0] not in ("", None):
+        log.warning(
+            "UTI. GRUPO DE AUTOS V1: la columna %s (fecha %s) ya tiene contenido -- "
+            "no se repite el avance para evitar corromper la fórmula viva.",
+            col_destino, fecha_ayer,
+        )
+        return
+
+    sheet_id = worksheet.id
+    spreadsheet = worksheet.spreadsheet
+
+    def _rango(fila_inicio, fila_fin, col_idx):
+        return {
+            "sheetId": sheet_id,
+            "startRowIndex": fila_inicio - 1,
+            "endRowIndex": fila_fin,
+            "startColumnIndex": col_idx,
+            "endColumnIndex": col_idx + 1,
+        }
+
+    def _copiar(fila_inicio, fila_fin):
+        return {
+            "copyPaste": {
+                "source": _rango(fila_inicio, fila_fin, idx_origen),
+                "destination": _rango(fila_inicio, fila_fin, idx_destino),
+                "pasteType": "PASTE_FORMULA",
+            }
+        }
+
+    requests_body = {
+        "requests": [
+            # 1. Fila 3 (FLOTA ACTIVA LP): solo copiar, nunca se congela.
+            _copiar(FILA_GRUPO_FLOTA_ACTIVA, FILA_GRUPO_FLOTA_ACTIVA),
+            # 2. Filas 4-83: copiar a la columna nueva...
+            _copiar(FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_METRICAS_FIN),
+            # ...y congelar el origen a valores fijos.
+            {
+                "copyPaste": {
+                    "source": _rango(FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_METRICAS_FIN, idx_origen),
+                    "destination": _rango(FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_METRICAS_FIN, idx_origen),
+                    "pasteType": "PASTE_VALUES",
+                }
+            },
+            # 3. Filas 84-115: solo copiar, nunca se congelan.
+            _copiar(FILA_GRUPO_RATIOS_INICIO, FILA_GRUPO_RATIOS_FIN),
+        ]
+    }
+
+    spreadsheet.batch_update(requests_body)
+
+    log.info(
+        "UTI. GRUPO DE AUTOS V1: fórmulas avanzadas de columna %s a %s (fecha %s)",
+        _indice_a_col_letra(idx_origen), _indice_a_col_letra(idx_destino), fecha_ayer,
+    )
+
+
+# =========================================================================
 # "UTILIZACION V3": indicador VOR Cliente (filas 50-56)
 # =========================================================================
 # Fuente de datos distinta a la del resto del Sheet: no viene del reporte de
@@ -537,6 +632,9 @@ def main():
         worksheet_util = conectar_sheet_secundario(os.environ["WORKSHEET_UTILIZACION"])
         avanzar_columna_formulas(worksheet_util)
         actualizar_vor_cliente(worksheet_util, session)
+
+        worksheet_grupo_autos = conectar_sheet_secundario(os.environ["WORKSHEET_GRUPO_AUTOS"])
+        avanzar_columna_grupo_autos(worksheet_grupo_autos)
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
