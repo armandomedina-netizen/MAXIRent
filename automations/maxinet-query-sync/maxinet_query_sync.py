@@ -113,7 +113,7 @@ ANIO_INICIO = 2015
 ANIOS_A_FUTURO = 5
 
 
-def descargar_cargo_de_reservas(session: requests.Session) -> pd.DataFrame:
+def descargar_cargo_de_reservas() -> pd.DataFrame:
     """
     Pide al endpoint de Cargo de Reservas con Estatus=ALL, un año calendario
     a la vez desde ANIO_INICIO hasta hoy + ANIOS_A_FUTURO, y concatena todo.
@@ -129,18 +129,25 @@ def descargar_cargo_de_reservas(session: requests.Session) -> pd.DataFrame:
     Se pide UN AÑO A LA VEZ en vez de un solo request con todo el rango:
     tanto 2000-2099 (99 años) como 2015-(hoy+5) (~15-20 años) en una sola
     llamada hicieron que el servidor de Maxinet tardara ~60s y devolviera una
-    respuesta vacía/no-JSON (timeout del lado del servidor, no del cliente).
-    Pedirlo por año evita que cualquier ventana individual sea tan pesada
-    como para que vuelva a pasar. Como el filtro de fecha del reporte parece
-    comparar por traslape de periodo de cargo (CHARGE_FROM/CHARGE_TO), una
-    misma reserva puede salir repetida en más de un año si su cargo cruza el
-    límite del año -- por eso se hace `drop_duplicates()` al final.
+    respuesta vacía/no-JSON. Pero el mismo error apareció incluso pidiendo
+    año por año: los primeros 6 años (2015-2020) respondieron bien en ~8s
+    cada uno, y el 7mo request falló igual, justo ~54s después del login --
+    es decir, el límite parece ser de TIEMPO TOTAL DE SESIÓN (o de trabajo
+    acumulado en la sesión) del lado de Maxinet, no del tamaño de cada
+    request. Por eso aquí se abre una sesión (login) NUEVA para cada año en
+    vez de reusar una sola sesión para las ~20 llamadas.
+
+    Como el filtro de fecha del reporte parece comparar por traslape de
+    periodo de cargo (CHARGE_FROM/CHARGE_TO), una misma reserva puede salir
+    repetida en más de un año si su cargo cruza el límite del año -- por eso
+    se hace `drop_duplicates()` al final.
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
     anio_fin = date.today().year + ANIOS_A_FUTURO
 
     frames = []
     for anio in range(ANIO_INICIO, anio_fin + 1):
+        session = login_maxinet()
         resp = session.post(
             f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
             data={"Estatus": "ALL", "Desde": f"{anio}-01-01", "Hasta": f"{anio}-12-31"},
@@ -222,8 +229,7 @@ def actualizar_query(worksheet, df_nuevo: pd.DataFrame):
 
 def main():
     try:
-        session = login_maxinet()
-        df_nuevo = descargar_cargo_de_reservas(session)
+        df_nuevo = descargar_cargo_de_reservas()
 
         worksheet = conectar_sheet_query()
         actualizar_query(worksheet, df_nuevo)
