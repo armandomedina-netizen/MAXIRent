@@ -114,9 +114,10 @@ ANIO_INICIO = 2015
 ANIOS_A_FUTURO = 5
 
 # Pausa fija entre cada request a reporte-cargo_de_reservas.php.
-PAUSA_ENTRE_REQUESTS_SEGUNDOS = 5
-REINTENTOS_POR_RANGO = 2
-ESPERA_REINTENTO_SEGUNDOS = 10
+PAUSA_ENTRE_REQUESTS_SEGUNDOS = 15
+REINTENTOS_POR_RANGO = 3
+ESPERA_REINTENTO_SEGUNDOS = 20
+TIMEOUT_REQUEST_SEGUNDOS = 60
 # Por debajo de este tamaño de rango, si sigue fallando ya no se sigue
 # partiendo -- se omite esa ventana y se sigue con el resto (ver docstring).
 DIAS_MINIMOS_PARA_PARTIR = 3
@@ -124,32 +125,43 @@ DIAS_MINIMOS_PARA_PARTIR = 3
 
 def _pedir_rango(base_url: str, desde: date, hasta: date, profundidad: int = 0) -> pd.DataFrame:
     """
-    Pide un rango de fechas del reporte de Cargo de Reservas. Si el servidor
-    devuelve una respuesta no-JSON después de reintentar, PARTE el rango a la
-    mitad y reintenta cada mitad por separado (ver por qué en el docstring de
-    descargar_cargo_de_reservas: la falla resultó ser específica de ciertos
-    datos, no de tiempo/sesión, así que reintentar el mismo rango no ayuda --
-    hay que acotarlo hasta aislar la ventana problemática).
+    Pide un rango de fechas del reporte de Cargo de Reservas, con reintentos.
+    Si se agotan los reintentos, PARTE el rango a la mitad y reintenta cada
+    mitad por separado (ver docstring de descargar_cargo_de_reservas: el
+    servidor de Maxinet resultó ser inestable bajo esta carga -- a veces
+    responde con el cuerpo vacío/no-JSON, a veces corta la conexión a medias
+    (ConnectionResetError) -- y el punto exacto donde falla no siempre es el
+    mismo, así que no se puede asumir que sea un rango de fechas específico
+    el problema; partir + reintentar es la manera de terminar aislando y
+    saltándose solo la ventana que de plano no se puede traer).
     """
+    ultimo_error = None
     for intento in range(1, REINTENTOS_POR_RANGO + 1):
-        session = login_maxinet()
-        resp = session.post(
-            f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
-            data={"Estatus": "ALL", "Desde": desde.isoformat(), "Hasta": hasta.isoformat()},
-        )
         try:
+            session = login_maxinet()
+            resp = session.post(
+                f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
+                data={"Estatus": "ALL", "Desde": desde.isoformat(), "Hasta": hasta.isoformat()},
+                timeout=TIMEOUT_REQUEST_SEGUNDOS,
+            )
             payload = _parse_json_bom(resp)
             return pd.DataFrame(payload["data"], columns=COLUMNAS)
-        except json.JSONDecodeError:
+        except (requests.exceptions.RequestException, json.JSONDecodeError) as exc:
+            ultimo_error = exc
             if intento < REINTENTOS_POR_RANGO:
+                log.warning(
+                    "Rango %s a %s, intento %d/%d falló (%s) -- reintentando en %ds",
+                    desde, hasta, intento, REINTENTOS_POR_RANGO, exc.__class__.__name__,
+                    ESPERA_REINTENTO_SEGUNDOS,
+                )
                 time.sleep(ESPERA_REINTENTO_SEGUNDOS)
 
     dias = (hasta - desde).days
     if dias < DIAS_MINIMOS_PARA_PARTIR:
         log.error(
-            "Rango %s a %s: se agotaron los reintentos y ya no se puede partir más -- "
+            "Rango %s a %s: se agotaron los reintentos (%s) y ya no se puede partir más -- "
             "se OMITE (revisar manualmente qué reserva/cargo tiene esa ventana)",
-            desde, hasta,
+            desde, hasta, ultimo_error,
         )
         return pd.DataFrame(columns=COLUMNAS)
 
@@ -181,18 +193,17 @@ def descargar_cargo_de_reservas() -> pd.DataFrame:
     llamada hicieron que el servidor de Maxinet tardara ~60s y devolviera una
     respuesta vacía/no-JSON.
 
-    Pero pedirlo por año NO fue suficiente por sí solo: en tres corridas de
-    prueba, los primeros 6 años (2015-2020) siempre respondieron bien en ~8s
-    cada uno, y el año 2021 SIEMPRE falló -- incluso con sesión nueva por
-    año, y hasta con reintentos esperando 30s/60s/90s/120s entre intentos
-    (más que suficiente para cualquier límite de tasa razonable). Como
-    esperar más no cambió nada y el punto de falla fue siempre el mismo año,
-    esto no es un problema de tiempo/sesión/límite de tasa -- es específico
-    de ALGO en los datos de 2021 (una reserva/cargo puntual que hace que el
-    reporte de Maxinet truene al generarse para ese rango). Por eso
-    `_pedir_rango` PARTE el rango a la mitad cuando falla, en vez de solo
-    reintentar el mismo rango, hasta aislar y saltarse la ventana exacta que
-    causa el problema sin perder el resto de los datos.
+    Pero pedirlo por año NO fue suficiente por sí solo: en varias corridas de
+    prueba, el servidor de Maxinet resultó ser inestable bajo ~20 requests
+    seguidos a este endpoint -- a veces devuelve el cuerpo vacío/no-JSON, a
+    veces corta la conexión a medias (ConnectionResetError), y el punto
+    exacto donde falla varió entre corridas (una vez fue siempre el mismo
+    año tras 30-120s de espera entre reintentos, otra vez falló en un año
+    distinto y más temprano). No se pudo aislar una causa determinística
+    (ni un rango de fechas específico, ni un límite de tasa con un tiempo
+    fijo), así que `_pedir_rango` combina reintentos con espera + PARTIR el
+    rango a la mitad cuando se agotan: si de plano hay una ventana que nunca
+    responde, se aísla y se omite sin perder el resto de los años.
 
     Como el filtro de fecha del reporte parece comparar por traslape de
     periodo de cargo (CHARGE_FROM/CHARGE_TO), una misma reserva puede salir
