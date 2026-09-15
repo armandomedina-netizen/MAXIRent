@@ -47,7 +47,7 @@ import sys
 import json
 import logging
 import time
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 import pandas as pd
@@ -113,39 +113,54 @@ def login_maxinet() -> requests.Session:
 ANIO_INICIO = 2015
 ANIOS_A_FUTURO = 5
 
-# Pausa fija entre cada request a reporte-cargo_de_reservas.php, y reintentos
-# con espera creciente si de todos modos se dispara el límite de tasa del
-# servidor (ver docstring de descargar_cargo_de_reservas).
-PAUSA_ENTRE_REQUESTS_SEGUNDOS = 8
-REINTENTOS_POR_ANIO = 4
-ESPERA_REINTENTO_SEGUNDOS = 30
+# Pausa fija entre cada request a reporte-cargo_de_reservas.php.
+PAUSA_ENTRE_REQUESTS_SEGUNDOS = 5
+REINTENTOS_POR_RANGO = 2
+ESPERA_REINTENTO_SEGUNDOS = 10
+# Por debajo de este tamaño de rango, si sigue fallando ya no se sigue
+# partiendo -- se omite esa ventana y se sigue con el resto (ver docstring).
+DIAS_MINIMOS_PARA_PARTIR = 3
 
 
-def _pedir_anio(base_url: str, anio: int) -> pd.DataFrame:
-    """Pide un año del reporte de Cargo de Reservas, con sesión nueva y
-    reintentos con espera creciente si el servidor devuelve una respuesta
-    no-JSON (señal de que se disparó el límite de tasa del servidor)."""
-    ultimo_error = None
-    for intento in range(1, REINTENTOS_POR_ANIO + 1):
+def _pedir_rango(base_url: str, desde: date, hasta: date, profundidad: int = 0) -> pd.DataFrame:
+    """
+    Pide un rango de fechas del reporte de Cargo de Reservas. Si el servidor
+    devuelve una respuesta no-JSON después de reintentar, PARTE el rango a la
+    mitad y reintenta cada mitad por separado (ver por qué en el docstring de
+    descargar_cargo_de_reservas: la falla resultó ser específica de ciertos
+    datos, no de tiempo/sesión, así que reintentar el mismo rango no ayuda --
+    hay que acotarlo hasta aislar la ventana problemática).
+    """
+    for intento in range(1, REINTENTOS_POR_RANGO + 1):
         session = login_maxinet()
         resp = session.post(
             f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
-            data={"Estatus": "ALL", "Desde": f"{anio}-01-01", "Hasta": f"{anio}-12-31"},
+            data={"Estatus": "ALL", "Desde": desde.isoformat(), "Hasta": hasta.isoformat()},
         )
         try:
             payload = _parse_json_bom(resp)
-        except json.JSONDecodeError as exc:
-            ultimo_error = exc
-            espera = ESPERA_REINTENTO_SEGUNDOS * intento
-            log.warning(
-                "Año %d, intento %d/%d falló -- reintentando en %ds",
-                anio, intento, REINTENTOS_POR_ANIO, espera,
-            )
-            time.sleep(espera)
-            continue
-        return pd.DataFrame(payload["data"], columns=COLUMNAS)
+            return pd.DataFrame(payload["data"], columns=COLUMNAS)
+        except json.JSONDecodeError:
+            if intento < REINTENTOS_POR_RANGO:
+                time.sleep(ESPERA_REINTENTO_SEGUNDOS)
 
-    raise RuntimeError(f"Año {anio}: se agotaron los reintentos") from ultimo_error
+    dias = (hasta - desde).days
+    if dias < DIAS_MINIMOS_PARA_PARTIR:
+        log.error(
+            "Rango %s a %s: se agotaron los reintentos y ya no se puede partir más -- "
+            "se OMITE (revisar manualmente qué reserva/cargo tiene esa ventana)",
+            desde, hasta,
+        )
+        return pd.DataFrame(columns=COLUMNAS)
+
+    medio = desde + timedelta(days=dias // 2)
+    log.warning(
+        "Rango %s a %s falló tras %d intento(s) -- partiendo en %s/%s y %s/%s",
+        desde, hasta, REINTENTOS_POR_RANGO, desde, medio, medio + timedelta(days=1), hasta,
+    )
+    izquierda = _pedir_rango(base_url, desde, medio, profundidad + 1)
+    derecha = _pedir_rango(base_url, medio + timedelta(days=1), hasta, profundidad + 1)
+    return pd.concat([izquierda, derecha], ignore_index=True)
 
 
 def descargar_cargo_de_reservas() -> pd.DataFrame:
@@ -166,17 +181,18 @@ def descargar_cargo_de_reservas() -> pd.DataFrame:
     llamada hicieron que el servidor de Maxinet tardara ~60s y devolviera una
     respuesta vacía/no-JSON.
 
-    Pero pedirlo por año NO fue suficiente por sí solo: en dos corridas de
-    prueba, los primeros 6 requests a este endpoint (2015-2020) respondieron
-    bien en ~8s cada uno, y el 7mo (2021) falló igual -- incluso abriendo una
-    sesión (login) nueva para cada año, siempre en el mismo punto (~55-60s
-    después del primer request a este endpoint). Eso descarta que sea la
-    sesión de Maxinet la que expira, y apunta a un límite de tasa del lado
-    del servidor sobre ESTE endpoint específico (ej. un WAF/proxy limitando
-    solicitudes por IP en una ventana de ~60s), no a un problema de nuestra
-    sesión ni del tamaño de cada request. Por eso aquí cada año se pide con
-    reintentos y espera entre requests (`_pedir_anio`), en vez de asumir que
-    un solo intento por año siempre va a funcionar.
+    Pero pedirlo por año NO fue suficiente por sí solo: en tres corridas de
+    prueba, los primeros 6 años (2015-2020) siempre respondieron bien en ~8s
+    cada uno, y el año 2021 SIEMPRE falló -- incluso con sesión nueva por
+    año, y hasta con reintentos esperando 30s/60s/90s/120s entre intentos
+    (más que suficiente para cualquier límite de tasa razonable). Como
+    esperar más no cambió nada y el punto de falla fue siempre el mismo año,
+    esto no es un problema de tiempo/sesión/límite de tasa -- es específico
+    de ALGO en los datos de 2021 (una reserva/cargo puntual que hace que el
+    reporte de Maxinet truene al generarse para ese rango). Por eso
+    `_pedir_rango` PARTE el rango a la mitad cuando falla, en vez de solo
+    reintentar el mismo rango, hasta aislar y saltarse la ventana exacta que
+    causa el problema sin perder el resto de los datos.
 
     Como el filtro de fecha del reporte parece comparar por traslape de
     periodo de cargo (CHARGE_FROM/CHARGE_TO), una misma reserva puede salir
@@ -188,11 +204,9 @@ def descargar_cargo_de_reservas() -> pd.DataFrame:
 
     frames = []
     for anio in range(ANIO_INICIO, anio_fin + 1):
-        df_anio = _pedir_anio(base_url, anio)
+        df_anio = _pedir_rango(base_url, date(anio, 1, 1), date(anio, 12, 31))
         log.info("Año %d: %d filas", anio, len(df_anio))
         frames.append(df_anio)
-        # Pausa entre años para no disparar el límite de tasa del servidor
-        # que rompió las primeras dos corridas de prueba (ver docstring).
         time.sleep(PAUSA_ENTRE_REQUESTS_SEGUNDOS)
 
     df = pd.concat(frames, ignore_index=True)
