@@ -4,6 +4,8 @@ dist/
 build/
 coverage/
 *.log
+__pycache__/
+*.pyc
 
 # Local secrets and credentials
 .env
@@ -22,4 +24,10 @@ exports/
 automations/maxinet-sync/google-creds.json
 automations/maxinet-sync/*.venv/
 automations/maxinet-sync/logs/
+
+# Maxinet Query Sync automation: local secrets and runtime artifacts
+automations/maxinet-query-sync/google-creds.json
+automations/maxinet-query-sync/*.venv/
+automations/maxinet-query-sync/logs/
+
 *.venv/
