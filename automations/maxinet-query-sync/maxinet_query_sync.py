@@ -8,10 +8,13 @@ Endpoint confirmado a partir del HTML/JS reales de Maxinet
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
             body: email=<usuario>, password=<contraseña>
     Datos:  POST {MAXINET_BASE_URL}/includes/reportesLP/reporte-cargo_de_reservas.php
-            body: Estatus=ONHIRE, Desde=YYYY-MM-DD, Hasta=YYYY-MM-DD
-            (mismos valores que trae el formulario por defecto al abrir la
-            liga: Estatus=ONHIRE, Desde=Hasta=fecha del día en que se corre
-            la automatización -- se replica tal cual, sin filtrar)
+            body: Estatus=ALL, Desde=2000-01-01, Hasta=2099-12-31
+            (el formulario trae por defecto Estatus=ONHIRE y Desde=Hasta=
+            hoy, pero eso solo trae las reservas ON HIRE del día -- "QUERY"
+            alimenta otras pestañas del mismo Sheet, como "TARIFA (QUERY)",
+            que esperan encontrar TODAS las reservas, históricas y activas.
+            Se usa Estatus=ALL con un rango de fechas deliberadamente
+            amplio para traer el histórico completo cada vez)
             respuesta: JSON estilo DataTables, "data" = lista de listas
             (cada fila ya viene en el orden de COLUMNAS, sin columna de
             acciones al inicio -- a diferencia del reporte de flota)
@@ -28,9 +31,9 @@ Variables de entorno esperadas (ver .env.example):
 
 Flujo:
     1. Login en Maxinet.
-    2. Descarga el reporte de Cargo de Reservas con Estatus=ONHIRE y
-       Desde=Hasta=fecha de hoy (mismos valores por defecto del formulario;
-       no se filtra ni transforma nada -- el reporte ya viene tal cual).
+    2. Descarga el reporte de Cargo de Reservas completo (Estatus=ALL, todo
+       el rango de fechas) -- no se filtra ni transforma nada, el reporte
+       ya viene tal cual.
     3. Reemplaza POR COMPLETO el bloque A2:O... de la pestaña "QUERY" con
        los datos nuevos, sin encabezados (no se hace merge/match por fila;
        el reporte de Maxinet reemplaza al anterior tal cual).
@@ -40,7 +43,6 @@ import os
 import sys
 import json
 import logging
-from datetime import date
 
 import requests
 import pandas as pd
@@ -92,22 +94,30 @@ def login_maxinet() -> requests.Session:
 
 def descargar_cargo_de_reservas(session: requests.Session) -> pd.DataFrame:
     """
-    Pide al endpoint de Cargo de Reservas los mismos valores que trae el
-    formulario por defecto al abrir la liga (Estatus=ONHIRE, Desde=Hasta=
-    fecha de hoy) -- sin aplicar ningún filtro adicional, tal como se
-    definió con el usuario.
+    Pide al endpoint de Cargo de Reservas con Estatus=ALL y un rango de
+    fechas amplio (en vez de Estatus=ONHIRE / Desde=Hasta=hoy, que eran los
+    valores por defecto del formulario).
+
+    IMPORTANTE (corregido tras romper "TARIFA (QUERY)"/"TABLA RESUMEN" el
+    2026-09-15): la pestaña "QUERY" no es un snapshot de "solo lo de hoy" --
+    otras pestañas del mismo Sheet (ej. "TARIFA (QUERY)") le hacen FILTER/
+    búsquedas esperando encontrar TODAS las reservas, históricas y activas.
+    Con Estatus=ONHIRE + Desde=Hasta=hoy, cualquier reserva que no estuviera
+    ON HIRE justo hoy desaparecía de "QUERY" y esas búsquedas fallaban con
+    #N/A. Por eso aquí se pide Estatus=ALL con un rango de fechas
+    deliberadamente amplio (2000-01-01 a 2099-12-31) para no depender de
+    qué campo de fecha filtra realmente el reporte del lado de Maxinet.
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
-    hoy = date.today().strftime("%Y-%m-%d")
 
     resp = session.post(
         f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
-        data={"Estatus": "ONHIRE", "Desde": hoy, "Hasta": hoy},
+        data={"Estatus": "ALL", "Desde": "2000-01-01", "Hasta": "2099-12-31"},
     )
     payload = _parse_json_bom(resp)
 
     df = pd.DataFrame(payload["data"], columns=COLUMNAS)
-    log.info("Datos descargados de Maxinet: %d filas (fecha %s)", len(df), hoy)
+    log.info("Datos descargados de Maxinet: %d filas (Estatus=ALL, todo el histórico)", len(df))
     return df
 
 
