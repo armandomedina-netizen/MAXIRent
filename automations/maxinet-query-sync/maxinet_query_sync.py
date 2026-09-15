@@ -8,13 +8,15 @@ Endpoint confirmado a partir del HTML/JS reales de Maxinet
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
             body: email=<usuario>, password=<contraseña>
     Datos:  POST {MAXINET_BASE_URL}/includes/reportesLP/reporte-cargo_de_reservas.php
-            body: Estatus=ALL, Desde=2000-01-01, Hasta=2099-12-31
+            body: Estatus=ALL, Desde=2015-01-01, Hasta=(hoy + 5 años)
             (el formulario trae por defecto Estatus=ONHIRE y Desde=Hasta=
             hoy, pero eso solo trae las reservas ON HIRE del día -- "QUERY"
             alimenta otras pestañas del mismo Sheet, como "TARIFA (QUERY)",
             que esperan encontrar TODAS las reservas, históricas y activas.
-            Se usa Estatus=ALL con un rango de fechas deliberadamente
-            amplio para traer el histórico completo cada vez)
+            Se usa Estatus=ALL con un rango de fechas amplio -- un rango
+            de 99 años (2000-2099) se probó primero y el servidor devolvió
+            una respuesta inválida, así que se acotó a algo igual de
+            amplio para los datos reales pero sin romper el reporte)
             respuesta: JSON estilo DataTables, "data" = lista de listas
             (cada fila ya viene en el orden de COLUMNAS, sin columna de
             acciones al inicio -- a diferencia del reporte de flota)
@@ -43,6 +45,7 @@ import os
 import sys
 import json
 import logging
+from datetime import date
 
 import requests
 import pandas as pd
@@ -70,7 +73,17 @@ COLUMNAS = [
 def _parse_json_bom(resp: requests.Response):
     """Maxinet antepone un BOM UTF-8 a sus respuestas JSON, lo que rompe
     resp.json() (mismo comportamiento ya confirmado en el reporte de flota)."""
-    return json.loads(resp.content.decode("utf-8-sig"))
+    texto = resp.content.decode("utf-8-sig")
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError:
+        # Si Maxinet devuelve algo que no es JSON puro (ej. un warning de PHP
+        # antepuesto a la respuesta, o una página de error/sesión vencida),
+        # se deja el inicio de la respuesta en el log para poder diagnosticar
+        # sin tener que adivinar -- ya pasó una vez con Estatus=ALL y un
+        # rango de fechas demasiado amplio (2000-2099).
+        log.error("Respuesta de Maxinet no es JSON válido. Primeros 500 caracteres: %r", texto[:500])
+        raise
 
 
 def login_maxinet() -> requests.Session:
@@ -104,19 +117,37 @@ def descargar_cargo_de_reservas(session: requests.Session) -> pd.DataFrame:
     búsquedas esperando encontrar TODAS las reservas, históricas y activas.
     Con Estatus=ONHIRE + Desde=Hasta=hoy, cualquier reserva que no estuviera
     ON HIRE justo hoy desaparecía de "QUERY" y esas búsquedas fallaban con
-    #N/A. Por eso aquí se pide Estatus=ALL con un rango de fechas
-    deliberadamente amplio (2000-01-01 a 2099-12-31) para no depender de
-    qué campo de fecha filtra realmente el reporte del lado de Maxinet.
+    #N/A. Por eso aquí se pide Estatus=ALL con un rango de fechas amplio.
+
+    El rango 2000-01-01/2099-12-31 (99 años) se probó primero y el servidor
+    de Maxinet devolvió una respuesta que no era JSON válido (probablemente
+    un timeout o warning de PHP con un rango tan grande) -- se usa un rango
+    más acotado pero igual de amplio para los datos reales: desde 2015-01-01
+    (antes de la fecha de reserva más antigua vista en el reporte) hasta 5
+    años en el futuro desde la fecha de corrida (cubre cargos con fecha
+    futura, ej. contratos a varios años, sin arrastrar un límite fijo que
+    algún día quede corto).
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
+    hasta = date.today().replace(year=date.today().year + 5).strftime("%Y-%m-%d")
 
     resp = session.post(
         f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
-        data={"Estatus": "ALL", "Desde": "2000-01-01", "Hasta": "2099-12-31"},
+        data={"Estatus": "ALL", "Desde": "2015-01-01", "Hasta": hasta},
     )
     payload = _parse_json_bom(resp)
 
     df = pd.DataFrame(payload["data"], columns=COLUMNAS)
+
+    # Maxinet entrega varios campos de texto (ej. CLIENTE) rellenados con
+    # espacios al final (campo de ancho fijo en su origen, mismo problema ya
+    # confirmado en el reporte de flota) -- las fórmulas de "TARIFA (QUERY)"
+    # comparan texto exacto y nunca hacían match contra el valor real con
+    # espacios de más, así que se limpia aquí.
+    for col in df.columns:
+        if pd.api.types.is_object_dtype(df[col]):
+            df[col] = df[col].str.strip()
+
     log.info("Datos descargados de Maxinet: %d filas (Estatus=ALL, todo el histórico)", len(df))
     return df
 
