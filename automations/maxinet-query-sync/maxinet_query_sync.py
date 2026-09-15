@@ -8,15 +8,16 @@ Endpoint confirmado a partir del HTML/JS reales de Maxinet
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
             body: email=<usuario>, password=<contraseña>
     Datos:  POST {MAXINET_BASE_URL}/includes/reportesLP/reporte-cargo_de_reservas.php
-            body: Estatus=ALL, Desde=2015-01-01, Hasta=(hoy + 5 años)
+            body: Estatus=ALL, Desde=<año>-01-01, Hasta=<año>-12-31 -- UN
+            AÑO A LA VEZ, de 2015 a (hoy + 5 años), concatenando todo
             (el formulario trae por defecto Estatus=ONHIRE y Desde=Hasta=
             hoy, pero eso solo trae las reservas ON HIRE del día -- "QUERY"
             alimenta otras pestañas del mismo Sheet, como "TARIFA (QUERY)",
             que esperan encontrar TODAS las reservas, históricas y activas.
-            Se usa Estatus=ALL con un rango de fechas amplio -- un rango
-            de 99 años (2000-2099) se probó primero y el servidor devolvió
-            una respuesta inválida, así que se acotó a algo igual de
-            amplio para los datos reales pero sin romper el reporte)
+            Pedir Estatus=ALL con TODO el rango en un solo request -- tanto
+            99 años [2000,2099] como ~20 años [2015,hoy+5] -- hizo que el
+            servidor tardara ~60s y devolviera una respuesta vacía/inválida
+            (timeout del lado de Maxinet), así que se pide año por año)
             respuesta: JSON estilo DataTables, "data" = lista de listas
             (cada fila ya viene en el orden de COLUMNAS, sin columna de
             acciones al inicio -- a diferencia del reporte de flota)
@@ -105,11 +106,17 @@ def login_maxinet() -> requests.Session:
     return session
 
 
+# Primer año a pedir (antes de la fecha de reserva más antigua vista en el
+# reporte) y años hacia el futuro a incluir desde la fecha de corrida (cubre
+# cargos con fecha futura, ej. contratos a varios años).
+ANIO_INICIO = 2015
+ANIOS_A_FUTURO = 5
+
+
 def descargar_cargo_de_reservas(session: requests.Session) -> pd.DataFrame:
     """
-    Pide al endpoint de Cargo de Reservas con Estatus=ALL y un rango de
-    fechas amplio (en vez de Estatus=ONHIRE / Desde=Hasta=hoy, que eran los
-    valores por defecto del formulario).
+    Pide al endpoint de Cargo de Reservas con Estatus=ALL, un año calendario
+    a la vez desde ANIO_INICIO hasta hoy + ANIOS_A_FUTURO, y concatena todo.
 
     IMPORTANTE (corregido tras romper "TARIFA (QUERY)"/"TABLA RESUMEN" el
     2026-09-15): la pestaña "QUERY" no es un snapshot de "solo lo de hoy" --
@@ -117,27 +124,39 @@ def descargar_cargo_de_reservas(session: requests.Session) -> pd.DataFrame:
     búsquedas esperando encontrar TODAS las reservas, históricas y activas.
     Con Estatus=ONHIRE + Desde=Hasta=hoy, cualquier reserva que no estuviera
     ON HIRE justo hoy desaparecía de "QUERY" y esas búsquedas fallaban con
-    #N/A. Por eso aquí se pide Estatus=ALL con un rango de fechas amplio.
+    #N/A. Por eso se pide Estatus=ALL en vez de ONHIRE.
 
-    El rango 2000-01-01/2099-12-31 (99 años) se probó primero y el servidor
-    de Maxinet devolvió una respuesta que no era JSON válido (probablemente
-    un timeout o warning de PHP con un rango tan grande) -- se usa un rango
-    más acotado pero igual de amplio para los datos reales: desde 2015-01-01
-    (antes de la fecha de reserva más antigua vista en el reporte) hasta 5
-    años en el futuro desde la fecha de corrida (cubre cargos con fecha
-    futura, ej. contratos a varios años, sin arrastrar un límite fijo que
-    algún día quede corto).
+    Se pide UN AÑO A LA VEZ en vez de un solo request con todo el rango:
+    tanto 2000-2099 (99 años) como 2015-(hoy+5) (~15-20 años) en una sola
+    llamada hicieron que el servidor de Maxinet tardara ~60s y devolviera una
+    respuesta vacía/no-JSON (timeout del lado del servidor, no del cliente).
+    Pedirlo por año evita que cualquier ventana individual sea tan pesada
+    como para que vuelva a pasar. Como el filtro de fecha del reporte parece
+    comparar por traslape de periodo de cargo (CHARGE_FROM/CHARGE_TO), una
+    misma reserva puede salir repetida en más de un año si su cargo cruza el
+    límite del año -- por eso se hace `drop_duplicates()` al final.
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
-    hasta = date.today().replace(year=date.today().year + 5).strftime("%Y-%m-%d")
+    anio_fin = date.today().year + ANIOS_A_FUTURO
 
-    resp = session.post(
-        f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
-        data={"Estatus": "ALL", "Desde": "2015-01-01", "Hasta": hasta},
+    frames = []
+    for anio in range(ANIO_INICIO, anio_fin + 1):
+        resp = session.post(
+            f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
+            data={"Estatus": "ALL", "Desde": f"{anio}-01-01", "Hasta": f"{anio}-12-31"},
+        )
+        payload = _parse_json_bom(resp)
+        df_anio = pd.DataFrame(payload["data"], columns=COLUMNAS)
+        log.info("Año %d: %d filas", anio, len(df_anio))
+        frames.append(df_anio)
+
+    df = pd.concat(frames, ignore_index=True)
+    filas_con_duplicados = len(df)
+    df = df.drop_duplicates().reset_index(drop=True)
+    log.info(
+        "Datos descargados de Maxinet: %d filas únicas (Estatus=ALL, %d-%d; %d filas repetidas entre años se descartaron)",
+        len(df), ANIO_INICIO, anio_fin, filas_con_duplicados - len(df),
     )
-    payload = _parse_json_bom(resp)
-
-    df = pd.DataFrame(payload["data"], columns=COLUMNAS)
 
     # Maxinet entrega varios campos de texto (ej. CLIENTE) rellenados con
     # espacios al final (campo de ancho fijo en su origen, mismo problema ya
@@ -148,7 +167,6 @@ def descargar_cargo_de_reservas(session: requests.Session) -> pd.DataFrame:
         if pd.api.types.is_object_dtype(df[col]):
             df[col] = df[col].str.strip()
 
-    log.info("Datos descargados de Maxinet: %d filas (Estatus=ALL, todo el histórico)", len(df))
     return df
 
 
