@@ -293,7 +293,22 @@ def actualizar_sheet_flota_lp(worksheet, df_nuevo: pd.DataFrame):
 # =========================================================================
 
 FILA_FECHA_CALENDARIO = 2
+
+# Igual que en "UTI. GRUPO DE AUTOS V1", esta hoja tiene 3 bloques de filas
+# que se comportan distinto (confirmado contra el sheet real):
+#   Fila 3 ("TOTAL ON HIRE", =IFERROR(SUM(B4:B6),"")): NUNCA se congela ->
+#       solo se copia a la columna nueva. Antes no se tocaba en absoluto,
+#       por eso quedaba vacía en columnas futuras.
+#   Filas 4-39 (métricas COUNTIFS/conteos): se copian a la columna nueva Y
+#       el origen se congela a valores fijos.
+#   Filas 40-56 (agregados/porcentajes que referencian otras filas de su
+#       propia columna, ej. "=IFERROR(AYT3/AYT40,0)", más las sumas de VOR
+#       Cliente en 52/55/56): tampoco se congelan nunca -> solo se copian.
+#       Antes se congelaban junto con 4-39 por error.
+FILA_TOTAL_ON_HIRE = 3
 FILA_FORMULA_INICIO = 4
+FILA_METRICAS_FIN = 39
+FILA_RATIOS_INICIO = 40
 FILA_FORMULA_FIN = 56
 
 
@@ -386,54 +401,42 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     sheet_id = worksheet.id
     spreadsheet = worksheet.spreadsheet
 
-    fila_inicio_0idx = FILA_FORMULA_INICIO - 1  # la API usa índices base 0
-    fila_fin_0idx = FILA_FORMULA_FIN  # endRowIndex es exclusivo, así que no se resta 1
+    def _rango(fila_inicio, fila_fin, col_idx):
+        return {
+            "sheetId": sheet_id,
+            "startRowIndex": fila_inicio - 1,
+            "endRowIndex": fila_fin,
+            "startColumnIndex": col_idx,
+            "endColumnIndex": col_idx + 1,
+        }
+
+    def _copiar(fila_inicio, fila_fin):
+        return {
+            "copyPaste": {
+                "source": _rango(fila_inicio, fila_fin, idx_origen),
+                "destination": _rango(fila_inicio, fila_fin, idx_destino),
+                "pasteType": "PASTE_FORMULA",
+            }
+        }
 
     requests_body = {
         "requests": [
-            # 1. Copiar fórmulas de la columna origen a la columna destino
-            #    (las referencias relativas se recorren automáticamente,
-            #    igual que copiar/pegar una celda a la de al lado)
+            # 1. Fila 3 (TOTAL ON HIRE): solo copiar, nunca se congela.
+            _copiar(FILA_TOTAL_ON_HIRE, FILA_TOTAL_ON_HIRE),
+            # 2. Filas 4-39: copiar a la columna nueva...
+            _copiar(FILA_FORMULA_INICIO, FILA_METRICAS_FIN),
+            # ...y congelar el origen a valores fijos (para no acumular
+            # peso de fórmulas viejas en el archivo).
             {
                 "copyPaste": {
-                    "source": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": fila_inicio_0idx,
-                        "endRowIndex": fila_fin_0idx,
-                        "startColumnIndex": idx_origen,
-                        "endColumnIndex": idx_origen + 1,
-                    },
-                    "destination": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": fila_inicio_0idx,
-                        "endRowIndex": fila_fin_0idx,
-                        "startColumnIndex": idx_destino,
-                        "endColumnIndex": idx_destino + 1,
-                    },
-                    "pasteType": "PASTE_FORMULA",
-                }
-            },
-            # 2. Convertir la columna origen (ya copiada) a valores fijos,
-            #    para no seguir cargando con fórmulas viejas
-            {
-                "copyPaste": {
-                    "source": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": fila_inicio_0idx,
-                        "endRowIndex": fila_fin_0idx,
-                        "startColumnIndex": idx_origen,
-                        "endColumnIndex": idx_origen + 1,
-                    },
-                    "destination": {
-                        "sheetId": sheet_id,
-                        "startRowIndex": fila_inicio_0idx,
-                        "endRowIndex": fila_fin_0idx,
-                        "startColumnIndex": idx_origen,
-                        "endColumnIndex": idx_origen + 1,
-                    },
+                    "source": _rango(FILA_FORMULA_INICIO, FILA_METRICAS_FIN, idx_origen),
+                    "destination": _rango(FILA_FORMULA_INICIO, FILA_METRICAS_FIN, idx_origen),
                     "pasteType": "PASTE_VALUES",
                 }
             },
+            # 3. Filas 40-56 (agregados/ratios + sumas de VOR Cliente):
+            #    solo copiar, nunca se congelan.
+            _copiar(FILA_RATIOS_INICIO, FILA_FORMULA_FIN),
         ]
     }
 
