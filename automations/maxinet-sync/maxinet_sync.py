@@ -53,6 +53,7 @@ Estructura del primer Sheet (confirmada por el usuario):
 """
 
 import os
+import re
 import sys
 import json
 import logging
@@ -294,21 +295,19 @@ def actualizar_sheet_flota_lp(worksheet, df_nuevo: pd.DataFrame):
 
 FILA_FECHA_CALENDARIO = 2
 
-# Igual que en "UTI. GRUPO DE AUTOS V1", esta hoja tiene 3 bloques de filas
-# que se comportan distinto (confirmado contra el sheet real):
-#   Fila 3 ("TOTAL ON HIRE", =IFERROR(SUM(B4:B6),"")): NUNCA se congela ->
-#       solo se copia a la columna nueva. Antes no se tocaba en absoluto,
-#       por eso quedaba vacía en columnas futuras.
-#   Filas 4-39 (métricas COUNTIFS/conteos): se copian a la columna nueva Y
-#       el origen se congela a valores fijos.
-#   Filas 40-56 (agregados/porcentajes que referencian otras filas de su
-#       propia columna, ej. "=IFERROR(AYT3/AYT40,0)", más las sumas de VOR
-#       Cliente en 52/55/56): tampoco se congelan nunca -> solo se copian.
-#       Antes se congelaban junto con 4-39 por error.
+# Fila 3 ("TOTAL ON HIRE", =IFERROR(SUM(B4:B6),"")) y filas 4-56 (métricas +
+# agregados + VOR Cliente). NO es un simple corte "3 vs 4-39 vs 40-56": hay
+# filas de agregado (sumas/porcentajes que referencian OTRAS filas de su
+# propia columna, ej. fila 19 "=SUM(AZC8:AZC18)" o fila 25
+# "=AZC22+AZC19+AZC3") MEZCLADAS entre las filas 4-39, no solo a partir de
+# la 40 (confirmado contra el sheet real: filas 19, 24, 25, 28, 37 también
+# son agregados). Por eso qué filas se congelan a valores se decide en
+# tiempo real (ver _filas_a_congelar), no con un rango fijo -- congelar una
+# fila de agregado por error deja un valor incorrecto para siempre y rompe
+# en cascada cualquier otra fórmula que la referencie (ej. fila 46
+# "=AZC22/AZC25").
 FILA_TOTAL_ON_HIRE = 3
 FILA_FORMULA_INICIO = 4
-FILA_METRICAS_FIN = 39
-FILA_RATIOS_INICIO = 40
 FILA_FORMULA_FIN = 56
 
 
@@ -367,12 +366,55 @@ def _encontrar_columna_por_fecha(worksheet, fecha_objetivo, col_referencia="AYT"
     )
 
 
+def _es_autoreferencia(formula, col_letra: str, fila_fecha: int = FILA_FECHA_CALENDARIO) -> bool:
+    """True si la fórmula referencia OTRA fila de su misma columna (aparte de
+    la fila de fecha, que casi todos los COUNTIFS usan como criterio de
+    filtro). Ese tipo de fórmula (sumas/porcentajes agregados dentro de la
+    misma columna, ej. "=IFERROR(AYT3/AYT40,0)") nunca se debe congelar a
+    valores -- su resultado depende de otras filas de la columna, no de un
+    conteo directo contra FLOTA LP."""
+    formula = str(formula) if formula else ""
+    if not formula.startswith("="):
+        return False
+    refs = re.findall(rf"{re.escape(col_letra)}(\d+)", formula)
+    return any(int(r) != fila_fecha for r in refs)
+
+
+def _rangos_contiguos(filas) -> list:
+    """Convierte una lista de números de fila en rangos (inicio, fin) contiguos."""
+    rangos = []
+    for fila in sorted(filas):
+        if rangos and fila == rangos[-1][1] + 1:
+            rangos[-1] = (rangos[-1][0], fila)
+        else:
+            rangos.append((fila, fila))
+    return rangos
+
+
+def _filas_a_congelar(worksheet, col_origen: str, fila_inicio: int, fila_fin: int) -> list:
+    """De fila_inicio a fila_fin (columna col_origen), regresa los números de
+    fila que son conteos genuinos (se deben congelar a valores) -- excluye
+    las que se auto-referencian a otra fila de su propia columna."""
+    formulas = worksheet.get(f"{col_origen}{fila_inicio}:{col_origen}{fila_fin}", value_render_option="FORMULA")
+    filas_congelar = []
+    for i in range(fila_fin - fila_inicio + 1):
+        fila = fila_inicio + i
+        formula = formulas[i][0] if i < len(formulas) and formulas[i] else ""
+        if not _es_autoreferencia(formula, col_origen):
+            filas_congelar.append(fila)
+    return filas_congelar
+
+
 def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=None):
     """
     Cada día: encuentra la columna correspondiente a 'ayer' (columna destino),
     copia las fórmulas desde la columna inmediatamente anterior (columna
     origen, que ya tiene fórmulas activas) hacia la destino, y luego convierte
-    la columna origen a valores fijos para no acumular peso en el archivo.
+    a valores fijos SOLO las filas de la columna origen que son conteos
+    genuinos -- las que se auto-referencian a otra fila de su propia columna
+    (agregados/porcentajes) se quedan vivas para siempre, igual que en el
+    archivo original (esas filas están dispersas, no son un bloque
+    contiguo -- ver _es_autoreferencia).
 
     fecha_objetivo: normalmente None (usa "ayer" real, para la corrida diaria).
     Se puede pasar una fecha explícita para ponerse al día si la
@@ -383,12 +425,13 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     fecha_ayer = fecha_objetivo or (date.today() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
     idx_origen = idx_destino - 1
+    col_origen = _indice_a_col_letra(idx_origen)
+    col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: si la columna destino ya tiene contenido, probablemente ya
     # se procesó (ej. la automatización corrió dos veces el mismo día). Copiar
     # de nuevo sobrescribiría la fórmula viva con el valor ya congelado de la
     # columna origen -- mejor no hacer nada y avisar.
-    col_destino = _indice_a_col_letra(idx_destino)
     celda_destino = worksheet.get(f"{col_destino}{FILA_FORMULA_INICIO}", value_render_option="FORMULA")
     if celda_destino and celda_destino[0] and celda_destino[0][0] not in ("", None):
         log.warning(
@@ -398,6 +441,8 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
         )
         return
 
+    filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_FORMULA_INICIO, FILA_FORMULA_FIN)
+
     sheet_id = worksheet.id
     spreadsheet = worksheet.spreadsheet
 
@@ -410,41 +455,37 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
             "endColumnIndex": col_idx + 1,
         }
 
-    def _copiar(fila_inicio, fila_fin):
-        return {
-            "copyPaste": {
-                "source": _rango(fila_inicio, fila_fin, idx_origen),
-                "destination": _rango(fila_inicio, fila_fin, idx_destino),
-                "pasteType": "PASTE_FORMULA",
-            }
-        }
-
+    # 1. Copiar TODO el bloque (fila 3 + filas 4-56) a la columna nueva.
     requests_body = {
         "requests": [
-            # 1. Fila 3 (TOTAL ON HIRE): solo copiar, nunca se congela.
-            _copiar(FILA_TOTAL_ON_HIRE, FILA_TOTAL_ON_HIRE),
-            # 2. Filas 4-39: copiar a la columna nueva...
-            _copiar(FILA_FORMULA_INICIO, FILA_METRICAS_FIN),
-            # ...y congelar el origen a valores fijos (para no acumular
-            # peso de fórmulas viejas en el archivo).
             {
                 "copyPaste": {
-                    "source": _rango(FILA_FORMULA_INICIO, FILA_METRICAS_FIN, idx_origen),
-                    "destination": _rango(FILA_FORMULA_INICIO, FILA_METRICAS_FIN, idx_origen),
-                    "pasteType": "PASTE_VALUES",
+                    "source": _rango(FILA_TOTAL_ON_HIRE, FILA_FORMULA_FIN, idx_origen),
+                    "destination": _rango(FILA_TOTAL_ON_HIRE, FILA_FORMULA_FIN, idx_destino),
+                    "pasteType": "PASTE_FORMULA",
                 }
-            },
-            # 3. Filas 40-56 (agregados/ratios + sumas de VOR Cliente):
-            #    solo copiar, nunca se congelan.
-            _copiar(FILA_RATIOS_INICIO, FILA_FORMULA_FIN),
+            }
         ]
     }
+
+    # 2. Congelar a valores SOLO las filas de conteo genuino (nunca las de
+    # auto-referencia), un request por cada tramo contiguo detectado.
+    for fila_ini, fila_fin in _rangos_contiguos(filas_congelar):
+        requests_body["requests"].append(
+            {
+                "copyPaste": {
+                    "source": _rango(fila_ini, fila_fin, idx_origen),
+                    "destination": _rango(fila_ini, fila_fin, idx_origen),
+                    "pasteType": "PASTE_VALUES",
+                }
+            }
+        )
 
     spreadsheet.batch_update(requests_body)
 
     log.info(
-        "UTILIZACION V3: fórmulas avanzadas de columna %s a %s (fecha %s)",
-        _indice_a_col_letra(idx_origen), _indice_a_col_letra(idx_destino), fecha_ayer,
+        "UTILIZACION V3: fórmulas avanzadas de columna %s a %s (fecha %s), %d filas congeladas",
+        col_origen, col_destino, fecha_ayer, len(filas_congelar),
     )
 
 
@@ -452,39 +493,34 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
 # "UTI. GRUPO DE AUTOS V1": avance diario de la columna de fórmulas
 # =========================================================================
 # Mismo mecanismo de calendario que UTILIZACION V3 (fila 2 = fechas "d-mmm"),
-# pero con 3 bloques de filas que se comportan distinto (confirmado contra
-# el sheet real, comparando la columna ya procesada de un día vs. el día
-# anterior):
-#   Fila 3 (FLOTA ACTIVA LP): fórmula SUM que NUNCA se congela -> solo se
-#       copia a la columna nueva.
-#   Filas 4-83 (métricas por grupo, COUNTIFS/sumas): mismo patrón que
-#       UTILIZACION V3 -> se copian a la columna nueva Y el origen se
-#       congela a valores fijos.
-#   Filas 84-115 (ratios/porcentajes que referencian otras filas de su
-#       propia columna, ej. "=IFERROR(WX3/WX52*100%,0)"): tampoco se
-#       congelan nunca -> solo se copian a la columna nueva.
+# y el mismo problema: NO es un simple corte "fila 3 | 4-83 | 84-115".
+# Confirmado contra el sheet real: las filas 20, 36 y TODO el bloque 52-83
+# también son fórmulas de agregado (ej. fila 20 "=SUM(XA21:XA35)", fila 68
+# "=SUM(XA3,XA20,XA36)") mezcladas dentro de lo que se asumía era "4-83,
+# congelar siempre". Igual que en UTILIZACION V3, qué filas se congelan se
+# decide en tiempo real con _filas_a_congelar (ver _es_autoreferencia).
 
 FILA_GRUPO_FLOTA_ACTIVA = 3
 FILA_GRUPO_METRICAS_INICIO = 4
-FILA_GRUPO_METRICAS_FIN = 83
-FILA_GRUPO_RATIOS_INICIO = 84
 FILA_GRUPO_RATIOS_FIN = 115
 
 
 def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=None):
     """
-    Avanza un día la pestaña 'UTI. GRUPO DE AUTOS V1'. A diferencia de
-    avanzar_columna_formulas (UTILIZACION V3), aquí solo el bloque de filas
-    4-83 se congela a valores; la fila 3 y las filas 84-115 se copian a la
-    columna nueva pero se dejan como fórmulas vivas en ambas columnas.
+    Avanza un día la pestaña 'UTI. GRUPO DE AUTOS V1'. Copia toda la columna
+    (fila 3 a 115) a la columna nueva, y congela a valores fijos SOLO las
+    filas de la columna origen que son conteos genuinos -- las que se
+    auto-referencian a otra fila de su propia columna (fila 3, y varias
+    filas dispersas entre la 4 y la 115) se quedan vivas para siempre.
     """
     fecha_ayer = fecha_objetivo or (date.today() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
     idx_origen = idx_destino - 1
+    col_origen = _indice_a_col_letra(idx_origen)
+    col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: misma razón que en avanzar_columna_formulas -- si la
     # columna destino ya tiene contenido, no repetir el avance.
-    col_destino = _indice_a_col_letra(idx_destino)
     celda_destino = worksheet.get(f"{col_destino}{FILA_GRUPO_METRICAS_INICIO}", value_render_option="FORMULA")
     if celda_destino and celda_destino[0] and celda_destino[0][0] not in ("", None):
         log.warning(
@@ -494,6 +530,8 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
         )
         return
 
+    filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_RATIOS_FIN)
+
     sheet_id = worksheet.id
     spreadsheet = worksheet.spreadsheet
 
@@ -506,39 +544,36 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
             "endColumnIndex": col_idx + 1,
         }
 
-    def _copiar(fila_inicio, fila_fin):
-        return {
-            "copyPaste": {
-                "source": _rango(fila_inicio, fila_fin, idx_origen),
-                "destination": _rango(fila_inicio, fila_fin, idx_destino),
-                "pasteType": "PASTE_FORMULA",
-            }
-        }
-
+    # 1. Copiar TODO el bloque (fila 3 + filas 4-115) a la columna nueva.
     requests_body = {
         "requests": [
-            # 1. Fila 3 (FLOTA ACTIVA LP): solo copiar, nunca se congela.
-            _copiar(FILA_GRUPO_FLOTA_ACTIVA, FILA_GRUPO_FLOTA_ACTIVA),
-            # 2. Filas 4-83: copiar a la columna nueva...
-            _copiar(FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_METRICAS_FIN),
-            # ...y congelar el origen a valores fijos.
             {
                 "copyPaste": {
-                    "source": _rango(FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_METRICAS_FIN, idx_origen),
-                    "destination": _rango(FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_METRICAS_FIN, idx_origen),
-                    "pasteType": "PASTE_VALUES",
+                    "source": _rango(FILA_GRUPO_FLOTA_ACTIVA, FILA_GRUPO_RATIOS_FIN, idx_origen),
+                    "destination": _rango(FILA_GRUPO_FLOTA_ACTIVA, FILA_GRUPO_RATIOS_FIN, idx_destino),
+                    "pasteType": "PASTE_FORMULA",
                 }
-            },
-            # 3. Filas 84-115: solo copiar, nunca se congelan.
-            _copiar(FILA_GRUPO_RATIOS_INICIO, FILA_GRUPO_RATIOS_FIN),
+            }
         ]
     }
+
+    # 2. Congelar a valores SOLO las filas de conteo genuino.
+    for fila_ini, fila_fin in _rangos_contiguos(filas_congelar):
+        requests_body["requests"].append(
+            {
+                "copyPaste": {
+                    "source": _rango(fila_ini, fila_fin, idx_origen),
+                    "destination": _rango(fila_ini, fila_fin, idx_origen),
+                    "pasteType": "PASTE_VALUES",
+                }
+            }
+        )
 
     spreadsheet.batch_update(requests_body)
 
     log.info(
-        "UTI. GRUPO DE AUTOS V1: fórmulas avanzadas de columna %s a %s (fecha %s)",
-        _indice_a_col_letra(idx_origen), _indice_a_col_letra(idx_destino), fecha_ayer,
+        "UTI. GRUPO DE AUTOS V1: fórmulas avanzadas de columna %s a %s (fecha %s), %d filas congeladas",
+        col_origen, col_destino, fecha_ayer, len(filas_congelar),
     )
 
 
