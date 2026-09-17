@@ -171,14 +171,27 @@ def leer_datos(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[mask_servicios, "BSite"] = "SE"
     df.loc[mask_servicios, "CurrentSite"] = "SE"
 
-    # Regla del equipo: Segmento "OTROS" con un cliente real asignado (no
-    # "TRASLADO") debe reclasificarse a EN RENTA CLIENTE LP o CP, según si
-    # ese cliente aparece en "Rentas activas detalle" (columna T = LP).
+    # Regla del equipo: Segmento "OTROS" con un cliente real asignado debe
+    # reclasificarse a EN RENTA CLIENTE LP o CP, según si ese cliente aparece
+    # en "Rentas activas detalle" (columna T = LP). Maxinet reutiliza este
+    # mismo campo "Cliente Actual" para varios estatus internos de flota
+    # (traslados, taller, baja, uso interno, etc.) que NO son clientes reales
+    # -> se excluyen explícitamente para no reclasificarlos por error (caso
+    # confirmado: unidad PN1269C con "T.PREVENTIVO LP" el 14-sep-2026).
+    CONCEPTOS_NO_CLIENTE = {
+        "TRASLADO",
+        "T.CORRECTIVO CP", "T.CORRECTIVO LP",
+        "T.PREVENTIVO CP", "T.PREVENTIVO LP",
+        "TALLER", "TALLER EXTERNO", "TALLER FORANEO", "EXT. TALLER",
+        "USO INTERNO", "USO INTERNO MECANICOS", "USO INTERNO GESTORIA", "USO INTERNO ALMACEN",
+        "SEMINUEVOS", "PERDIDA TOTAL", "VENDIDO", "ROBADO", "RELEVOS",
+        "ABUSO DE CONFIANZA", "SERVICIO EXTERNO",
+    }
     cliente = df["Cliente Actual"].fillna("").str.strip()
     mask_otros_con_cliente = (
         (df["Segmento"] == "OTROS")
         & (cliente != "")
-        & (cliente.str.upper() != "TRASLADO")
+        & (~cliente.str.upper().isin(CONCEPTOS_NO_CLIENTE))
     )
     if mask_otros_con_cliente.any():
         clientes_lp = _obtener_clientes_rentas_lp()
