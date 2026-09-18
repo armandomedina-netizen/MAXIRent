@@ -43,6 +43,15 @@ Flujo:
        las columnas P en adelante: esa misma pestaña tiene fórmulas propias
        ahí (ej. "P2=L2/1.16") que dependen de los datos de A:O fila por
        fila y no son responsabilidad de esta automatización.
+
+Limitación conocida y aceptada (confirmada el 2026-09-18, no se corrige
+aquí a propósito): si una misma reserva trae DOS líneas de cargo "RENT"
+el mismo día para la misma placa (pasó una vez con la reserva
+#202881869 / placa PS8653B, un cambio de tarifa a mitad de contrato),
+el FILTER de "TARIFA (QUERY)" que asume una sola coincidencia por placa
+puede mostrar "#REF!" puntual para esa placa. Es un caso de datos real,
+no un bug de esta automatización -- decidir cuál línea conservar es una
+regla de negocio, no algo que este script deba resolver por su cuenta.
 """
 
 import os
