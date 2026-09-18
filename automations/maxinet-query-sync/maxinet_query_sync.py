@@ -127,13 +127,18 @@ def descargar_cargo_de_reservas() -> pd.DataFrame:
     df = pd.DataFrame(payload["data"], columns=COLUMNAS)
     log.info("Datos descargados de Maxinet: %d filas (Estatus=ONHIRE, fecha %s)", len(df), hoy)
 
-    # Maxinet entrega varios campos de texto (ej. CLIENTE) rellenados con
-    # espacios al final (campo de ancho fijo en su origen, mismo problema ya
-    # confirmado en el reporte de flota) -- si no se limpia, cualquier
-    # fórmula del Sheet que compare texto exacto contra CLIENTE nunca hace
-    # match contra el valor real (con espacios de más).
+    # Maxinet entrega varios campos de texto (ej. CLIENTE, STATUS, Order Ref)
+    # rellenados con espacios al final (campo de ancho fijo en su origen,
+    # mismo problema ya confirmado en el reporte de flota) -- si no se
+    # limpia, cualquier fórmula del Sheet que compare texto exacto nunca
+    # hace match contra el valor real (con espacios de más). OJO: pandas 3.x
+    # puede inferir columnas de texto con su nuevo dtype "string" en vez del
+    # "object" clásico -- is_object_dtype() por sí solo no las detecta (así
+    # se nos coló sin limpiar STATUS/Order Ref en la primera corrida real,
+    # mismo bug ya conocido en automations/maxinet-sync), por eso se checan
+    # los dos.
     for col in df.columns:
-        if pd.api.types.is_object_dtype(df[col]):
+        if pd.api.types.is_string_dtype(df[col]) or pd.api.types.is_object_dtype(df[col]):
             df[col] = df[col].str.strip()
 
     return df
