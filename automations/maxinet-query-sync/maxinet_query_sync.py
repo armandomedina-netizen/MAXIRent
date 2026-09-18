@@ -8,16 +8,16 @@ Endpoint confirmado a partir del HTML/JS reales de Maxinet
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
             body: email=<usuario>, password=<contraseña>
     Datos:  POST {MAXINET_BASE_URL}/includes/reportesLP/reporte-cargo_de_reservas.php
-            body: Estatus=ALL, Desde=<año>-01-01, Hasta=<año>-12-31 -- UN
-            AÑO A LA VEZ, de 2015 a (hoy + 5 años), concatenando todo
-            (el formulario trae por defecto Estatus=ONHIRE y Desde=Hasta=
-            hoy, pero eso solo trae las reservas ON HIRE del día -- "QUERY"
-            alimenta otras pestañas del mismo Sheet, como "TARIFA (QUERY)",
-            que esperan encontrar TODAS las reservas, históricas y activas.
-            Pedir Estatus=ALL con TODO el rango en un solo request -- tanto
-            99 años [2000,2099] como ~20 años [2015,hoy+5] -- hizo que el
-            servidor tardara ~60s y devolviera una respuesta vacía/inválida
-            (timeout del lado de Maxinet), así que se pide año por año)
+            body: Estatus=ONHIRE, Desde=Hasta=fecha de hoy -- mismos valores
+            que trae el formulario por defecto al abrir la liga (y los
+            mismos que usa el botón "Excel" cuando alguien descarga el
+            reporte a mano hoy). Este Sheet es una copia dedicada de
+            "CLIENTES ACTIVOS (QUERY)" cuya pestaña "QUERY" YA es
+            exactamente ese snapshot diario de hoy (confirmado el
+            2026-09-18: fila 1 encabezados, filas 2-1242 con STATUS
+            "ON HIRE" y fechas de hoy) -- automatizar con estos mismos
+            parámetros replica tal cual el pegado manual que ya se hacía,
+            sin necesidad de traer histórico.
             respuesta: JSON estilo DataTables, "data" = lista de listas
             (cada fila ya viene en el orden de COLUMNAS, sin columna de
             acciones al inicio -- a diferencia del reporte de flota)
@@ -34,20 +34,22 @@ Variables de entorno esperadas (ver .env.example):
 
 Flujo:
     1. Login en Maxinet.
-    2. Descarga el reporte de Cargo de Reservas completo (Estatus=ALL, todo
-       el rango de fechas) -- no se filtra ni transforma nada, el reporte
-       ya viene tal cual.
+    2. Descarga el reporte de Cargo de Reservas de hoy (Estatus=ONHIRE,
+       Desde=Hasta=hoy) -- no se filtra nada más, el reporte ya viene tal
+       cual, solo se limpian espacios de más en columnas de texto.
     3. Reemplaza POR COMPLETO el bloque A2:O... de la pestaña "QUERY" con
        los datos nuevos, sin encabezados (no se hace merge/match por fila;
-       el reporte de Maxinet reemplaza al anterior tal cual).
+       el reporte de Maxinet reemplaza al anterior tal cual). NUNCA toca
+       las columnas P en adelante: esa misma pestaña tiene fórmulas propias
+       ahí (ej. "P2=L2/1.16") que dependen de los datos de A:O fila por
+       fila y no son responsabilidad de esta automatización.
 """
 
 import os
 import sys
 import json
 import logging
-import time
-from datetime import date, timedelta
+from datetime import date
 
 import requests
 import pandas as pd
@@ -82,8 +84,7 @@ def _parse_json_bom(resp: requests.Response):
         # Si Maxinet devuelve algo que no es JSON puro (ej. un warning de PHP
         # antepuesto a la respuesta, o una página de error/sesión vencida),
         # se deja el inicio de la respuesta en el log para poder diagnosticar
-        # sin tener que adivinar -- ya pasó una vez con Estatus=ALL y un
-        # rango de fechas demasiado amplio (2000-2099).
+        # sin tener que adivinar.
         log.error("Respuesta de Maxinet no es JSON válido. Primeros 500 caracteres: %r", texto[:500])
         raise
 
@@ -107,132 +108,30 @@ def login_maxinet() -> requests.Session:
     return session
 
 
-# Primer año a pedir (antes de la fecha de reserva más antigua vista en el
-# reporte) y años hacia el futuro a incluir desde la fecha de corrida (cubre
-# cargos con fecha futura, ej. contratos a varios años).
-ANIO_INICIO = 2015
-ANIOS_A_FUTURO = 5
-
-# Pausa fija entre cada request a reporte-cargo_de_reservas.php.
-PAUSA_ENTRE_REQUESTS_SEGUNDOS = 15
-REINTENTOS_POR_RANGO = 3
-ESPERA_REINTENTO_SEGUNDOS = 20
-TIMEOUT_REQUEST_SEGUNDOS = 60
-# Por debajo de este tamaño de rango, si sigue fallando ya no se sigue
-# partiendo -- se omite esa ventana y se sigue con el resto (ver docstring).
-DIAS_MINIMOS_PARA_PARTIR = 3
-
-
-def _pedir_rango(base_url: str, desde: date, hasta: date, profundidad: int = 0) -> pd.DataFrame:
-    """
-    Pide un rango de fechas del reporte de Cargo de Reservas, con reintentos.
-    Si se agotan los reintentos, PARTE el rango a la mitad y reintenta cada
-    mitad por separado (ver docstring de descargar_cargo_de_reservas: el
-    servidor de Maxinet resultó ser inestable bajo esta carga -- a veces
-    responde con el cuerpo vacío/no-JSON, a veces corta la conexión a medias
-    (ConnectionResetError) -- y el punto exacto donde falla no siempre es el
-    mismo, así que no se puede asumir que sea un rango de fechas específico
-    el problema; partir + reintentar es la manera de terminar aislando y
-    saltándose solo la ventana que de plano no se puede traer).
-    """
-    ultimo_error = None
-    for intento in range(1, REINTENTOS_POR_RANGO + 1):
-        try:
-            session = login_maxinet()
-            resp = session.post(
-                f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
-                data={"Estatus": "ALL", "Desde": desde.isoformat(), "Hasta": hasta.isoformat()},
-                timeout=TIMEOUT_REQUEST_SEGUNDOS,
-            )
-            payload = _parse_json_bom(resp)
-            return pd.DataFrame(payload["data"], columns=COLUMNAS)
-        except (requests.exceptions.RequestException, json.JSONDecodeError) as exc:
-            ultimo_error = exc
-            if intento < REINTENTOS_POR_RANGO:
-                log.warning(
-                    "Rango %s a %s, intento %d/%d falló (%s) -- reintentando en %ds",
-                    desde, hasta, intento, REINTENTOS_POR_RANGO, exc.__class__.__name__,
-                    ESPERA_REINTENTO_SEGUNDOS,
-                )
-                time.sleep(ESPERA_REINTENTO_SEGUNDOS)
-
-    dias = (hasta - desde).days
-    if dias < DIAS_MINIMOS_PARA_PARTIR:
-        log.error(
-            "Rango %s a %s: se agotaron los reintentos (%s) y ya no se puede partir más -- "
-            "se OMITE (revisar manualmente qué reserva/cargo tiene esa ventana)",
-            desde, hasta, ultimo_error,
-        )
-        return pd.DataFrame(columns=COLUMNAS)
-
-    medio = desde + timedelta(days=dias // 2)
-    log.warning(
-        "Rango %s a %s falló tras %d intento(s) -- partiendo en %s/%s y %s/%s",
-        desde, hasta, REINTENTOS_POR_RANGO, desde, medio, medio + timedelta(days=1), hasta,
-    )
-    izquierda = _pedir_rango(base_url, desde, medio, profundidad + 1)
-    derecha = _pedir_rango(base_url, medio + timedelta(days=1), hasta, profundidad + 1)
-    return pd.concat([izquierda, derecha], ignore_index=True)
-
-
 def descargar_cargo_de_reservas() -> pd.DataFrame:
     """
-    Pide al endpoint de Cargo de Reservas con Estatus=ALL, un año calendario
-    a la vez desde ANIO_INICIO hasta hoy + ANIOS_A_FUTURO, y concatena todo.
-
-    IMPORTANTE (corregido tras romper "TARIFA (QUERY)"/"TABLA RESUMEN" el
-    2026-09-15): la pestaña "QUERY" no es un snapshot de "solo lo de hoy" --
-    otras pestañas del mismo Sheet (ej. "TARIFA (QUERY)") le hacen FILTER/
-    búsquedas esperando encontrar TODAS las reservas, históricas y activas.
-    Con Estatus=ONHIRE + Desde=Hasta=hoy, cualquier reserva que no estuviera
-    ON HIRE justo hoy desaparecía de "QUERY" y esas búsquedas fallaban con
-    #N/A. Por eso se pide Estatus=ALL en vez de ONHIRE.
-
-    Se pide UN AÑO A LA VEZ en vez de un solo request con todo el rango:
-    tanto 2000-2099 (99 años) como 2015-(hoy+5) (~15-20 años) en una sola
-    llamada hicieron que el servidor de Maxinet tardara ~60s y devolviera una
-    respuesta vacía/no-JSON.
-
-    Pero pedirlo por año NO fue suficiente por sí solo: en varias corridas de
-    prueba, el servidor de Maxinet resultó ser inestable bajo ~20 requests
-    seguidos a este endpoint -- a veces devuelve el cuerpo vacío/no-JSON, a
-    veces corta la conexión a medias (ConnectionResetError), y el punto
-    exacto donde falla varió entre corridas (una vez fue siempre el mismo
-    año tras 30-120s de espera entre reintentos, otra vez falló en un año
-    distinto y más temprano). No se pudo aislar una causa determinística
-    (ni un rango de fechas específico, ni un límite de tasa con un tiempo
-    fijo), así que `_pedir_rango` combina reintentos con espera + PARTIR el
-    rango a la mitad cuando se agotan: si de plano hay una ventana que nunca
-    responde, se aísla y se omite sin perder el resto de los años.
-
-    Como el filtro de fecha del reporte parece comparar por traslape de
-    periodo de cargo (CHARGE_FROM/CHARGE_TO), una misma reserva puede salir
-    repetida en más de un año si su cargo cruza el límite del año -- por eso
-    se hace `drop_duplicates()` al final.
+    Pide al endpoint de Cargo de Reservas los mismos valores que trae el
+    formulario por defecto al abrir la liga (Estatus=ONHIRE, Desde=Hasta=
+    fecha de hoy) -- el snapshot diario que ya se pegaba a mano en "QUERY".
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
-    anio_fin = date.today().year + ANIOS_A_FUTURO
+    hoy = date.today().strftime("%Y-%m-%d")
 
-    frames = []
-    for anio in range(ANIO_INICIO, anio_fin + 1):
-        df_anio = _pedir_rango(base_url, date(anio, 1, 1), date(anio, 12, 31))
-        log.info("Año %d: %d filas", anio, len(df_anio))
-        frames.append(df_anio)
-        time.sleep(PAUSA_ENTRE_REQUESTS_SEGUNDOS)
-
-    df = pd.concat(frames, ignore_index=True)
-    filas_con_duplicados = len(df)
-    df = df.drop_duplicates().reset_index(drop=True)
-    log.info(
-        "Datos descargados de Maxinet: %d filas únicas (Estatus=ALL, %d-%d; %d filas repetidas entre años se descartaron)",
-        len(df), ANIO_INICIO, anio_fin, filas_con_duplicados - len(df),
+    session = login_maxinet()
+    resp = session.post(
+        f"{base_url}/includes/reportesLP/reporte-cargo_de_reservas.php",
+        data={"Estatus": "ONHIRE", "Desde": hoy, "Hasta": hoy},
     )
+    payload = _parse_json_bom(resp)
+
+    df = pd.DataFrame(payload["data"], columns=COLUMNAS)
+    log.info("Datos descargados de Maxinet: %d filas (Estatus=ONHIRE, fecha %s)", len(df), hoy)
 
     # Maxinet entrega varios campos de texto (ej. CLIENTE) rellenados con
     # espacios al final (campo de ancho fijo en su origen, mismo problema ya
-    # confirmado en el reporte de flota) -- las fórmulas de "TARIFA (QUERY)"
-    # comparan texto exacto y nunca hacían match contra el valor real con
-    # espacios de más, así que se limpia aquí.
+    # confirmado en el reporte de flota) -- si no se limpia, cualquier
+    # fórmula del Sheet que compare texto exacto contra CLIENTE nunca hace
+    # match contra el valor real (con espacios de más).
     for col in df.columns:
         if pd.api.types.is_object_dtype(df[col]):
             df[col] = df[col].str.strip()
