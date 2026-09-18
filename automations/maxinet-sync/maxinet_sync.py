@@ -670,37 +670,142 @@ def actualizar_vor_cliente(worksheet, session: requests.Session, col_referencia=
 # "RESUMEN": columna E ("PERIODO") -- agrupa cada fecha en su quincena
 # =========================================================================
 # Confirmado contra el archivo original manual: cada fecha de la columna A
-# se agrupa en "1-15" o "16-fin de mes" usando como valor SIEMPRE el
-# calendario de 2026 (día 1 del mes, o +1 si es la segunda quincena) sin
-# importar el año real de la fila -- es solo una etiqueta/categoría con
-# formato de fecha (el año real se filtra aparte con la columna Z), por eso
-# el mismo valor sirve para 2024, 2025 y 2026. Este proceso lo hacía a mano
-# el equipo, por quincena, y por eso el archivo original mismo tiene huecos
-# permanentes de sep-dic sin llenar en 2024, 2025 y 2026 -- se automatiza
-# aquí para que ya no dependa de que alguien lo actualice.
+# se agrupa en "1-15" o "16-fin de mes". PERO solo se colapsa a un único
+# valor ancla (día 1 del mes, o +1 si es la segunda quincena, usando SIEMPRE
+# el calendario de 2026 como año fijo de la etiqueta -- el año real se
+# filtra aparte con la columna Z) una vez que esa quincena YA TERMINÓ por
+# completo respecto a hoy. Mientras la quincena sigue en curso, cada día se
+# deja con su propio número de día (16, 17, 18...) sin agrupar -- así se
+# ve también en el archivo original mientras el periodo no ha cerrado
+# (confirmado visualmente: "UTILIZACION POR GRUPO" muestra filas sueltas
+# por día para la quincena actual, y una sola fila con el nombre del mes
+# para las quincenas ya cerradas). Antes esto se hacía a mano; se
+# automatiza aquí para que ya no dependa de que alguien lo actualice.
 EPOCH_SHEETS = date(1899, 12, 30)
 
 
 def actualizar_periodo_resumen(worksheet) -> None:
     """Recalcula toda la columna E de 'RESUMEN' a partir de las fechas de
-    la columna A. Es una fórmula pura de fecha (no depende de Maxinet ni del
-    día anterior), así que recalcular todo cada día la mantiene siempre al
-    día sin importar cuántas filas de A se hayan agregado."""
+    la columna A. Depende de la fecha de hoy (para saber qué quincenas ya
+    cerraron), así que recalcular todo cada día la mantiene siempre al día."""
     col_a = worksheet.col_values(1, value_render_option="UNFORMATTED_VALUE")
+    hoy = date.today()
 
     valores = []
+    es_ancla = []
     for valor in col_a[1:]:
         if not isinstance(valor, (int, float)):
             valores.append([""])
+            es_ancla.append(False)
             continue
+
         fecha = EPOCH_SHEETS + timedelta(days=int(valor))
-        ancla = date(2026, fecha.month, 1)
-        serial_ancla = (ancla - EPOCH_SHEETS).days
-        valores.append([serial_ancla if fecha.day <= 15 else serial_ancla + 1])
+        if fecha.day <= 15:
+            fin_periodo = date(fecha.year, fecha.month, 15)
+        else:
+            primer_dia_sig_mes = (
+                date(fecha.year + 1, 1, 1) if fecha.month == 12
+                else date(fecha.year, fecha.month + 1, 1)
+            )
+            fin_periodo = primer_dia_sig_mes - timedelta(days=1)
+
+        cerrado = fin_periodo < hoy
+        if cerrado:
+            ancla = date(2026, fecha.month, 1)
+            serial_ancla = (ancla - EPOCH_SHEETS).days
+            valor_e = serial_ancla if fecha.day <= 15 else serial_ancla + 1
+        else:
+            valor_e = fecha.day
+
+        valores.append([valor_e])
+        es_ancla.append(cerrado)
 
     ultima_fila = len(col_a)
     worksheet.update(values=valores, range_name=f"E2:E{ultima_fila}", value_input_option="USER_ENTERED")
-    log.info("RESUMEN: columna PERIODO recalculada (%d filas)", len(valores))
+
+    # Formato: quincenas cerradas se muestran como fecha ("septiembre 1"),
+    # los días sueltos de la quincena en curso se muestran como número
+    # plano (16, 17...) -- igual que en el archivo original.
+    sheet_id = worksheet.id
+    spreadsheet = worksheet.spreadsheet
+    filas_ancla = [i + 2 for i, v in enumerate(es_ancla) if v]
+    filas_numero = [i + 2 for i, v in enumerate(es_ancla) if not v]
+
+    requests_formato = []
+    for fila_ini, fila_fin in _rangos_contiguos(filas_ancla):
+        requests_formato.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
+                    "startColumnIndex": 4, "endColumnIndex": 5,
+                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "mmmm d"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        })
+    for fila_ini, fila_fin in _rangos_contiguos(filas_numero):
+        requests_formato.append({
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
+                    "startColumnIndex": 4, "endColumnIndex": 5,
+                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "0"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        })
+    if requests_formato:
+        spreadsheet.batch_update({"requests": requests_formato})
+
+    log.info(
+        "RESUMEN: columna PERIODO recalculada (%d filas, %d en quincenas cerradas, %d en curso)",
+        len(valores), sum(es_ancla), len(es_ancla) - sum(es_ancla),
+    )
+
+
+def extender_formulas_resumen(worksheet) -> None:
+    """La columna Y ('RESUMEN', = fechas transpuestas desde 'UTI. GRUPO DE
+    AUTOS V1'!2:2) crece sola cada día porque esa hoja avanza su calendario,
+    pero las fórmulas de Z:AD (año / periodo / promedio por grupo) NO se
+    extienden solas -- confirmado: en el archivo original alguien las
+    arrastra hacia abajo a mano cada vez. Se automatiza copiando la fórmula
+    de la última fila que ya la tiene hacia las filas nuevas."""
+    col_y = worksheet.col_values(25, value_render_option="UNFORMATTED_VALUE")  # Y
+    ultima_fila_y = len(col_y)
+
+    col_z_formula = worksheet.get(f"Z1:Z{ultima_fila_y}", value_render_option="FORMULA")
+    ultima_fila_formula = 0
+    for i, fila in enumerate(col_z_formula, start=1):
+        if fila and str(fila[0]).startswith("="):
+            ultima_fila_formula = i
+
+    if ultima_fila_y <= ultima_fila_formula:
+        log.info("RESUMEN: fórmulas Z:AD ya al día (fila %d)", ultima_fila_formula)
+        return
+
+    sheet_id = worksheet.id
+    spreadsheet = worksheet.spreadsheet
+    idx_z = _col_letra_a_indice("Z")
+    idx_ad = _col_letra_a_indice("AD")
+
+    spreadsheet.batch_update({
+        "requests": [{
+            "copyPaste": {
+                "source": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
+                    "startColumnIndex": idx_z, "endColumnIndex": idx_ad + 1,
+                },
+                "destination": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila_y,
+                    "startColumnIndex": idx_z, "endColumnIndex": idx_ad + 1,
+                },
+                "pasteType": "PASTE_FORMULA",
+            }
+        }]
+    })
+    log.info("RESUMEN: fórmulas Z:AD extendidas de fila %d a %d", ultima_fila_formula, ultima_fila_y)
 
 
 def main():
@@ -726,6 +831,7 @@ def main():
 
         worksheet_resumen = conectar_sheet_secundario("RESUMEN")
         actualizar_periodo_resumen(worksheet_resumen)
+        extender_formulas_resumen(worksheet_resumen)
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
