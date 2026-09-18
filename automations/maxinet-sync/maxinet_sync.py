@@ -763,49 +763,70 @@ def actualizar_periodo_resumen(worksheet) -> None:
     )
 
 
+# Cada bloque: (columna de fechas que se autoextiende sola vía
+# TRANSPOSE(UNIQUE(...)), columna donde empiezan las fórmulas por fila que
+# NO se autoextienden, columna donde terminan). Hay DOS bloques idénticos en
+# "RESUMEN", uno por cada tabla de "UTILIZACION POR GRUPO": Y:AD alimenta
+# "UTILIZACION COMERCIAL" (grupos de 'UTI. GRUPO DE AUTOS V1' filas 84-99) y
+# AS:BJ alimenta "UTILIZACION OPERATIVA" (mismas filas pero 100-115) --
+# confirmado que ambos sufren el mismo problema de arrastre manual.
+BLOQUES_PIVOTE_RESUMEN = [
+    ("Y", "Z", "AD"),
+    ("AS", "AT", "BJ"),
+]
+
+
 def extender_formulas_resumen(worksheet) -> None:
-    """La columna Y ('RESUMEN', = fechas transpuestas desde 'UTI. GRUPO DE
-    AUTOS V1'!2:2) crece sola cada día porque esa hoja avanza su calendario,
-    pero las fórmulas de Z:AD (año / periodo / promedio por grupo) NO se
+    """Las columnas de fecha de los bloques pivote de 'RESUMEN' crecen solas
+    cada día porque 'UTI. GRUPO DE AUTOS V1' avanza su calendario, pero las
+    fórmulas de año/periodo/promedio por grupo que las acompañan NO se
     extienden solas -- confirmado: en el archivo original alguien las
-    arrastra hacia abajo a mano cada vez. Se automatiza copiando la fórmula
-    de la última fila que ya la tiene hacia las filas nuevas."""
-    col_y = worksheet.col_values(25, value_render_option="UNFORMATTED_VALUE")  # Y
-    ultima_fila_y = len(col_y)
-
-    col_z_formula = worksheet.get(f"Z1:Z{ultima_fila_y}", value_render_option="FORMULA")
-    ultima_fila_formula = 0
-    for i, fila in enumerate(col_z_formula, start=1):
-        if fila and str(fila[0]).startswith("="):
-            ultima_fila_formula = i
-
-    if ultima_fila_y <= ultima_fila_formula:
-        log.info("RESUMEN: fórmulas Z:AD ya al día (fila %d)", ultima_fila_formula)
-        return
-
+    arrastra hacia abajo a mano cada vez, en cada uno de los dos bloques. Se
+    automatiza copiando la fórmula de la última fila que ya la tiene hacia
+    las filas nuevas."""
     sheet_id = worksheet.id
     spreadsheet = worksheet.spreadsheet
-    idx_z = _col_letra_a_indice("Z")
-    idx_ad = _col_letra_a_indice("AD")
+    requests_body = []
 
-    spreadsheet.batch_update({
-        "requests": [{
+    for col_fecha, col_ini, col_fin in BLOQUES_PIVOTE_RESUMEN:
+        idx_fecha = _col_letra_a_indice(col_fecha)
+        col_fecha_vals = worksheet.col_values(idx_fecha + 1, value_render_option="UNFORMATTED_VALUE")
+        ultima_fila_fecha = len(col_fecha_vals)
+
+        col_formula = worksheet.get(f"{col_ini}1:{col_ini}{ultima_fila_fecha}", value_render_option="FORMULA")
+        ultima_fila_formula = 0
+        for i, fila in enumerate(col_formula, start=1):
+            if fila and str(fila[0]).startswith("="):
+                ultima_fila_formula = i
+
+        if ultima_fila_fecha <= ultima_fila_formula:
+            log.info("RESUMEN: fórmulas %s:%s ya al día (fila %d)", col_ini, col_fin, ultima_fila_formula)
+            continue
+
+        idx_ini = _col_letra_a_indice(col_ini)
+        idx_fin = _col_letra_a_indice(col_fin)
+        requests_body.append({
             "copyPaste": {
                 "source": {
                     "sheetId": sheet_id,
                     "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
-                    "startColumnIndex": idx_z, "endColumnIndex": idx_ad + 1,
+                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
                 },
                 "destination": {
                     "sheetId": sheet_id,
-                    "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila_y,
-                    "startColumnIndex": idx_z, "endColumnIndex": idx_ad + 1,
+                    "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila_fecha,
+                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
                 },
                 "pasteType": "PASTE_FORMULA",
             }
-        }]
-    })
-    log.info("RESUMEN: fórmulas Z:AD extendidas de fila %d a %d", ultima_fila_formula, ultima_fila_y)
+        })
+        log.info(
+            "RESUMEN: fórmulas %s:%s extendidas de fila %d a %d",
+            col_ini, col_fin, ultima_fila_formula, ultima_fila_fecha,
+        )
+
+    if requests_body:
+        spreadsheet.batch_update({"requests": requests_body})
 
 
 def main():
