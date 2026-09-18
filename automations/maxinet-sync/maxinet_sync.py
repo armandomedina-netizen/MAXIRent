@@ -766,12 +766,16 @@ def actualizar_periodo_resumen(worksheet) -> None:
 # Cada bloque: (columna de fechas que se autoextiende sola vía
 # TRANSPOSE(UNIQUE(...)), columna donde empiezan las fórmulas por fila que
 # NO se autoextienden, columna donde terminan). Hay DOS bloques idénticos en
-# "RESUMEN", uno por cada tabla de "UTILIZACION POR GRUPO": Y:AD alimenta
-# "UTILIZACION COMERCIAL" (grupos de 'UTI. GRUPO DE AUTOS V1' filas 84-99) y
-# AS:BJ alimenta "UTILIZACION OPERATIVA" (mismas filas pero 100-115) --
-# confirmado que ambos sufren el mismo problema de arrastre manual.
+# "RESUMEN", uno por cada tabla de "UTILIZACION POR GRUPO": Y:AP alimenta
+# "UTILIZACION COMERCIAL" (año + periodo + los 15 grupos de 'UTI. GRUPO DE
+# AUTOS V1' filas 84-99) y AS:BJ alimenta "UTILIZACION OPERATIVA" (mismas
+# 15 columnas de grupo pero filas 100-115) -- confirmado que ambos sufren el
+# mismo problema de arrastre manual. OJO: el rango debe cubrir las 15
+# columnas de grupo completas (Z:AP, no solo Z:AD) -- un primer intento se
+# quedó corto ahí y dejó sin fórmula las columnas E-P de "UTILIZACION POR
+# GRUPO" (PANEL en adelante) en las filas de la quincena en curso.
 BLOQUES_PIVOTE_RESUMEN = [
-    ("Y", "Z", "AD"),
+    ("Y", "Z", "AP"),
     ("AS", "AT", "BJ"),
 ]
 
@@ -793,7 +797,11 @@ def extender_formulas_resumen(worksheet) -> None:
         col_fecha_vals = worksheet.col_values(idx_fecha + 1, value_render_option="UNFORMATTED_VALUE")
         ultima_fila_fecha = len(col_fecha_vals)
 
-        col_formula = worksheet.get(f"{col_ini}1:{col_ini}{ultima_fila_fecha}", value_render_option="FORMULA")
+        # Se revisa la ÚLTIMA columna del bloque (col_fin), no la primera --
+        # si alguna vez el rango se copia incompleto (como pasó antes con
+        # Z:AD en vez de Z:AP), revisar solo la primera columna haría creer
+        # que el bloque completo ya está al día cuando no es cierto.
+        col_formula = worksheet.get(f"{col_fin}1:{col_fin}{ultima_fila_fecha}", value_render_option="FORMULA")
         ultima_fila_formula = 0
         for i, fila in enumerate(col_formula, start=1):
             if fila and str(fila[0]).startswith("="):
