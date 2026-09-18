@@ -666,6 +666,43 @@ def actualizar_vor_cliente(worksheet, session: requests.Session, col_referencia=
     )
 
 
+# =========================================================================
+# "RESUMEN": columna E ("PERIODO") -- agrupa cada fecha en su quincena
+# =========================================================================
+# Confirmado contra el archivo original manual: cada fecha de la columna A
+# se agrupa en "1-15" o "16-fin de mes" usando como valor SIEMPRE el
+# calendario de 2026 (día 1 del mes, o +1 si es la segunda quincena) sin
+# importar el año real de la fila -- es solo una etiqueta/categoría con
+# formato de fecha (el año real se filtra aparte con la columna Z), por eso
+# el mismo valor sirve para 2024, 2025 y 2026. Este proceso lo hacía a mano
+# el equipo, por quincena, y por eso el archivo original mismo tiene huecos
+# permanentes de sep-dic sin llenar en 2024, 2025 y 2026 -- se automatiza
+# aquí para que ya no dependa de que alguien lo actualice.
+EPOCH_SHEETS = date(1899, 12, 30)
+
+
+def actualizar_periodo_resumen(worksheet) -> None:
+    """Recalcula toda la columna E de 'RESUMEN' a partir de las fechas de
+    la columna A. Es una fórmula pura de fecha (no depende de Maxinet ni del
+    día anterior), así que recalcular todo cada día la mantiene siempre al
+    día sin importar cuántas filas de A se hayan agregado."""
+    col_a = worksheet.col_values(1, value_render_option="UNFORMATTED_VALUE")
+
+    valores = []
+    for valor in col_a[1:]:
+        if not isinstance(valor, (int, float)):
+            valores.append([""])
+            continue
+        fecha = EPOCH_SHEETS + timedelta(days=int(valor))
+        ancla = date(2026, fecha.month, 1)
+        serial_ancla = (ancla - EPOCH_SHEETS).days
+        valores.append([serial_ancla if fecha.day <= 15 else serial_ancla + 1])
+
+    ultima_fila = len(col_a)
+    worksheet.update(values=valores, range_name=f"E2:E{ultima_fila}", value_input_option="USER_ENTERED")
+    log.info("RESUMEN: columna PERIODO recalculada (%d filas)", len(valores))
+
+
 def main():
     try:
         session = login_maxinet()
@@ -686,6 +723,9 @@ def main():
 
         worksheet_grupo_autos = conectar_sheet_secundario(os.environ["WORKSHEET_GRUPO_AUTOS"])
         avanzar_columna_grupo_autos(worksheet_grupo_autos)
+
+        worksheet_resumen = conectar_sheet_secundario("RESUMEN")
+        actualizar_periodo_resumen(worksheet_resumen)
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
