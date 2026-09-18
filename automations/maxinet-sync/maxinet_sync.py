@@ -684,6 +684,14 @@ def actualizar_vor_cliente(worksheet, session: requests.Session, col_referencia=
 EPOCH_SHEETS = date(1899, 12, 30)
 
 
+def _fin_de_quincena(anio: int, mes: int, es_primera_mitad: bool) -> date:
+    """Último día de la quincena (1-15 o 16-fin de mes) de ese mes/año."""
+    if es_primera_mitad:
+        return date(anio, mes, 15)
+    primer_dia_sig_mes = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
+    return primer_dia_sig_mes - timedelta(days=1)
+
+
 def actualizar_periodo_resumen(worksheet) -> None:
     """Recalcula toda la columna E de 'RESUMEN' a partir de las fechas de
     la columna A. Depende de la fecha de hoy (para saber qué quincenas ya
@@ -692,44 +700,64 @@ def actualizar_periodo_resumen(worksheet) -> None:
     hoy = date.today()
 
     valores = []
-    es_ancla = []
+    estados = []  # "ancla" | "numero" | "vacio", por fila
     for valor in col_a[1:]:
         if not isinstance(valor, (int, float)):
             valores.append([""])
-            es_ancla.append(False)
+            estados.append("vacio")
             continue
 
         fecha = EPOCH_SHEETS + timedelta(days=int(valor))
-        if fecha.day <= 15:
-            fin_periodo = date(fecha.year, fecha.month, 15)
-        else:
-            primer_dia_sig_mes = (
-                date(fecha.year + 1, 1, 1) if fecha.month == 12
-                else date(fecha.year, fecha.month + 1, 1)
-            )
-            fin_periodo = primer_dia_sig_mes - timedelta(days=1)
+        es_primera_mitad = fecha.day <= 15
+        fin_periodo = _fin_de_quincena(fecha.year, fecha.month, es_primera_mitad)
 
-        cerrado = fin_periodo < hoy
-        if cerrado:
+        # Confirmado contra el archivo original: en años YA CERRADOS
+        # (anteriores al actual), el proceso manual se quedó parado en
+        # septiembre para siempre -- 2024 y 2025 muestran septiembre 16-30
+        # con los días sueltos (16, 17, 18...30, nunca colapsados a
+        # "septiembre 2"), y de octubre en adelante la celda está
+        # completamente VACÍA (ni colapsada ni con día suelto -- Nuvia
+        # nunca llegó a esos meses ese año y no hay evidencia de que vaya a
+        # volver). "TABLAS" depende exactamente de que septiembre 16-30
+        # quede suelto para poder comparar año contra año (AVERAGEIFS por
+        # número de día) -- si además dejáramos octubre-diciembre con
+        # números sueltos, esas fechas se colarían en el promedio y ya no
+        # coincidiría con el archivo original (confirmado: así se rompió al
+        # primer intento). Para el año EN CURSO sí seguimos avanzando
+        # siempre con normalidad -- no hay razón para que la automatización
+        # se "quede parada" en septiembre como pasaba a mano.
+        if fecha.year < hoy.year and fecha.month == 9 and not es_primera_mitad:
+            estado = "numero"
+        elif fecha.year < hoy.year and fecha.month > 9:
+            estado = "vacio"
+        elif fin_periodo < hoy:
+            estado = "ancla"
+        else:
+            estado = "numero"
+
+        if estado == "ancla":
             ancla = date(2026, fecha.month, 1)
             serial_ancla = (ancla - EPOCH_SHEETS).days
             valor_e = serial_ancla if fecha.day <= 15 else serial_ancla + 1
-        else:
+        elif estado == "numero":
             valor_e = fecha.day
+        else:
+            valor_e = ""
 
         valores.append([valor_e])
-        es_ancla.append(cerrado)
+        estados.append(estado)
 
     ultima_fila = len(col_a)
     worksheet.update(values=valores, range_name=f"E2:E{ultima_fila}", value_input_option="USER_ENTERED")
 
     # Formato: quincenas cerradas se muestran como fecha ("septiembre 1"),
-    # los días sueltos de la quincena en curso se muestran como número
-    # plano (16, 17...) -- igual que en el archivo original.
+    # los días sueltos (de la quincena en curso, o los de septiembre en años
+    # anteriores) como número plano -- igual que en el archivo original. Las
+    # filas "vacío" no necesitan formato.
     sheet_id = worksheet.id
     spreadsheet = worksheet.spreadsheet
-    filas_ancla = [i + 2 for i, v in enumerate(es_ancla) if v]
-    filas_numero = [i + 2 for i, v in enumerate(es_ancla) if not v]
+    filas_ancla = [i + 2 for i, v in enumerate(estados) if v == "ancla"]
+    filas_numero = [i + 2 for i, v in enumerate(estados) if v == "numero"]
 
     requests_formato = []
     for fila_ini, fila_fin in _rangos_contiguos(filas_ancla):
@@ -758,8 +786,9 @@ def actualizar_periodo_resumen(worksheet) -> None:
         spreadsheet.batch_update({"requests": requests_formato})
 
     log.info(
-        "RESUMEN: columna PERIODO recalculada (%d filas, %d en quincenas cerradas, %d en curso)",
-        len(valores), sum(es_ancla), len(es_ancla) - sum(es_ancla),
+        "RESUMEN: columna PERIODO recalculada (%d filas: %d cerradas, %d sueltas, %d vacías)",
+        len(valores), len(filas_ancla), len(filas_numero),
+        len(estados) - len(filas_ancla) - len(filas_numero),
     )
 
 
@@ -837,6 +866,187 @@ def extender_formulas_resumen(worksheet) -> None:
         spreadsheet.batch_update({"requests": requests_body})
 
 
+# =========================================================================
+# "TABLAS": fuente de las gráficas de la presentación
+# =========================================================================
+# Confirmado contra el archivo original: a diferencia de RESUMEN!E (que ya
+# trae precargadas las fechas de todo el año), acá Nuvia escribe a mano,
+# periódicamente, el mismo listado de quincenas -- pero SOLO hasta la
+# quincena que está en curso, sin adelantar meses futuros. Lo pega en TRES
+# columnas independientes (A, BI, BQ; las demás columnas "PERIODO" de cada
+# bloque son fórmulas que encadenan de vuelta a estas tres, ej. F3="=A3",
+# AD3="=Y3", etc. -- confirmado leyendo las fórmulas de cada bloque). Cada
+# bloque de valores (2024/2025/2026 por métrica) es un AVERAGEIFS por fila
+# contra RESUMEN, y esas filas tampoco se arrastran solas hacia abajo.
+MESES_QUINCENA = [
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+]
+
+# (columna donde empiezan las fórmulas por fila que dependen del periodo,
+# columna donde terminan) -- para cada uno de los 11 bloques cuya columna
+# "PERIODO" es una fórmula encadenada (no necesitan que les escribamos el
+# periodo directamente, solo que se les arrastren las fórmulas hacia abajo).
+BLOQUES_TABLAS_ENCADENADOS = [
+    ("B", "E"),    # ONHIRE (2024/2025/2026/SIN LOCSA)
+    ("F", "I"),    # DISPONIBLES
+    ("K", "N"),    # EN TALLER LOCAL
+    ("P", "R"),    # GESTORIA
+    ("T", "W"),    # SEMINUEVOS
+    ("Y", "AB"),   # USO INTERNO
+    ("AD", "AG"),  # Uti LP vs Inv. Operativo
+    ("AH", "AK"),  # Uti LP vs Inv. Disponible (comer)
+    ("AM", "AP"),  # UTILIZACIÓN CLIENTE
+    ("AR", "AU"),  # VOR LP TALLER LOCAL
+    ("AV", "AY"),  # VOR LP DISPONIBLE
+]
+# Estos dos bloques tienen su propia columna PERIODO escrita a mano (BI, BQ
+# -- no encadenan a A), así que solo hace falta arrastrar sus valores.
+BLOQUES_TABLAS_VALORES_SUELTOS = [
+    ("BJ", "BK"),  # INVENTARIO OPERATIVO (periodo en BI)
+    ("BR", "BR"),  # bloque final para la presentación (periodo en BQ)
+]
+
+
+def _generar_lista_periodos_acotada(hoy: date) -> list:
+    """Igual que la columna PERIODO de RESUMEN, pero en vez de una fila por
+    fecha, una fila por quincena ÚNICA -- y se detiene en la quincena que
+    está en curso (no adelanta meses que todavía no empiezan), que es
+    exactamente como se ve la columna A de 'TABLAS' en el archivo original."""
+    filas = []  # (valor, es_ancla)
+    for mes in range(1, 13):
+        for es_primera_mitad in (True, False):
+            fin_periodo = _fin_de_quincena(hoy.year, mes, es_primera_mitad)
+            if fin_periodo < hoy:
+                ancla = date(2026, mes, 1)
+                serial_ancla = (ancla - EPOCH_SHEETS).days
+                valor = serial_ancla if es_primera_mitad else serial_ancla + 1
+                filas.append((valor, True))
+            else:
+                dia_ini = 1 if es_primera_mitad else 16
+                for dia in range(dia_ini, fin_periodo.day + 1):
+                    filas.append((dia, False))
+                return filas
+    return filas
+
+
+def _extender_bloques_formulas(worksheet, sheet_id, spreadsheet, bloques, ultima_fila) -> list:
+    """Arrastra hacia abajo, desde la última fila que ya tiene fórmula hasta
+    `ultima_fila`, cada bloque (col_ini, col_fin) de la lista. Devuelve las
+    requests de copyPaste armadas (no las ejecuta)."""
+    requests_body = []
+    for col_ini, col_fin in bloques:
+        idx_ini = _col_letra_a_indice(col_ini)
+        idx_fin = _col_letra_a_indice(col_fin)
+        col_formula = worksheet.get(f"{col_fin}1:{col_fin}{ultima_fila}", value_render_option="FORMULA")
+        ultima_fila_formula = 0
+        for i, fila in enumerate(col_formula, start=1):
+            if fila and str(fila[0]).startswith("="):
+                ultima_fila_formula = i
+
+        if ultima_fila_formula == 0 or ultima_fila <= ultima_fila_formula:
+            log.info("TABLAS: fórmulas %s:%s ya al día (fila %d)", col_ini, col_fin, ultima_fila_formula)
+            continue
+
+        requests_body.append({
+            "copyPaste": {
+                "source": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
+                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
+                },
+                "destination": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila,
+                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
+                },
+                "pasteType": "PASTE_FORMULA",
+            }
+        })
+        log.info(
+            "TABLAS: fórmulas %s:%s extendidas de fila %d a %d",
+            col_ini, col_fin, ultima_fila_formula, ultima_fila,
+        )
+    return requests_body
+
+
+def actualizar_tablas(worksheet) -> None:
+    """Automatiza lo que Nuvia hace a mano en 'TABLAS': escribe el listado
+    de periodos en A, BI y BQ, y arrastra hacia abajo las fórmulas de todos
+    los bloques de valores para que alcancen la fila nueva."""
+    hoy = date.today()
+    filas = _generar_lista_periodos_acotada(hoy)
+    total_filas = len(filas)
+    ultima_fila = 2 + total_filas
+
+    sheet_id = worksheet.id
+    spreadsheet = worksheet.spreadsheet
+
+    valores = [[v] for v, _ in filas]
+    columnas_periodo = ["A", "BI", "BQ"]
+    for columna in columnas_periodo:
+        worksheet.update(
+            values=valores, range_name=f"{columna}3:{columna}{ultima_fila}", value_input_option="USER_ENTERED"
+        )
+
+    # Limpiar cualquier residuo que haya quedado más abajo del nuevo final
+    # (ej. BI/BQ en el automatizado tenían filas viejas de sobra).
+    filas_a_limpiar = [
+        f"{columna}{ultima_fila + 1}:{columna}{worksheet.row_count}"
+        for columna in columnas_periodo
+        if worksheet.row_count > ultima_fila
+    ]
+    if filas_a_limpiar:
+        worksheet.batch_clear(filas_a_limpiar)
+
+    # Formato: quincenas cerradas como fecha ("septiembre 1"), días sueltos
+    # de la quincena en curso como número plano -- igual que RESUMEN!E.
+    filas_ancla = [3 + i for i, (_, es_ancla) in enumerate(filas) if es_ancla]
+    filas_numero = [3 + i for i, (_, es_ancla) in enumerate(filas) if not es_ancla]
+
+    requests_formato = []
+    for columna in columnas_periodo:
+        idx_col = _col_letra_a_indice(columna)
+        for fila_ini, fila_fin in _rangos_contiguos(filas_ancla):
+            requests_formato.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
+                        "startColumnIndex": idx_col, "endColumnIndex": idx_col + 1,
+                    },
+                    "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "mmmm d"}}},
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            })
+        for fila_ini, fila_fin in _rangos_contiguos(filas_numero):
+            requests_formato.append({
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
+                        "startColumnIndex": idx_col, "endColumnIndex": idx_col + 1,
+                    },
+                    "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "0"}}},
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            })
+    if requests_formato:
+        spreadsheet.batch_update({"requests": requests_formato})
+
+    log.info(
+        "TABLAS: periodo actualizado (%d filas, %d cerradas, %d en curso)",
+        total_filas, len(filas_ancla), len(filas_numero),
+    )
+
+    requests_extender = _extender_bloques_formulas(
+        worksheet, sheet_id, spreadsheet, BLOQUES_TABLAS_ENCADENADOS, ultima_fila
+    )
+    requests_extender += _extender_bloques_formulas(
+        worksheet, sheet_id, spreadsheet, BLOQUES_TABLAS_VALORES_SUELTOS, ultima_fila
+    )
+    if requests_extender:
+        spreadsheet.batch_update({"requests": requests_extender})
+
+
 def main():
     try:
         session = login_maxinet()
@@ -861,6 +1071,9 @@ def main():
         worksheet_resumen = conectar_sheet_secundario("RESUMEN")
         actualizar_periodo_resumen(worksheet_resumen)
         extender_formulas_resumen(worksheet_resumen)
+
+        worksheet_tablas = conectar_sheet_secundario("TABLAS")
+        actualizar_tablas(worksheet_tablas)
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
