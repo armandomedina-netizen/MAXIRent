@@ -1077,12 +1077,57 @@ def actualizar_tablas(worksheet) -> None:
 FILA_INICIO_DETALLE_RENTAS = 14
 
 
+def _avanzar_periodo_on_hire(worksheet, hoy: date) -> None:
+    """Recorre a "mes actual" la columna L (PERIODO) de toda fila cuyo
+    Status sea "ON HIRE". Confirmado contra el archivo original: L en esa
+    tabla NO guarda el mes en que empezó la renta -- guarda el último mes
+    en que se confirmó que la unidad seguía activa, y se actualiza mientras
+    no se devuelva (las 777 filas "ON HIRE" del original, sin excepción,
+    tenían L = mes actual). Sin este paso, AVERAGEIFS(...,"on hire") del
+    mes en curso no encuentra ninguna fila y da error de división por
+    cero. Se corre TODOS los días (no solo al cambiar de mes) para que las
+    rentas nuevas que Nuvia agrega a mitad de mes también cuenten."""
+    ancla_mes_actual = date(2026, hoy.month, 1)
+    serial_mes_actual = (ancla_mes_actual - EPOCH_SHEETS).days
+
+    col_g = worksheet.get(f"G{FILA_INICIO_DETALLE_RENTAS}:G", value_render_option="UNFORMATTED_VALUE")
+    col_l = worksheet.get(f"L{FILA_INICIO_DETALLE_RENTAS}:L", value_render_option="UNFORMATTED_VALUE")
+    total_filas = max(len(col_g), len(col_l))
+
+    nuevos_l = []
+    cambios = 0
+    for i in range(total_filas):
+        status = str(col_g[i][0]).strip().upper() if i < len(col_g) and col_g[i] else ""
+        valor_l = col_l[i][0] if i < len(col_l) and col_l[i] else ""
+        if status == "ON HIRE" and valor_l != serial_mes_actual:
+            nuevos_l.append([serial_mes_actual])
+            cambios += 1
+        else:
+            nuevos_l.append([valor_l])
+
+    if cambios == 0:
+        log.info("Duración rentas: PERIODO de filas ON HIRE ya está al día")
+        return
+
+    ultima_fila = FILA_INICIO_DETALLE_RENTAS + total_filas - 1
+    worksheet.update(
+        values=nuevos_l, range_name=f"L{FILA_INICIO_DETALLE_RENTAS}:L{ultima_fila}",
+        value_input_option="USER_ENTERED",
+    )
+    log.info("Duración rentas: PERIODO actualizado a mes actual en %d filas ON HIRE", cambios)
+
+
 def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=12) -> None:
     """Si el mes en curso todavía no tiene su fórmula viva en la fila
-    ACTIVAS, congela a valor fijo cualquier mes anterior que se haya
+    ACTIVAS: congela a valor fijo cualquier mes anterior que se haya
     quedado con fórmula viva (normalmente solo el inmediatamente anterior,
-    pero revisa todos por si la automatización dejó de correr varios meses)
-    y crea la fórmula viva del mes en curso."""
+    pero revisa todos por si la automatización dejó de correr varios
+    meses), USANDO TODAVÍA las filas "on hire" del mes viejo -- recién
+    después de congelar se recorre PERIODO al mes nuevo (_avanzar_periodo_
+    on_hire) y se crea la fórmula viva del mes en curso. El orden importa:
+    si se recorriera PERIODO antes de congelar, el mes que se está
+    cerrando se quedaría sin ninguna fila "on hire" propia y congelaría en
+    0 en vez del valor real."""
     hoy = date.today()
     idx_mes_actual = hoy.month - 1  # B=enero=0
 
@@ -1090,34 +1135,40 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
     fila_formulas = fila_formulas[0] if fila_formulas else []
 
     valor_actual = fila_formulas[idx_mes_actual] if idx_mes_actual < len(fila_formulas) else ""
-    if isinstance(valor_actual, str) and valor_actual.startswith("="):
+    ya_esta_creado = isinstance(valor_actual, str) and valor_actual.startswith("=")
+
+    if not ya_esta_creado:
+        for i in range(idx_mes_actual):
+            valor = fila_formulas[i] if i < len(fila_formulas) else ""
+            if isinstance(valor, str) and valor.startswith("="):
+                col = _indice_a_col_letra(_col_letra_a_indice("B") + i)
+                valor_congelado = worksheet.get(f"{col}{fila_activas}", value_render_option="UNFORMATTED_VALUE")
+                valor_congelado = valor_congelado[0][0] if valor_congelado and valor_congelado[0] else 0
+                # AVERAGEIFS sobre un mes sin ningún registro "on hire" da
+                # error de división por cero -- en ese caso gspread
+                # devuelve el texto descriptivo del error en vez de un
+                # número; escribirlo tal cual dejaría ese texto pegado
+                # como valor literal. Se congela como 0 (mismo criterio
+                # que el IFERROR(...,0) de la fila RETORNOS).
+                if isinstance(valor_congelado, str) and valor_congelado.startswith("#"):
+                    log.warning(
+                        "Duración rentas: ACTIVAS %s%d dio error (%s) -- se congela como 0",
+                        col, fila_activas, valor_congelado,
+                    )
+                    valor_congelado = 0
+                worksheet.update(
+                    values=[[valor_congelado]], range_name=f"{col}{fila_activas}", value_input_option="USER_ENTERED"
+                )
+                log.info("Duración rentas: ACTIVAS %s%d congelado a %s", col, fila_activas, valor_congelado)
+
+    _avanzar_periodo_on_hire(worksheet, hoy)
+
+    if ya_esta_creado:
         log.info(
             "Duración rentas: ACTIVAS del mes en curso ya tiene fórmula viva (fila %d)",
             fila_activas,
         )
         return
-
-    for i in range(idx_mes_actual):
-        valor = fila_formulas[i] if i < len(fila_formulas) else ""
-        if isinstance(valor, str) and valor.startswith("="):
-            col = _indice_a_col_letra(_col_letra_a_indice("B") + i)
-            valor_congelado = worksheet.get(f"{col}{fila_activas}", value_render_option="UNFORMATTED_VALUE")
-            valor_congelado = valor_congelado[0][0] if valor_congelado and valor_congelado[0] else 0
-            # AVERAGEIFS sobre un mes sin ningún registro "on hire" da error
-            # de división por cero -- en ese caso gspread devuelve el texto
-            # descriptivo del error en vez de un número; escribirlo tal cual
-            # dejaría ese texto pegado como valor literal. Se congela como 0
-            # (mismo criterio que el IFERROR(...,0) de la fila RETORNOS).
-            if isinstance(valor_congelado, str) and valor_congelado.startswith("#"):
-                log.warning(
-                    "Duración rentas: ACTIVAS %s%d dio error (%s) -- se congela como 0",
-                    col, fila_activas, valor_congelado,
-                )
-                valor_congelado = 0
-            worksheet.update(
-                values=[[valor_congelado]], range_name=f"{col}{fila_activas}", value_input_option="USER_ENTERED"
-            )
-            log.info("Duración rentas: ACTIVAS %s%d congelado a %s", col, fila_activas, valor_congelado)
 
     col_actual = _indice_a_col_letra(_col_letra_a_indice("B") + idx_mes_actual)
     formula_nueva = (
