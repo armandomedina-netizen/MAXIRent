@@ -1057,6 +1057,79 @@ def actualizar_tablas(worksheet) -> None:
         spreadsheet.batch_update({"requests": requests_extender})
 
 
+# =========================================================================
+# "Duración rentas": fila "TIEMPO DE VIDA (ACTIVAS)" del año en curso
+# =========================================================================
+# Esta hoja NO la alimenta esta automatización -- Nuvia pega a mano nuevas
+# rentas en la tabla detalle (fila 14 en adelante). Confirmado comparando
+# contra el archivo original: la fila "TIEMPO DE VIDA (RETORNOS)" de cada
+# año usa un rango fijo ($F$14:$F$2838) que hay que extender a mano cuando
+# la tabla crece (eso se corrigió una sola vez, sincronizando también las
+# filas de detalle que le faltaban al automatizado). La fila "TIEMPO DE
+# VIDA (ACTIVAS)" es distinta: cada mes tiene su propia fórmula
+# AVERAGEIFS(...,"on hire") con rango ABIERTO (ej. "$F14:$F", sin fila
+# final) -- no necesita extenderse nunca -- pero SÍ hay que congelarla a
+# valor fijo en cuanto el mes cierra (no se puede recalcular después: "on
+# hire" es un estado que cambia con el tiempo, así que el valor solo es
+# correcto en el momento exacto en que el mes terminó). Los años ya
+# cerrados (2024, 2025) quedaron fijos para siempre -- solo la fila del año
+# EN CURSO necesita este avance.
+FILA_INICIO_DETALLE_RENTAS = 14
+
+
+def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=12) -> None:
+    """Si el mes en curso todavía no tiene su fórmula viva en la fila
+    ACTIVAS, congela a valor fijo cualquier mes anterior que se haya
+    quedado con fórmula viva (normalmente solo el inmediatamente anterior,
+    pero revisa todos por si la automatización dejó de correr varios meses)
+    y crea la fórmula viva del mes en curso."""
+    hoy = date.today()
+    idx_mes_actual = hoy.month - 1  # B=enero=0
+
+    fila_formulas = worksheet.get(f"B{fila_activas}:M{fila_activas}", value_render_option="FORMULA")
+    fila_formulas = fila_formulas[0] if fila_formulas else []
+
+    valor_actual = fila_formulas[idx_mes_actual] if idx_mes_actual < len(fila_formulas) else ""
+    if isinstance(valor_actual, str) and valor_actual.startswith("="):
+        log.info(
+            "Duración rentas: ACTIVAS del mes en curso ya tiene fórmula viva (fila %d)",
+            fila_activas,
+        )
+        return
+
+    for i in range(idx_mes_actual):
+        valor = fila_formulas[i] if i < len(fila_formulas) else ""
+        if isinstance(valor, str) and valor.startswith("="):
+            col = _indice_a_col_letra(_col_letra_a_indice("B") + i)
+            valor_congelado = worksheet.get(f"{col}{fila_activas}", value_render_option="UNFORMATTED_VALUE")
+            valor_congelado = valor_congelado[0][0] if valor_congelado and valor_congelado[0] else 0
+            # AVERAGEIFS sobre un mes sin ningún registro "on hire" da error
+            # de división por cero -- en ese caso gspread devuelve el texto
+            # descriptivo del error en vez de un número; escribirlo tal cual
+            # dejaría ese texto pegado como valor literal. Se congela como 0
+            # (mismo criterio que el IFERROR(...,0) de la fila RETORNOS).
+            if isinstance(valor_congelado, str) and valor_congelado.startswith("#"):
+                log.warning(
+                    "Duración rentas: ACTIVAS %s%d dio error (%s) -- se congela como 0",
+                    col, fila_activas, valor_congelado,
+                )
+                valor_congelado = 0
+            worksheet.update(
+                values=[[valor_congelado]], range_name=f"{col}{fila_activas}", value_input_option="USER_ENTERED"
+            )
+            log.info("Duración rentas: ACTIVAS %s%d congelado a %s", col, fila_activas, valor_congelado)
+
+    col_actual = _indice_a_col_letra(_col_letra_a_indice("B") + idx_mes_actual)
+    formula_nueva = (
+        f'=AVERAGEIFS($F{FILA_INICIO_DETALLE_RENTAS}:$F,$L{FILA_INICIO_DETALLE_RENTAS}:$L,'
+        f'{col_actual}${fila_encabezado},$G{FILA_INICIO_DETALLE_RENTAS}:$G,"on hire")'
+    )
+    worksheet.update(
+        values=[[formula_nueva]], range_name=f"{col_actual}{fila_activas}", value_input_option="USER_ENTERED"
+    )
+    log.info("Duración rentas: ACTIVAS %s%d creado con fórmula viva", col_actual, fila_activas)
+
+
 def main():
     try:
         session = login_maxinet()
@@ -1084,6 +1157,9 @@ def main():
 
         worksheet_tablas = conectar_sheet_secundario("TABLAS")
         actualizar_tablas(worksheet_tablas)
+
+        worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
+        avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
