@@ -1077,6 +1077,62 @@ def actualizar_tablas(worksheet) -> None:
 FILA_INICIO_DETALLE_RENTAS = 14
 
 
+def avanzar_formula_dia_duracion_rentas(worksheet) -> None:
+    """Ajusta la fórmula de la columna E ('DIA') de la tabla detalle según
+    el Status de cada fila -- confirmado 1 a 1 contra las 3010 filas del
+    archivo original, sin ninguna excepción:
+    - Status "ON HIRE"  -> =IF(B=\"\",\"\",TODAY()-C)  (días transcurridos
+      HASTA HOY; la columna D todavía es una fecha placeholder muy a
+      futuro para una renta que sigue activa, no la devolución real).
+    - Cualquier otro status (ej. "RETURNED") -> =IF(B=\"\",\"\",D-C)
+      (duración fija, ya terminada).
+    Nuvia lo señaló como una fórmula que había que corregir. Se revisa
+    todos los días -- cuando una renta se devuelve (Status cambia y D se
+    actualiza a la fecha real), la fórmula debe "fijarse" en D-C en vez de
+    seguir creciendo con TODAY()."""
+    formulas_e = worksheet.get(f"E{FILA_INICIO_DETALLE_RENTAS}:E", value_render_option="FORMULA")
+    valores_g = worksheet.get(f"G{FILA_INICIO_DETALLE_RENTAS}:G", value_render_option="UNFORMATTED_VALUE")
+    valores_b = worksheet.get(f"B{FILA_INICIO_DETALLE_RENTAS}:B", value_render_option="UNFORMATTED_VALUE")
+    total_filas = max(len(formulas_e), len(valores_g), len(valores_b))
+
+    nuevas_e = []
+    cambios = 0
+    for i in range(total_filas):
+        fila = FILA_INICIO_DETALLE_RENTAS + i
+        placa = valores_b[i][0] if i < len(valores_b) and valores_b[i] else ""
+        actual = formulas_e[i][0] if i < len(formulas_e) and formulas_e[i] else ""
+
+        if not placa:
+            nuevas_e.append([actual])
+            continue
+
+        status = str(valores_g[i][0]).strip().upper() if i < len(valores_g) and valores_g[i] else ""
+        debe_usar_today = status == "ON HIRE"
+        actual_usa_today = isinstance(actual, str) and "TODAY()" in actual
+
+        if actual_usa_today == debe_usar_today:
+            nuevas_e.append([actual])
+            continue
+
+        if debe_usar_today:
+            nueva = f'=IF(B{fila}="","",TODAY()-C{fila})'
+        else:
+            nueva = f'=IF(B{fila}="","",D{fila}-C{fila})'
+        nuevas_e.append([nueva])
+        cambios += 1
+
+    if cambios == 0:
+        log.info("Duración rentas: fórmula de DIA ya está al día en todas las filas")
+        return
+
+    ultima_fila = FILA_INICIO_DETALLE_RENTAS + total_filas - 1
+    worksheet.update(
+        values=nuevas_e, range_name=f"E{FILA_INICIO_DETALLE_RENTAS}:E{ultima_fila}",
+        value_input_option="USER_ENTERED",
+    )
+    log.info("Duración rentas: fórmula de DIA corregida en %d filas", cambios)
+
+
 def _avanzar_periodo_on_hire(worksheet, hoy: date) -> None:
     """Recorre a "mes actual" la columna L (PERIODO) de toda fila cuyo
     Status sea "ON HIRE". Confirmado contra el archivo original: L en esa
@@ -1210,6 +1266,7 @@ def main():
         actualizar_tablas(worksheet_tablas)
 
         worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
+        avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
         avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
 
         worksheet = conectar_sheet()
