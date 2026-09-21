@@ -358,25 +358,35 @@ def _indice_a_col_letra(indice: int) -> str:
 
 def _encontrar_columna_por_fecha(worksheet, fecha_objetivo, col_referencia="AYT", rango_busqueda=10) -> int:
     """
-    Busca en la fila 2 la columna cuya fecha coincide con fecha_objetivo,
-    explorando alrededor de col_referencia (que es la última columna
-    conocida con fórmulas activas).
+    Busca en la fila 2 la columna cuya fecha coincide con fecha_objetivo.
+
+    BUG REAL (confirmado en producción, corridas del 2026-09-19 y 2026-09-20
+    en GitHub Actions): la versión anterior solo exploraba ±10 columnas
+    alrededor de `col_referencia` (una letra fija, ej. "AYT"). Esa letra
+    nunca se actualiza sola -- el avance real es de 1 columna por día, así
+    que la distancia entre la columna real de "hoy" y esa letra fija crece
+    día con día, y a los ~10 días de haberse fijado esa constante, la
+    búsqueda deja de encontrar la fecha y la corrida entera falla (no es un
+    problema de que la máquina/oficina esté cerrada -- el workflow de
+    GitHub Actions sí corrió, pero explotó con este error). Ahora se busca
+    en TODA la fila (no hay límite que pueda expirar); `col_referencia` solo
+    se usa como criterio de desempate si la misma fecha aparece más de una
+    vez (no debería pasar en este calendario, pero por si acaso).
     """
     fila_valores = worksheet.row_values(FILA_FECHA_CALENDARIO)
-    idx_referencia = _col_letra_a_indice(col_referencia)
     fecha_str = _formatear_fecha_calendario(fecha_objetivo)
 
-    # Explora desde un poco antes hasta un poco después de la columna de referencia,
-    # ya que el avance es siempre de 1 columna por día.
-    for offset in range(-rango_busqueda, rango_busqueda + 1):
-        idx = idx_referencia + offset
-        if 0 <= idx < len(fila_valores) and fila_valores[idx].strip() == fecha_str:
-            return idx
+    coincidencias = [i for i, v in enumerate(fila_valores) if v.strip() == fecha_str]
+    if not coincidencias:
+        raise RuntimeError(
+            f"No se encontró columna con fecha {fecha_str} en toda la fila {FILA_FECHA_CALENDARIO}. "
+            f"Verifica FORMATO_FECHA_CALENDARIO."
+        )
+    if len(coincidencias) == 1:
+        return coincidencias[0]
 
-    raise RuntimeError(
-        f"No se encontró columna con fecha {fecha_str} cerca de {col_referencia}. "
-        f"Verifica FORMATO_FECHA_CALENDARIO y la columna de referencia."
-    )
+    idx_referencia = _col_letra_a_indice(col_referencia)
+    return min(coincidencias, key=lambda idx: abs(idx - idx_referencia))
 
 
 def _es_autoreferencia(formula, col_letra: str, fila_fecha: int = FILA_FECHA_CALENDARIO) -> bool:
