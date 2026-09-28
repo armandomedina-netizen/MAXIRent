@@ -30,4 +30,9 @@ automations/maxinet-query-sync/google-creds.json
 automations/maxinet-query-sync/*.venv/
 automations/maxinet-query-sync/logs/
 
+# Gestoria LP & CP Sync automation: local secrets and runtime artifacts
+automations/automatización Gestoría/google-creds.json
+automations/automatización Gestoría/*.venv/
+automations/automatización Gestoría/logs/
+
 *.venv/
