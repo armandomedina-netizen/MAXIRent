@@ -35,5 +35,4 @@ jobs:
           GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/automatización Gestoría/google-creds.json
           SPREADSHEET_ID_GESTORIA: ${{ secrets.SPREADSHEET_ID_GESTORIA }}
           WORKSHEET_GESTORIA_NAME: ${{ secrets.WORKSHEET_GESTORIA_NAME }}
-          WORKSHEET_HISTORICO_NAME: ${{ secrets.WORKSHEET_HISTORICO_NAME }}
         run: python gestoria_lp_cp_sync.py

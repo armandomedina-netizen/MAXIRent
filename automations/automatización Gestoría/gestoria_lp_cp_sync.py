@@ -34,17 +34,47 @@ Lógica de sincronización (decidida por el usuario, no inventada aquí):
     en el reporte pero NO en este Sheet -- se ignora a propósito, tal como
     indicó el usuario, dejándola documentada aquí por si se agrega después.
 
-Pestaña "2026" (histórico de eventos, mismo Sheet):
-    Es un log de solo altas, sin columna de Estatus -- el usuario solo pidió
-    insertar ahí un subconjunto de columnas (Folio, Fecha del Evento, Tipo,
-    Placa, Cliente, Sucursal, Site, BSite) cada vez que haya un evento nuevo.
-    No se marca nada como CERRADO en esta pestaña (no tiene esa columna) y
-    no se toca ninguna fila existente. El folio nuevo se detecta de forma
-    independiente al de "GESTORIA CP - LP" (comparando contra los folios que
-    YA están en "2026", no contra los que se acaban de agregar en esta misma
-    corrida) para que, si por lo que sea un folio quedó agregado en un Sheet
-    pero no en el otro en una corrida anterior, la siguiente corrida lo
-    complete solo.
+IMPORTANTE sobre cómo se agregan las filas nuevas:
+    NO se usa `Worksheet.append_rows()`. Ese método le pide a la API de
+    Sheets que decida sola dónde "termina la tabla", y en este Sheet
+    específico esa detección está rota: la hoja tiene un `row_count` de
+    ~2960 (heredado de formato/columnas auxiliares -- ver más abajo --
+    aplicadas de antemano mucho más abajo del último dato real), así que
+    `append_rows` insertó una fila nueva hasta la fila 2961 en vez de la
+    1562 esperada (bug real, encontrado y corregido el 2026-09-28: la fila
+    se tuvo que mover a mano de vuelta a su lugar). Por eso aquí se calcula
+    la fila exacta donde debe ir cada folio nuevo (última fila con folio +
+    1) y se escribe ahí con `update()`, nunca con `append_rows()`.
+
+Columnas auxiliares AJ:AM en "GESTORIA CP - LP" (no tocar, no son de esta
+automatización): AJ/AK/AL calculan mes/año a partir de la Fecha del Evento
+(columna C), y AM devuelve "OK" si el año es 2025 o 2026. La pestaña
+"2026" (histórico) usa esas columnas -- ver abajo.
+
+Pestaña "2026" (histórico de eventos, mismo Sheet): -- NO LA TOCA ESTA
+    AUTOMATIZACIÓN, A PROPÓSITO. El usuario pidió en algún momento agregar
+    ahí Folio/Fecha/Tipo/Placa/Cliente/Sucursal/Site/BSite para cada evento
+    nuevo, pero inspeccionando el Sheet real se encontró que esa pestaña ya
+    hace exactamente eso SOLA, vía fórmulas:
+        A2 = =UNIQUE(FILTER('GESTORIA CP - LP'!A:A,
+                             'GESTORIA CP - LP'!AM:AM="OK"))
+    Esta es una fórmula de array que se "derrama" (spill) automáticamente
+    hacia abajo listando todo folio de "GESTORIA CP - LP" cuya columna AM
+    diga "OK" (fecha del evento en 2025 o 2026). Las columnas B a H de esa
+    misma pestaña ya vienen con fórmulas XLOOKUP precargadas fila por fila
+    (arrastradas de antemano hasta la fila 1501) que traen el resto de los
+    datos por Folio. En otras palabras: en cuanto una fila nueva en
+    "GESTORIA CP - LP" tiene una fecha válida, aparece sola en "2026" --
+    no hace falta escribir nada ahí.
+    Se intentó automatizar esa pestaña el 2026-09-28 escribiendo el Folio
+    directamente en su columna A, sin saber que era parte del rango de
+    "derrame" de esa fórmula. En cuanto la fórmula necesitó crecer una fila
+    más (porque se corrigió la fecha del folio 1624 y pasó a calificar como
+    "OK"), chocó con el valor fijo que se había escrito ahí y toda la
+    fórmula colapsó a #REF!, vaciando visualmente el histórico completo
+    (sin pérdida real de datos: "GESTORIA CP - LP" nunca se tocó). Se
+    corrigió borrando esa única celda y dejando que la fórmula se
+    reexpandiera sola. No se debe volver a escribir nada en esa pestaña.
 
 Requiere:
     pip install -r requirements.txt
@@ -57,8 +87,6 @@ Variables de entorno esperadas (ver .env.example):
         automatizada, no el original que usa el equipo)
     WORKSHEET_GESTORIA_NAME    -> nombre de la pestaña principal (default
         "GESTORIA CP - LP")
-    WORKSHEET_HISTORICO_NAME   -> nombre de la pestaña histórico (default
-        "2026")
 """
 
 import os
@@ -127,19 +155,6 @@ COL_INICIO = "A"
 COL_FIN = "AI"
 FILA_ENCABEZADO = 1
 FILA_INICIO_DATOS = 2
-
-# Pestaña "2026": histórico de solo-alta, columnas A -> H, mismo orden que
-# los encabezados reales ya confirmados contra el Sheet.
-COLUMNAS_HISTORICO = [
-    "id",             # A Folio
-    "fecha_evento",   # B Fechadel Evento
-    "nombreTipo",     # C Tipo
-    "registrationNo", # D Placa
-    "ClientName",     # E Cliente
-    "FromSite",       # F Sucursal
-    "Site",           # G Site
-    "BSite",          # H BSite
-]
 
 
 def _parse_json(resp: requests.Response):
@@ -231,17 +246,6 @@ def conectar_sheet_gestoria():
     return sh.worksheet(nombre_pestana)
 
 
-def conectar_sheet_historico():
-    creds = service_account.Credentials.from_service_account_file(
-        os.environ["GOOGLE_CREDS_PATH"],
-        scopes=["https://www.googleapis.com/auth/spreadsheets"],
-    )
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(os.environ["SPREADSHEET_ID_GESTORIA"])
-    nombre_pestana = os.environ.get("WORKSHEET_HISTORICO_NAME") or "2026"
-    return sh.worksheet(nombre_pestana)
-
-
 def leer_folios_existentes(worksheet):
     """
     Lee las columnas A (Folio) y B (Estatus) del Sheet completo y devuelve
@@ -270,13 +274,28 @@ def sincronizar_gestoria(worksheet, df_abiertos: pd.DataFrame):
 
     # 1. Folios nuevos (no existen todavía en el Sheet) -> agregar al final,
     #    ordenados por Folio ascendente (mismo orden que ya tiene el Sheet).
+    #    Se calcula la fila exacta a mano (última fila con folio + 1) y se
+    #    escribe con update() -- NUNCA con append_rows(): ese método deja
+    #    que la API decida dónde "termina la tabla", y en este Sheet esa
+    #    detección está rota por columnas auxiliares con formato aplicado
+    #    muy por debajo del último dato real (ver docstring del módulo).
     df_nuevos = df_abiertos[~df_abiertos[FOLIO_COL].isin(existentes.keys())].copy()
     df_nuevos = df_nuevos.sort_values(FOLIO_COL, ascending=True)
 
     if len(df_nuevos) > 0:
+        fila_inicio = FILA_INICIO_DATOS + len(existentes)
+        fila_fin = fila_inicio + len(df_nuevos) - 1
         valores_nuevos = df_nuevos.fillna("").astype(str).values.tolist()
-        worksheet.append_rows(valores_nuevos, value_input_option="USER_ENTERED")
-        log.info("Filas nuevas agregadas: %d (folios %s)", len(df_nuevos), sorted(df_nuevos[FOLIO_COL].tolist()))
+        worksheet.update(
+            range_name=f"{COL_INICIO}{fila_inicio}:{COL_FIN}{fila_fin}",
+            values=valores_nuevos,
+            value_input_option="USER_ENTERED",
+        )
+        log.info(
+            "Filas nuevas agregadas: %d en %s%d:%s%d (folios %s)",
+            len(df_nuevos), COL_INICIO, fila_inicio, COL_FIN, fila_fin,
+            sorted(df_nuevos[FOLIO_COL].tolist()),
+        )
     else:
         log.info("No hay folios nuevos que agregar.")
 
@@ -301,49 +320,6 @@ def sincronizar_gestoria(worksheet, df_abiertos: pd.DataFrame):
     return len(df_nuevos), len(actualizaciones)
 
 
-def leer_folios_historico(worksheet) -> set:
-    """Lee solo la columna A (Folio) de la pestaña histórico -- no tiene
-    columna de Estatus, así que no hay nada más que leer."""
-    valores = worksheet.get(f"A{FILA_INICIO_DATOS}:A")
-    folios = set()
-    for fila in valores:
-        if not fila or not fila[0]:
-            continue
-        try:
-            folios.add(int(str(fila[0]).strip()))
-        except ValueError:
-            continue
-    return folios
-
-
-def sincronizar_historico(worksheet, df_abiertos: pd.DataFrame):
-    """
-    Agrega al histórico "2026" los folios que aún no tenga, sin importar si
-    ya se agregaron o no en esta misma corrida a "GESTORIA CP - LP" -- se
-    compara directamente contra lo que ya existe en esta pestaña para que
-    una corrida futura pueda completar solita cualquier folio que se haya
-    quedado atrás. Solo agrega filas nuevas; nunca actualiza ni cierra nada
-    aquí (la pestaña no tiene columna de Estatus).
-    """
-    existentes = leer_folios_historico(worksheet)
-    df_nuevos = df_abiertos[~df_abiertos[FOLIO_COL].isin(existentes)].copy()
-    df_nuevos = df_nuevos.sort_values(FOLIO_COL, ascending=True)
-
-    if len(df_nuevos) == 0:
-        log.info("Histórico '2026': no hay folios nuevos que agregar.")
-        return 0
-
-    df_nuevos = df_nuevos[COLUMNAS_HISTORICO]
-    valores_nuevos = df_nuevos.fillna("").astype(str).values.tolist()
-    worksheet.append_rows(valores_nuevos, value_input_option="USER_ENTERED")
-    log.info(
-        "Histórico '2026': filas nuevas agregadas: %d (folios %s)",
-        len(df_nuevos),
-        sorted(df_nuevos[FOLIO_COL].tolist()),
-    )
-    return len(df_nuevos)
-
-
 def main():
     try:
         df_abiertos = descargar_gestoria_abiertos()
@@ -351,13 +327,7 @@ def main():
         worksheet = conectar_sheet_gestoria()
         nuevos, cerrados = sincronizar_gestoria(worksheet, df_abiertos)
 
-        worksheet_historico = conectar_sheet_historico()
-        nuevos_historico = sincronizar_historico(worksheet_historico, df_abiertos)
-
-        log.info(
-            "Automatización completada con éxito (%d nuevos, %d cerrados, %d agregados a histórico)",
-            nuevos, cerrados, nuevos_historico,
-        )
+        log.info("Automatización completada con éxito (%d nuevos, %d cerrados)", nuevos, cerrados)
     except Exception:
         log.exception("Error en la automatización de Gestoría LP & CP")
         sys.exit(1)
