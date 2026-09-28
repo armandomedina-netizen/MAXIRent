@@ -34,6 +34,18 @@ Lógica de sincronización (decidida por el usuario, no inventada aquí):
     en el reporte pero NO en este Sheet -- se ignora a propósito, tal como
     indicó el usuario, dejándola documentada aquí por si se agrega después.
 
+Pestaña "2026" (histórico de eventos, mismo Sheet):
+    Es un log de solo altas, sin columna de Estatus -- el usuario solo pidió
+    insertar ahí un subconjunto de columnas (Folio, Fecha del Evento, Tipo,
+    Placa, Cliente, Sucursal, Site, BSite) cada vez que haya un evento nuevo.
+    No se marca nada como CERRADO en esta pestaña (no tiene esa columna) y
+    no se toca ninguna fila existente. El folio nuevo se detecta de forma
+    independiente al de "GESTORIA CP - LP" (comparando contra los folios que
+    YA están en "2026", no contra los que se acaban de agregar en esta misma
+    corrida) para que, si por lo que sea un folio quedó agregado en un Sheet
+    pero no en el otro en una corrida anterior, la siguiente corrida lo
+    complete solo.
+
 Requiere:
     pip install -r requirements.txt
 
@@ -43,8 +55,10 @@ Variables de entorno esperadas (ver .env.example):
     GOOGLE_CREDS_PATH          -> ruta al JSON de la cuenta de servicio
     SPREADSHEET_ID_GESTORIA    -> ID del Google Sheet destino (copia
         automatizada, no el original que usa el equipo)
-    WORKSHEET_GESTORIA_NAME    -> nombre de la pestaña (default
+    WORKSHEET_GESTORIA_NAME    -> nombre de la pestaña principal (default
         "GESTORIA CP - LP")
+    WORKSHEET_HISTORICO_NAME   -> nombre de la pestaña histórico (default
+        "2026")
 """
 
 import os
@@ -113,6 +127,19 @@ COL_INICIO = "A"
 COL_FIN = "AI"
 FILA_ENCABEZADO = 1
 FILA_INICIO_DATOS = 2
+
+# Pestaña "2026": histórico de solo-alta, columnas A -> H, mismo orden que
+# los encabezados reales ya confirmados contra el Sheet.
+COLUMNAS_HISTORICO = [
+    "id",             # A Folio
+    "fecha_evento",   # B Fechadel Evento
+    "nombreTipo",     # C Tipo
+    "registrationNo", # D Placa
+    "ClientName",     # E Cliente
+    "FromSite",       # F Sucursal
+    "Site",           # G Site
+    "BSite",          # H BSite
+]
 
 
 def _parse_json(resp: requests.Response):
@@ -204,6 +231,17 @@ def conectar_sheet_gestoria():
     return sh.worksheet(nombre_pestana)
 
 
+def conectar_sheet_historico():
+    creds = service_account.Credentials.from_service_account_file(
+        os.environ["GOOGLE_CREDS_PATH"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(os.environ["SPREADSHEET_ID_GESTORIA"])
+    nombre_pestana = os.environ.get("WORKSHEET_HISTORICO_NAME") or "2026"
+    return sh.worksheet(nombre_pestana)
+
+
 def leer_folios_existentes(worksheet):
     """
     Lee las columnas A (Folio) y B (Estatus) del Sheet completo y devuelve
@@ -263,6 +301,49 @@ def sincronizar_gestoria(worksheet, df_abiertos: pd.DataFrame):
     return len(df_nuevos), len(actualizaciones)
 
 
+def leer_folios_historico(worksheet) -> set:
+    """Lee solo la columna A (Folio) de la pestaña histórico -- no tiene
+    columna de Estatus, así que no hay nada más que leer."""
+    valores = worksheet.get(f"A{FILA_INICIO_DATOS}:A")
+    folios = set()
+    for fila in valores:
+        if not fila or not fila[0]:
+            continue
+        try:
+            folios.add(int(str(fila[0]).strip()))
+        except ValueError:
+            continue
+    return folios
+
+
+def sincronizar_historico(worksheet, df_abiertos: pd.DataFrame):
+    """
+    Agrega al histórico "2026" los folios que aún no tenga, sin importar si
+    ya se agregaron o no en esta misma corrida a "GESTORIA CP - LP" -- se
+    compara directamente contra lo que ya existe en esta pestaña para que
+    una corrida futura pueda completar solita cualquier folio que se haya
+    quedado atrás. Solo agrega filas nuevas; nunca actualiza ni cierra nada
+    aquí (la pestaña no tiene columna de Estatus).
+    """
+    existentes = leer_folios_historico(worksheet)
+    df_nuevos = df_abiertos[~df_abiertos[FOLIO_COL].isin(existentes)].copy()
+    df_nuevos = df_nuevos.sort_values(FOLIO_COL, ascending=True)
+
+    if len(df_nuevos) == 0:
+        log.info("Histórico '2026': no hay folios nuevos que agregar.")
+        return 0
+
+    df_nuevos = df_nuevos[COLUMNAS_HISTORICO]
+    valores_nuevos = df_nuevos.fillna("").astype(str).values.tolist()
+    worksheet.append_rows(valores_nuevos, value_input_option="USER_ENTERED")
+    log.info(
+        "Histórico '2026': filas nuevas agregadas: %d (folios %s)",
+        len(df_nuevos),
+        sorted(df_nuevos[FOLIO_COL].tolist()),
+    )
+    return len(df_nuevos)
+
+
 def main():
     try:
         df_abiertos = descargar_gestoria_abiertos()
@@ -270,7 +351,13 @@ def main():
         worksheet = conectar_sheet_gestoria()
         nuevos, cerrados = sincronizar_gestoria(worksheet, df_abiertos)
 
-        log.info("Automatización completada con éxito (%d nuevos, %d cerrados)", nuevos, cerrados)
+        worksheet_historico = conectar_sheet_historico()
+        nuevos_historico = sincronizar_historico(worksheet_historico, df_abiertos)
+
+        log.info(
+            "Automatización completada con éxito (%d nuevos, %d cerrados, %d agregados a histórico)",
+            nuevos, cerrados, nuevos_historico,
+        )
     except Exception:
         log.exception("Error en la automatización de Gestoría LP & CP")
         sys.exit(1)
