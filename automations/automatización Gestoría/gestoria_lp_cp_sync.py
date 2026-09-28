@@ -197,7 +197,10 @@ def conectar_sheet_gestoria():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_GESTORIA"])
-    nombre_pestana = os.environ.get("WORKSHEET_GESTORIA_NAME", "GESTORIA CP - LP")
+    # os.environ.get(..., default) no aplica el default si la variable existe
+    # pero está vacía (ej. un GitHub Secret configurado sin valor) -- por eso
+    # se checa explícitamente en vez de confiar solo en el default de get().
+    nombre_pestana = os.environ.get("WORKSHEET_GESTORIA_NAME") or "GESTORIA CP - LP"
     return sh.worksheet(nombre_pestana)
 
 
