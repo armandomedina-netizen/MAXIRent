@@ -1460,8 +1460,14 @@ def main():
         avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
         avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
 
-        worksheet_proyeccion_mtto = conectar_sheet_por_nombre(HOJA_PROYECCION_MTTO)
-        actualizar_proyeccion_mantenimientos(worksheet_proyeccion_mtto, session)
+        # "Proyección de Mantenimientos" YA NO se actualiza aquí -- corre
+        # aparte a las 9:10 am (10 minutos después de este sync) para que
+        # el % de vencimiento se capture siempre a una hora fija. Nuvia
+        # captura el suyo a mano también cerca de esa hora; si ambos leyeran
+        # Maxinet en momentos distintos del día el % no coincidiría (es un
+        # snapshot en vivo, cambia según cuándo se consulte -- confirmado:
+        # el mismo día dio 6.75% a la hora de Nuvia y 7.12% en otra corrida
+        # nuestra). Ver main_proyeccion_mtto().
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
@@ -1478,5 +1484,22 @@ def main():
         sys.exit(1)
 
 
+def main_proyeccion_mtto():
+    """Corre sola, a las 9:10 am -- 10 minutos después de main() -- para que
+    el % de vencimiento de 'Proyección de Mantenimientos' se capture siempre
+    a la misma hora fija (ver comentario en main())."""
+    try:
+        session = login_maxinet()
+        worksheet_proyeccion_mtto = conectar_sheet_por_nombre(HOJA_PROYECCION_MTTO)
+        actualizar_proyeccion_mantenimientos(worksheet_proyeccion_mtto, session)
+        log.info("Proyección de Mantenimientos: actualización completada con éxito")
+    except Exception:
+        log.exception("Error en la actualización de Proyección de Mantenimientos")
+        sys.exit(1)
+
+
 if __name__ == "__main__":
-    main()
+    if "--solo-proyeccion-mtto" in sys.argv:
+        main_proyeccion_mtto()
+    else:
+        main()

@@ -4,6 +4,11 @@ on:
   schedule:
     # 9:00 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
     - cron: "0 15 * * *"
+    # 9:10 AM -- solo "Proyección de Mantenimientos", 10 minutos después del
+    # sync completo, para que el % de vencimiento (snapshot en vivo de
+    # Maxinet) se capture siempre a la misma hora y no varíe frente al
+    # valor que Nuvia captura a mano.
+    - cron: "10 15 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -39,4 +44,12 @@ jobs:
           WORKSHEET_FLOTA_LP: ${{ secrets.WORKSHEET_FLOTA_LP }}
           WORKSHEET_UTILIZACION: ${{ secrets.WORKSHEET_UTILIZACION }}
           WORKSHEET_GRUPO_AUTOS: ${{ secrets.WORKSHEET_GRUPO_AUTOS }}
-        run: python maxinet_sync.py
+        # El cron de las 9:10 am ("10 15 * * *") solo actualiza "Proyección
+        # de Mantenimientos"; el de las 9:00 am (y un disparo manual) corren
+        # el sync completo de siempre.
+        run: |
+          if [ "${{ github.event.schedule }}" = "10 15 * * *" ]; then
+            python maxinet_sync.py --solo-proyeccion-mtto
+          else
+            python maxinet_sync.py
+          fi
