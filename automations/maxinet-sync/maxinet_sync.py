@@ -268,6 +268,18 @@ def conectar_sheet_secundario(nombre_pestana: str):
     return sh.worksheet(nombre_pestana)
 
 
+def conectar_sheet_por_nombre(nombre_pestana: str):
+    """Conecta al primer archivo de Sheets (SPREADSHEET_ID, el mismo de
+    'RESERVAS CP&LP') pero a una pestaña distinta a WORKSHEET_NAME."""
+    creds = service_account.Credentials.from_service_account_file(
+        os.environ["GOOGLE_CREDS_PATH"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(os.environ["SPREADSHEET_ID"])
+    return sh.worksheet(nombre_pestana)
+
+
 def actualizar_sheet_flota_lp(worksheet, df_nuevo: pd.DataFrame):
     """
     Pega el bloque completo (incluyendo la columna A, tal como viene el
@@ -1237,6 +1249,185 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
     log.info("Duración rentas: ACTIVAS %s%d creado con fórmula viva", col_actual, fila_activas)
 
 
+# =========================================================================
+# Libro "Proyección de Mantenimientos" (mismo archivo de SPREADSHEET_ID,
+# pestaña "Proyección de Mantenimientos")
+# =========================================================================
+# Fuente: página "Proyección de Mtto" de Maxinet (lp-mtto-proyector-mtto.php),
+# cuya tabla sale de este endpoint (sin filtro de fecha -- siempre regresa el
+# estado EN VIVO de toda la flota con regla de mantenimiento, 788 filas hoy):
+#   POST {MAXINET_BASE_URL}/includes/mttoLP/lp-mtto-proyeccionmtto-data.php
+# Cada fila trae 16 valores; el índice 12 vale literalmente "VENCIDO" cuando
+# el % de Vencimiento (índice 11) es >= 100 -- confirmado contra las 788
+# filas reales, cero excepciones. "Vencidos / Total flota" = ese conteo /
+# len(filas) (todas las filas del reporte, sin filtrar nada más).
+#
+# Como el endpoint no acepta rango de fechas (es un snapshot del momento en
+# que se consulta), NO se puede reconstruir el histórico -- solo capturar el
+# valor de HOY, un día a la vez, hacia adelante. Confirmado contra el
+# archivo original (mantenido a mano): coincide exactamente con el mismo
+# patrón de columnas ya usado en "RESUMEN" (ver _fin_de_quincena): quincena
+# YA CERRADA -> columna B como fórmula de texto "mes N"; quincena EN CURSO
+# -> número de día suelto. La columna C (FECHA) se pre-llena con TODO el mes
+# por adelantado (igual en el archivo original) -- por eso hace falta
+# extender el calendario cuando empieza un mes nuevo, no solo escribir el
+# día de hoy.
+HOJA_PROYECCION_MTTO = "Proyección de Mantenimientos"
+IDX_ESTATUS_VENCIMIENTO_MTTO = 12  # "VENCIDO" / "MAYOR A 1 MES" / "KMS EN 0" / fecha
+
+
+def descargar_proyeccion_mantenimientos(session: requests.Session) -> list:
+    base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
+    resp = session.post(f"{base_url}/includes/mttoLP/lp-mtto-proyeccionmtto-data.php", data={}, timeout=120)
+    return _parse_json_bom(resp)["dataReservas"]
+
+
+def _calcular_pct_vencimiento(filas: list) -> float:
+    total = len(filas)
+    vencidos = sum(1 for f in filas if f[IDX_ESTATUS_VENCIMIENTO_MTTO] == "VENCIDO")
+    return vencidos / total
+
+
+def _fin_de_mes(fecha: date) -> date:
+    primer_dia_sig_mes = date(fecha.year + 1, 1, 1) if fecha.month == 12 else date(fecha.year, fecha.month + 1, 1)
+    return primer_dia_sig_mes - timedelta(days=1)
+
+
+def _extender_calendario_proyeccion_mtto(worksheet, hoy: date) -> int:
+    """Si la última fecha en C es anterior al último día del mes de 'hoy',
+    agrega filas hasta completar ese mes (igual que el proceso manual, que
+    siempre precarga el mes completo desde el día 1). No anticipa meses
+    futuros -- solo asegura que la fila de 'hoy' exista."""
+    col_c = worksheet.col_values(3, value_render_option="UNFORMATTED_VALUE")
+    ultima_fila = len(col_c)
+    ultima_fecha = EPOCH_SHEETS + timedelta(days=int(col_c[-1]))
+    fin_mes = _fin_de_mes(hoy)
+    if ultima_fecha >= fin_mes:
+        return 0
+
+    nuevas_fechas = []
+    fecha = ultima_fecha + timedelta(days=1)
+    while fecha <= fin_mes:
+        nuevas_fechas.append(fecha)
+        fecha += timedelta(days=1)
+
+    fila_inicio = ultima_fila + 1
+    fila_fin = fila_inicio + len(nuevas_fechas) - 1
+    valores_a = [[f'=TEXT(C{fila_inicio + i},"MMMM")'] for i in range(len(nuevas_fechas))]
+    valores_c = [[(f - EPOCH_SHEETS).days] for f in nuevas_fechas]
+    worksheet.update(values=valores_a, range_name=f"A{fila_inicio}:A{fila_fin}", value_input_option="USER_ENTERED")
+    worksheet.update(values=valores_c, range_name=f"C{fila_inicio}:C{fila_fin}", value_input_option="USER_ENTERED")
+
+    sheet_id = worksheet.id
+    worksheet.spreadsheet.batch_update({"requests": [
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id, "startRowIndex": fila_inicio - 1, "endRowIndex": fila_fin,
+                    "startColumnIndex": 2, "endColumnIndex": 3,
+                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        },
+        {
+            "repeatCell": {
+                "range": {
+                    "sheetId": sheet_id, "startRowIndex": fila_inicio - 1, "endRowIndex": fila_fin,
+                    "startColumnIndex": 3, "endColumnIndex": 4,
+                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "PERCENT", "pattern": "0.00%"}}},
+                "fields": "userEnteredFormat.numberFormat",
+            }
+        },
+    ]})
+
+    log.info(
+        "Proyección de Mantenimientos: calendario extendido con %d filas nuevas (%s a %s)",
+        len(nuevas_fechas), nuevas_fechas[0], nuevas_fechas[-1],
+    )
+    return len(nuevas_fechas)
+
+
+def actualizar_periodo_proyeccion_mtto(worksheet, hoy: date = None) -> None:
+    """Recalcula toda la columna B (PERIODO): quincena ya cerrada respecto a
+    hoy -> fórmula de texto "mes N" (igual que las filas ya cerradas del
+    archivo original); quincena en curso -> número de día suelto. Mismo
+    criterio de cierre que RESUMEN (_fin_de_quincena), pero aquí el ancla es
+    texto plano (no una fecha), porque así lo usa AVERAGEIFS de F:G."""
+    hoy = hoy or date.today()
+    col_c = worksheet.col_values(3, value_render_option="UNFORMATTED_VALUE")[1:]
+
+    valores = []
+    filas_numero = []
+    for i, valor in enumerate(col_c):
+        numero_fila = i + 2
+        if not isinstance(valor, (int, float)):
+            valores.append([""])
+            continue
+        fecha = EPOCH_SHEETS + timedelta(days=int(valor))
+        es_primera_mitad = fecha.day <= 15
+        fin_periodo = _fin_de_quincena(fecha.year, fecha.month, es_primera_mitad)
+        if fin_periodo < hoy:
+            valores.append([f'=TEXT(C{numero_fila},"mmmm")&" "&IF(DAY(C{numero_fila})<=15,1,2)'])
+        else:
+            valores.append([fecha.day])
+            filas_numero.append(numero_fila)
+
+    ultima_fila = len(col_c) + 1
+    worksheet.update(values=valores, range_name=f"B2:B{ultima_fila}", value_input_option="USER_ENTERED")
+
+    # Asegurar formato NUMBER plano en las filas "número" -- si la celda
+    # hereda formato de fecha (pasa al insertar filas nuevas), un entero
+    # como 16 se muestra como "enero 15" en vez de "16" (ya nos pasó una vez).
+    if filas_numero:
+        sheet_id = worksheet.id
+        requests_formato = [
+            {
+                "repeatCell": {
+                    "range": {
+                        "sheetId": sheet_id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
+                        "startColumnIndex": 1, "endColumnIndex": 2,
+                    },
+                    "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": "0"}}},
+                    "fields": "userEnteredFormat.numberFormat",
+                }
+            }
+            for fila_ini, fila_fin in _rangos_contiguos(filas_numero)
+        ]
+        worksheet.spreadsheet.batch_update({"requests": requests_formato})
+
+    log.info("Proyección de Mantenimientos: PERIODO recalculado (%d filas)", len(valores))
+
+
+def actualizar_proyeccion_mantenimientos(worksheet, session: requests.Session, hoy: date = None) -> None:
+    """Escribe el % de vencimiento de HOY en la fila de 'Proyección de
+    Mantenimientos' cuya FECHA coincide, extendiendo el calendario si hace
+    falta, y recalcula PERIODO para que la tabla quincenal (F:G, ya con
+    fórmulas UNIQUE/AVERAGEIFS) quede al día."""
+    hoy = hoy or date.today()
+    _extender_calendario_proyeccion_mtto(worksheet, hoy)
+
+    filas = descargar_proyeccion_mantenimientos(session)
+    pct = _calcular_pct_vencimiento(filas)
+
+    col_c = worksheet.col_values(3, value_render_option="UNFORMATTED_VALUE")
+    serial_hoy = (hoy - EPOCH_SHEETS).days
+    try:
+        fila_hoy = col_c.index(serial_hoy) + 1
+    except ValueError:
+        raise RuntimeError(f"Proyección de Mantenimientos: no se encontró la fila de la fecha {hoy}")
+
+    worksheet.update(values=[[pct]], range_name=f"D{fila_hoy}", value_input_option="USER_ENTERED")
+    actualizar_periodo_proyeccion_mtto(worksheet, hoy)
+
+    vencidos = sum(1 for f in filas if f[IDX_ESTATUS_VENCIMIENTO_MTTO] == "VENCIDO")
+    log.info(
+        "Proyección de Mantenimientos: %.2f%% vencido (%d/%d) escrito en fila %d (%s)",
+        pct * 100, vencidos, len(filas), fila_hoy, hoy,
+    )
+
+
 def main():
     try:
         session = login_maxinet()
@@ -1268,6 +1459,9 @@ def main():
         worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
         avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
         avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
+
+        worksheet_proyeccion_mtto = conectar_sheet_por_nombre(HOJA_PROYECCION_MTTO)
+        actualizar_proyeccion_mantenimientos(worksheet_proyeccion_mtto, session)
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
