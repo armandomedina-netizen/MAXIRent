@@ -320,7 +320,7 @@ def actualizar_sheet_flota_lp(worksheet, df_nuevo: pd.DataFrame):
 
 FILA_FECHA_CALENDARIO = 2
 
-# Fila 3 ("TOTAL ON HIRE", =IFERROR(SUM(B4:B6),"")) y filas 4-56 (métricas +
+# Fila 3 ("TOTAL ON HIRE", =IFERROR(SUM(B4:B6),"")) y filas 4-57 (métricas +
 # agregados + VOR Cliente). NO es un simple corte "3 vs 4-39 vs 40-56": hay
 # filas de agregado (sumas/porcentajes que referencian OTRAS filas de su
 # propia columna, ej. fila 19 "=SUM(AZC8:AZC18)" o fila 25
@@ -333,7 +333,11 @@ FILA_FECHA_CALENDARIO = 2
 # "=AZC22/AZC25").
 FILA_TOTAL_ON_HIRE = 3
 FILA_FORMULA_INICIO = 4
-FILA_FORMULA_FIN = 56
+# 57 = "TOTAL DE VOR". Era 56 hasta que se insertó la fila 21 ("NUEVAS",
+# segmento PREVIA) igual que en el tablero original: todo lo de abajo se
+# recorrió una fila. Si se vuelve a insertar/borrar una fila en esta hoja,
+# hay que mover estas constantes y las FILA_VOR_* de más abajo.
+FILA_FORMULA_FIN = 57
 
 
 MESES_ABREVIADOS = [
@@ -628,10 +632,10 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
 # Igual que el resto de la hoja: la fila que se escribe es la del día
 # "ayer" (misma columna que ya dejó lista avanzar_columna_formulas).
 
-FILA_VOR_CORRECTIVO_LOCAL = 50
-FILA_VOR_PREVENTIVO_LOCAL = 51
-FILA_VOR_CORRECTIVO_FORANEO = 53
-FILA_VOR_PREVENTIVO_FORANEO = 54
+FILA_VOR_CORRECTIVO_LOCAL = 51
+FILA_VOR_PREVENTIVO_LOCAL = 52
+FILA_VOR_CORRECTIVO_FORANEO = 54
+FILA_VOR_PREVENTIVO_FORANEO = 55
 
 
 def descargar_vor_cliente(session: requests.Session, fecha_str: str) -> list:
