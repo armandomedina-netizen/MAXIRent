@@ -9,11 +9,29 @@ on:
     # Maxinet) se capture siempre a la misma hora y no varíe frente al
     # valor que Nuvia captura a mano.
     - cron: "10 15 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "completo = sync de las 9:00; solo_proyeccion_mtto = captura de las 9:10"
+        type: choice
+        options:
+          - completo
+          - solo_proyeccion_mtto
+        default: completo
+
+# Una corrida a la vez por modo: las salvaguardas del script (revisar y luego
+# actuar) no son atómicas, así que dos syncs completos simultáneos podrían
+# pegar fórmulas sobre una columna ya congelada. Los modos van en grupos
+# distintos para que una captura de Proyección en cola no desplace a un sync
+# completo en cola (GitHub conserva una sola corrida pendiente por grupo).
+concurrency:
+  group: maxinet-sync-${{ (github.event.schedule == '10 15 * * *' || inputs.modo == 'solo_proyeccion_mtto') && 'proyeccion-mtto' || 'completo' }}
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: automations/maxinet-sync
@@ -44,11 +62,14 @@ jobs:
           WORKSHEET_FLOTA_LP: ${{ secrets.WORKSHEET_FLOTA_LP }}
           WORKSHEET_UTILIZACION: ${{ secrets.WORKSHEET_UTILIZACION }}
           WORKSHEET_GRUPO_AUTOS: ${{ secrets.WORKSHEET_GRUPO_AUTOS }}
-        # El cron de las 9:10 am ("10 15 * * *") solo actualiza "Proyección
-        # de Mantenimientos"; el de las 9:00 am (y un disparo manual) corren
-        # el sync completo de siempre.
+          EVENTO_SCHEDULE: ${{ github.event.schedule }}
+          MODO: ${{ inputs.modo }}
+        # El cron de las 9:10 am ("10 15 * * *") o un disparo manual con
+        # modo = solo_proyeccion_mtto solo actualizan "Proyección de
+        # Mantenimientos"; el de las 9:00 am (y un disparo manual completo)
+        # corren el sync completo de siempre.
         run: |
-          if [ "${{ github.event.schedule }}" = "10 15 * * *" ]; then
+          if [ "$EVENTO_SCHEDULE" = "10 15 * * *" ] || [ "$MODO" = "solo_proyeccion_mtto" ]; then
             python maxinet_sync.py --solo-proyeccion-mtto
           else
             python maxinet_sync.py

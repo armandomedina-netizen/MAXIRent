@@ -58,9 +58,10 @@ import sys
 import json
 import logging
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
+from zoneinfo import ZoneInfo
 import pandas as pd
 import gspread
 from google.oauth2 import service_account
@@ -91,6 +92,16 @@ COLUMNAS = [
 ]
 
 
+ZONA_CDMX = ZoneInfo("America/Mexico_City")
+
+
+def _hoy_cdmx() -> date:
+    """Fecha de hoy en Ciudad de México. El servidor de GitHub Actions
+    trabaja en UTC: después de las 18:00 hora CDMX su date.today() ya sería
+    "mañana" y una corrida tardía avanzaría las columnas un día de más."""
+    return datetime.now(ZONA_CDMX).date()
+
+
 def _parse_json_bom(resp: requests.Response):
     """Maxinet antepone un BOM UTF-8 a sus respuestas JSON, lo que rompe
     resp.json() (confirmado contra el servidor real)."""
@@ -119,7 +130,7 @@ def login_maxinet() -> requests.Session:
 def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     """Pide al endpoint de datos el reporte del día anterior y arma un DataFrame."""
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
-    fecha_ayer = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+    fecha_ayer = (_hoy_cdmx() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     resp = session.post(
         f"{base_url}/includes/gpsrt/reporte-flota-maxirent.php",
@@ -461,7 +472,7 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     en orden, para que la columna origen de cada llamada ya tenga la fórmula
     recién copiada de la llamada anterior).
     """
-    fecha_ayer = fecha_objetivo or (date.today() - timedelta(days=1))
+    fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
     idx_origen = idx_destino - 1
     col_origen = _indice_a_col_letra(idx_origen)
@@ -552,7 +563,7 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
     auto-referencian a otra fila de su propia columna (fila 3, y varias
     filas dispersas entre la 4 y la 115) se quedan vivas para siempre.
     """
-    fecha_ayer = fecha_objetivo or (date.today() - timedelta(days=1))
+    fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
     idx_origen = idx_destino - 1
     col_origen = _indice_a_col_letra(idx_origen)
@@ -653,11 +664,11 @@ def actualizar_vor_cliente(worksheet, session: requests.Session, col_referencia=
     """
     Cuenta los registros de VOR Cliente del día "ayer" por Tipo Servicio y
     los escribe en la misma columna "viva" que avanzar_columna_formulas ya
-    dejó lista para ese día (filas 50, 51, 53, 54). Las filas 52/55/56 son
+    dejó lista para ese día (filas 51, 52, 54, 55). Las filas 53/56/57 son
     fórmulas de suma dentro de la misma columna -- ya se copiaron solas con
     el avance de columna, no se tocan aquí.
     """
-    fecha_ayer = fecha_objetivo or (date.today() - timedelta(days=1))
+    fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     fecha_str = fecha_ayer.strftime("%Y-%m-%d")
     idx_col = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
     col_letra = _indice_a_col_letra(idx_col)
@@ -723,7 +734,7 @@ def actualizar_periodo_resumen(worksheet) -> None:
     la columna A. Depende de la fecha de hoy (para saber qué quincenas ya
     cerraron), así que recalcular todo cada día la mantiene siempre al día."""
     col_a = worksheet.col_values(1, value_render_option="UNFORMATTED_VALUE")
-    hoy = date.today()
+    hoy = _hoy_cdmx()
 
     valores = []
     estados = []  # "ancla" | "numero" | "vacio", por fila
@@ -1000,7 +1011,7 @@ def actualizar_tablas(worksheet) -> None:
     """Automatiza lo que Nuvia hace a mano en 'TABLAS': escribe el listado
     de periodos en A, BI y BQ, y arrastra hacia abajo las fórmulas de todos
     los bloques de valores para que alcancen la fila nueva."""
-    hoy = date.today()
+    hoy = _hoy_cdmx()
     filas = _generar_lista_periodos_acotada(hoy)
     total_filas = len(filas)
     ultima_fila = 2 + total_filas
@@ -1200,7 +1211,7 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
     si se recorriera PERIODO antes de congelar, el mes que se está
     cerrando se quedaría sin ninguna fila "on hire" propia y congelaría en
     0 en vez del valor real."""
-    hoy = date.today()
+    hoy = _hoy_cdmx()
     idx_mes_actual = hoy.month - 1  # B=enero=0
 
     fila_formulas = worksheet.get(f"B{fila_activas}:M{fila_activas}", value_render_option="FORMULA")
@@ -1359,7 +1370,7 @@ def actualizar_periodo_proyeccion_mtto(worksheet, hoy: date = None) -> None:
     archivo original); quincena en curso -> número de día suelto. Mismo
     criterio de cierre que RESUMEN (_fin_de_quincena), pero aquí el ancla es
     texto plano (no una fecha), porque así lo usa AVERAGEIFS de F:G."""
-    hoy = hoy or date.today()
+    hoy = hoy or _hoy_cdmx()
     col_c = worksheet.col_values(3, value_render_option="UNFORMATTED_VALUE")[1:]
 
     valores = []
@@ -1404,16 +1415,21 @@ def actualizar_periodo_proyeccion_mtto(worksheet, hoy: date = None) -> None:
     log.info("Proyección de Mantenimientos: PERIODO recalculado (%d filas)", len(valores))
 
 
-def actualizar_proyeccion_mantenimientos(worksheet, session: requests.Session, hoy: date = None) -> None:
+def actualizar_proyeccion_mantenimientos(
+    worksheet, session: requests.Session, hoy: date = None, forzar: bool = False
+) -> None:
     """Escribe el % de vencimiento de HOY en la fila de 'Proyección de
     Mantenimientos' cuya FECHA coincide, extendiendo el calendario si hace
     falta, y recalcula PERIODO para que la tabla quincenal (F:G, ya con
-    fórmulas UNIQUE/AVERAGEIFS) quede al día."""
-    hoy = hoy or date.today()
-    _extender_calendario_proyeccion_mtto(worksheet, hoy)
+    fórmulas UNIQUE/AVERAGEIFS) quede al día.
 
-    filas = descargar_proyeccion_mantenimientos(session)
-    pct = _calcular_pct_vencimiento(filas)
+    El % es una foto en vivo de Maxinet y la captura vale por la hora a la
+    que se tomó (la de Nuvia es ~9:10). Si D{hoy} ya tiene valor NO se
+    sobrescribe -- un cron tardío o una segunda corrida pisaría esa captura
+    con una foto de otra hora (pasó el 30-sep: 6.63% escrito a las 14:00).
+    forzar=True (--forzar-mtto) la reescribe a propósito."""
+    hoy = hoy or _hoy_cdmx()
+    _extender_calendario_proyeccion_mtto(worksheet, hoy)
 
     col_c = worksheet.col_values(3, value_render_option="UNFORMATTED_VALUE")
     serial_hoy = (hoy - EPOCH_SHEETS).days
@@ -1421,6 +1437,18 @@ def actualizar_proyeccion_mantenimientos(worksheet, session: requests.Session, h
         fila_hoy = col_c.index(serial_hoy) + 1
     except ValueError:
         raise RuntimeError(f"Proyección de Mantenimientos: no se encontró la fila de la fecha {hoy}")
+
+    actual = worksheet.get(f"D{fila_hoy}", value_render_option="UNFORMATTED_VALUE")
+    if not forzar and actual and actual[0] and actual[0][0] not in ("", None):
+        actualizar_periodo_proyeccion_mtto(worksheet, hoy)
+        log.warning(
+            "Proyección de Mantenimientos: la fila %d (%s) ya tiene captura -- se conserva "
+            "(usa --forzar-mtto para reescribirla).", fila_hoy, hoy,
+        )
+        return
+
+    filas = descargar_proyeccion_mantenimientos(session)
+    pct = _calcular_pct_vencimiento(filas)
 
     worksheet.update(values=[[pct]], range_name=f"D{fila_hoy}", value_input_option="USER_ENTERED")
     actualizar_periodo_proyeccion_mtto(worksheet, hoy)
@@ -1488,14 +1516,14 @@ def main():
         sys.exit(1)
 
 
-def main_proyeccion_mtto():
+def main_proyeccion_mtto(forzar: bool = False):
     """Corre sola, a las 9:10 am -- 10 minutos después de main() -- para que
     el % de vencimiento de 'Proyección de Mantenimientos' se capture siempre
     a la misma hora fija (ver comentario en main())."""
     try:
         session = login_maxinet()
         worksheet_proyeccion_mtto = conectar_sheet_por_nombre(HOJA_PROYECCION_MTTO)
-        actualizar_proyeccion_mantenimientos(worksheet_proyeccion_mtto, session)
+        actualizar_proyeccion_mantenimientos(worksheet_proyeccion_mtto, session, forzar=forzar)
         log.info("Proyección de Mantenimientos: actualización completada con éxito")
     except Exception:
         log.exception("Error en la actualización de Proyección de Mantenimientos")
@@ -1504,6 +1532,6 @@ def main_proyeccion_mtto():
 
 if __name__ == "__main__":
     if "--solo-proyeccion-mtto" in sys.argv:
-        main_proyeccion_mtto()
+        main_proyeccion_mtto(forzar="--forzar-mtto" in sys.argv)
     else:
         main()
