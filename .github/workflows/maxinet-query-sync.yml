@@ -2,13 +2,26 @@ name: Maxinet Query Sync
 
 on:
   schedule:
-    # 8:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
-    - cron: "30 14 * * *"
-  workflow_dispatch: {}
+    # Cada hora (minuto 7 para no coincidir con el pico de las horas en punto).
+    # OJO: GitHub no garantiza la hora de los cron; en septiembre llegó a
+    # disparar con 5 horas de retraso. El disparo confiable es externo vía
+    # workflow_dispatch (ver explicación en la conversación / docs).
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      espejo_solo_log:
+        description: "Probar el espejo de reglas del original sin escribir (solo log)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: maxinet-query-sync
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: automations/maxinet-query-sync
@@ -35,4 +48,6 @@ jobs:
           GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-query-sync/google-creds.json
           SPREADSHEET_ID_QUERY: ${{ secrets.SPREADSHEET_ID_QUERY }}
           WORKSHEET_QUERY_NAME: ${{ secrets.WORKSHEET_QUERY_NAME }}
+          SPREADSHEET_ID_ORIGINAL: ${{ secrets.SPREADSHEET_ID_ORIGINAL }}
+          ESPEJO_SOLO_LOG: ${{ inputs.espejo_solo_log && '1' || '0' }}
         run: python maxinet_query_sync.py
