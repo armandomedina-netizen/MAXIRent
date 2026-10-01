@@ -322,9 +322,21 @@ def espejar_reglas(libro_destino):
             log.info("[SOLO LOG] Cambiaría en '%s' %s: %s", hoja, rango,
                      json.dumps(cambios, ensure_ascii=False))
         elif cambios:
-            dest_ws.batch_update(cambios, raw=False)
+            celdas = ", ".join(c["range"] for c in cambios)  # gspread modifica 'range' al enviar
+            try:
+                dest_ws.batch_update(cambios, raw=False)
+            except gspread.exceptions.APIError as exc:
+                if "protected" not in str(exc).lower():
+                    raise
+                # Hoja/rango protegido en la copia: no es un fallo de la
+                # automatización. Se avisa con la acción a tomar y se sigue.
+                log.warning(
+                    "No se pudo espejar '%s' %s (%s): la hoja/rango está PROTEGIDO en la copia. "
+                    "Agregar maxinet-sync@unique-moon-508216-f7.iam.gserviceaccount.com como editor "
+                    "en Datos > Hojas y rangos protegidos.", hoja, rango, celdas)
+                continue
             log.info("Regla espejada del original en '%s' %s: %d celda(s) actualizada(s) (%s)",
-                     hoja, rango, len(cambios), ", ".join(c["range"] for c in cambios))
+                     hoja, rango, len(cambios), celdas)
         else:
             log.info("Regla de '%s' %s ya coincide con el original", hoja, rango)
 
