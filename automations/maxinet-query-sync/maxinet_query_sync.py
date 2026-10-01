@@ -395,10 +395,12 @@ def avisar_duplicados_rent(df: pd.DataFrame):
     rent = df[df["CONCEPTO_CARGO"].str.strip().str.upper() == "RENT"]
     dup = rent[rent.duplicated("CURRENT_REG_NO", keep=False)]
     if len(dup):
-        for placa, g in dup.groupby("CURRENT_REG_NO"):
-            log.warning("Placa %s trae %d líneas RENT (reserva %s) -- romperá el FILTER de TARIFA (QUERY); "
-                        "falta definir la regla para cuál conservar",
-                        placa, len(g), ", ".join(sorted(set(g["BOOKINGNO"]))))
+        # Solo el conteo: el repo es público y los logs de Actions los puede ver
+        # cualquiera con cuenta de GitHub, así que no se imprimen placas ni
+        # números de reserva. Para ubicarlas: filtrar RENT repetidos en QUERY!C.
+        log.warning("%d placa(s) traen más de una línea RENT -- romperán el FILTER de TARIFA (QUERY); "
+                    "falta definir la regla para cuál conservar",
+                    dup["CURRENT_REG_NO"].nunique())
 
 
 def actualizar_query(worksheet, df_nuevo: pd.DataFrame):
