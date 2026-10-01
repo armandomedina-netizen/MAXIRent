@@ -39,10 +39,17 @@ Flujo:
        cual, solo se limpian espacios de más en columnas de texto.
     3. Reemplaza POR COMPLETO el bloque A2:O... de la pestaña "QUERY" con
        los datos nuevos, sin encabezados (no se hace merge/match por fila;
-       el reporte de Maxinet reemplaza al anterior tal cual). NUNCA toca
-       las columnas P en adelante: esa misma pestaña tiene fórmulas propias
-       ahí (ej. "P2=L2/1.16") que dependen de los datos de A:O fila por
-       fila y no son responsabilidad de esta automatización.
+       el reporte de Maxinet reemplaza al anterior tal cual). Los datos se
+       escriben interpretados (fechas y números reales, no texto), igual
+       que el pegado manual.
+    4. Extiende las fórmulas auxiliares de la misma pestaña (columnas P a
+       U: SIN IVA, MENSUAL, MODELO, RENTA + CDW, COMPACTOS, codigo)
+       copiando la fórmula de la fila 2 hasta la última fila de datos, y
+       limpia las que sobren por debajo. Antes de este paso, si el reporte
+       crecía más allá de donde llegaban esas fórmulas, las filas nuevas
+       quedaban sin SIN IVA/RENTA y "TARIFA (QUERY)!O" (SUMIFS sobre
+       QUERY!P) daba 0 para esas placas. NO toca ninguna otra columna
+       (V en adelante).
 
 PENDIENTE (confirmado el 2026-09-18, todavía SIN implementar -- falta
 la regla exacta): si una misma reserva trae DOS líneas de cargo "RENT"
@@ -168,8 +175,7 @@ def conectar_sheet_query():
 
 
 # Rango fijo de datos: sin encabezados, desde A2 hasta O... (15 columnas,
-# igual orden que COLUMNAS). A diferencia de automations/maxinet-sync, aquí
-# no hay columnas con fórmulas propias que proteger a la derecha.
+# igual orden que COLUMNAS).
 COL_INICIO = "A"
 COL_FIN = "O"
 FILA_INICIO_DATOS = 2
@@ -177,12 +183,93 @@ FILA_INICIO_DATOS = 2
 # menos filas que el anterior (evita dejar datos viejos "pegados" abajo)
 MAX_FILAS_BUFFER = 5000
 
+# Columnas con fórmulas auxiliares por fila (P a U) que viven en la misma
+# pestaña. La fila FILA_INICIO_DATOS es el modelo que se copia hacia abajo.
+COL_FORMULAS_INICIO = "P"
+COL_FORMULAS_FIN = "U"
+
+# Columnas que en el Sheet original son números (no fechas ni texto)
+COLUMNAS_NUMERICAS = ("PRECIO_COMPRA", "PRECIO_DIARIO")
+
+
+def _valores_para_hoja(df: pd.DataFrame) -> list:
+    """
+    Arma las filas a escribir con tipos reales: PRECIO_COMPRA/PRECIO_DIARIO
+    como número y todo lo demás como texto (las fechas viajan como
+    "AAAA-MM-DD" y Sheets las interpreta como fecha al escribir con
+    USER_ENTERED). Los nulos van como "" (un NaN no es JSON válido y la
+    API de Sheets rechaza la petición -- bug ya confirmado en
+    automations/maxinet-sync).
+    """
+    df = df.copy()
+    for col in COLUMNAS_NUMERICAS:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    df = df.astype(object).where(df.notna(), "")
+
+    def _celda(v):
+        # USER_ENTERED trata como fórmula un texto que empiece con = + -
+        if isinstance(v, str) and v[:1] in ("=", "+", "-"):
+            return "'" + v
+        return v
+
+    return [[_celda(v) for v in fila] for fila in df.values.tolist()]
+
+
+def _extender_formulas(worksheet, fila_final: int):
+    """
+    Copia las fórmulas de la fila modelo (FILA_INICIO_DATOS, columnas P:U)
+    hacia abajo hasta fila_final -- las referencias relativas se recorren
+    solas, igual que arrastrar la fila en Sheets -- y limpia P:U por debajo
+    de fila_final.
+    """
+    rango_modelo = f"{COL_FORMULAS_INICIO}{FILA_INICIO_DATOS}:{COL_FORMULAS_FIN}{FILA_INICIO_DATOS}"
+    col_ini = gspread.utils.a1_to_rowcol(f"{COL_FORMULAS_INICIO}1")[1] - 1
+    col_fin = gspread.utils.a1_to_rowcol(f"{COL_FORMULAS_FIN}1")[1]  # exclusivo
+    n_cols = col_fin - col_ini
+
+    modelo = worksheet.get(rango_modelo, value_render_option="FORMULA")
+    fila_modelo = modelo[0] if modelo else []
+    if len(fila_modelo) < n_cols or not all(str(c).startswith("=") for c in fila_modelo):
+        # Sin fórmulas modelo no se puede copiar nada: mejor avisar fuerte
+        # que dejar filas nuevas sin SIN IVA/RENTA en silencio.
+        raise RuntimeError(
+            f"No se extendieron las fórmulas: {rango_modelo} ya no contiene "
+            f"{n_cols} fórmulas (encontré: {fila_modelo!r})."
+        )
+
+    if fila_final > FILA_INICIO_DATOS:
+        worksheet.spreadsheet.batch_update({"requests": [{
+            "copyPaste": {
+                "source": {
+                    "sheetId": worksheet.id,
+                    "startRowIndex": FILA_INICIO_DATOS - 1,
+                    "endRowIndex": FILA_INICIO_DATOS,
+                    "startColumnIndex": col_ini,
+                    "endColumnIndex": col_fin,
+                },
+                "destination": {
+                    "sheetId": worksheet.id,
+                    "startRowIndex": FILA_INICIO_DATOS,
+                    "endRowIndex": fila_final,
+                    "startColumnIndex": col_ini,
+                    "endColumnIndex": col_fin,
+                },
+                "pasteType": "PASTE_FORMULA",
+            }
+        }]})
+
+    sobrante = f"{COL_FORMULAS_INICIO}{fila_final + 1}:{COL_FORMULAS_FIN}{fila_final + MAX_FILAS_BUFFER}"
+    worksheet.batch_clear([sobrante])
+    log.info("Fórmulas %s:%s extendidas hasta la fila %d (sobrantes limpiadas)",
+             COL_FORMULAS_INICIO, COL_FORMULAS_FIN, fila_final)
+
 
 def actualizar_query(worksheet, df_nuevo: pd.DataFrame):
     """
     Reemplaza POR COMPLETO el bloque de datos A2:O... con el reporte
     descargado hoy: no se hace merge/match por fila, el reporte de Maxinet
-    reemplaza al anterior tal cual (decisión del usuario).
+    reemplaza al anterior tal cual (decisión del usuario). Después extiende
+    las fórmulas auxiliares P:U hasta la última fila.
     """
     n_filas = len(df_nuevo)
 
@@ -195,15 +282,17 @@ def actualizar_query(worksheet, df_nuevo: pd.DataFrame):
         log.warning("El reporte de Maxinet vino vacío -- QUERY se dejó limpio, sin filas nuevas.")
         return
 
-    # 2. Escribir los datos nuevos. fillna("") antes de astype(str): de lo
-    #    contrario los valores nulos quedan como float NaN, que no es JSON
-    #    válido y la API de Sheets rechaza la petición (mismo bug ya
-    #    confirmado en automations/maxinet-sync).
+    # 2. Escribir los datos nuevos con tipos reales. raw=False = USER_ENTERED:
+    #    con el modo "raw" que usa gspread por default, las fechas y los
+    #    precios quedaban guardados como texto ('2019-06-25', '962.4'),
+    #    distinto al Sheet original donde son fecha y número.
     fila_final = FILA_INICIO_DATOS + n_filas - 1
     rango_datos = f"{COL_INICIO}{FILA_INICIO_DATOS}:{COL_FIN}{fila_final}"
-    worksheet.update(values=df_nuevo.fillna("").astype(str).values.tolist(), range_name=rango_datos)
-
+    worksheet.update(values=_valores_para_hoja(df_nuevo), range_name=rango_datos, raw=False)
     log.info("QUERY actualizado: %d filas escritas en %s", n_filas, rango_datos)
+
+    # 3. Fórmulas auxiliares P:U hasta la última fila de datos
+    _extender_formulas(worksheet, fila_final)
 
 
 def main():
