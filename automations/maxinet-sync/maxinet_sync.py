@@ -1347,14 +1347,15 @@ def _fin_de_mes(fecha: date) -> date:
 
 
 def _extender_calendario_proyeccion_mtto(worksheet, hoy: date) -> int:
-    """Si la última fecha en C es anterior al último día del mes de 'hoy',
-    agrega filas hasta completar ese mes (igual que el proceso manual, que
-    siempre precarga el mes completo desde el día 1). No anticipa meses
-    futuros -- solo asegura que la fila de 'hoy' exista."""
+    """Si la última fecha en C es anterior al fin de la quincena de 'hoy',
+    agrega filas hasta completarla. El proceso manual precarga sólo hasta
+    el fin de la quincena en curso (el 2-oct el original llegaba al
+    15-oct): las filas de una quincena futura harían aparecer sus números
+    de día en la tabla F:G antes de tiempo."""
     col_c = worksheet.col_values(3, value_render_option="UNFORMATTED_VALUE")
     ultima_fila = len(col_c)
     ultima_fecha = EPOCH_SHEETS + timedelta(days=int(col_c[-1]))
-    fin_mes = _fin_de_mes(hoy)
+    fin_mes = _fin_de_quincena(hoy.year, hoy.month, hoy.day <= 15)
     if ultima_fecha >= fin_mes:
         return 0
 
