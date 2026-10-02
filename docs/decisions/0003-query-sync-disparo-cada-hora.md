@@ -62,3 +62,9 @@ Un solo proyecto de Apps Script, pero un disparador independiente por reporte (`
 - **Tablero LP** (el más importante; debe quedar actualizado antes de las 9:30, hora CDMX): disparador cada 5 minutos que sale de inmediato fuera de 8:55–20:00. Dos ventanas: 9:00 `completo` y 9:10 `solo_proyeccion_mtto`. Cada una se dispara si no hay ya una corrida (en cola, en curso o exitosa, incluido un cron tardío de GitHub), se reintenta hasta 3 veces si falla y, si a las 9:30 no hay corrida exitosa, avisa por correo. La ventana se identifica por la etiqueta del `run-name` del workflow.
 - **Query Sync:** cada hora, pero sólo en horario laboral (constantes `HORARIO_QUERY`); fuera de ese horario no se dispara ni se vigila.
 - Los `schedule` de GitHub se retiran de `maxinet-sync.yml` cuando el disparo externo funcione 3 días seguidos.
+
+### Corrección: Proyección de Mantenimientos toma el histórico de Maxinet (2026-10-02)
+
+- Sustituye lo dicho antes sobre "no sobrescribir la captura de las 9:10": el % de cada día ya no es una foto de la tabla en vivo (cambia durante el día y coincidía en 27 de 31 días con el original). Maxinet guarda su propio histórico (`charMttosVencidos.php`, la gráfica "% Vencimiento y Meta") y de ahí copia Nuvia: coincide en 31 de 31. Por eso la hora exacta de la corrida ya no afecta el valor.
+- Cada corrida llena en D los días cerrados (hasta ayer) que estén vacíos, sin pisar lo ya escrito; la fila de hoy se llena al día siguiente, cuando Maxinet la publica. `--forzar-mtto` reescribe los últimos 45 días. J1:J2 ("UNIDADES EN RENTA" y "VENCIDOS") se actualizan con la tabla en vivo y su falla no detiene lo demás. Las consultas a Maxinet de esta sección reintentan si se corta la conexión.
+- **Principio:** el archivo de Nuvia sirve sólo para comparar y reconciliar; ningún proceso del repositorio lo lee ni depende de él. Cuando el tablero propio pase a ser el principal debe mostrar la información correcta con sus propias fuentes (Maxinet).

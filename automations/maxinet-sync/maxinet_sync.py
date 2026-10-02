@@ -55,6 +55,7 @@ Estructura del primer Sheet (confirmada por el usuario):
 import os
 import re
 import sys
+import time
 import json
 import logging
 from collections import Counter
@@ -1306,33 +1307,69 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
 # Libro "Proyección de Mantenimientos" (mismo archivo de SPREADSHEET_ID,
 # pestaña "Proyección de Mantenimientos")
 # =========================================================================
-# Fuente: página "Proyección de Mtto" de Maxinet (lp-mtto-proyector-mtto.php),
-# cuya tabla sale de este endpoint (sin filtro de fecha -- siempre regresa el
-# estado EN VIVO de toda la flota con regla de mantenimiento, 788 filas hoy):
-#   POST {MAXINET_BASE_URL}/includes/mttoLP/lp-mtto-proyeccionmtto-data.php
-# Cada fila trae 16 valores; el índice 12 vale literalmente "VENCIDO" cuando
-# el % de Vencimiento (índice 11) es >= 100 -- confirmado contra las 788
-# filas reales, cero excepciones. "Vencidos / Total flota" = ese conteo /
-# len(filas) (todas las filas del reporte, sin filtrar nada más).
+# Fuente del % de cada día: el histórico que Maxinet guarda para la gráfica
+# "% Vencimiento y Meta" de su página "Proyección de Mtto" (lp-mtto-
+# proyector-mtto.php):
+#   POST {MAXINET_BASE_URL}/includes/mttoLP/charMttosVencidos.php
+#   body: Desde, Hasta  -> JS de Highcharts con categories (fechas) y la
+#   serie '% Vencimiento' (en %, ej. 6.55). Nuvia copia de ahí: el
+#   2026-10-02 coincidía en 31 de 31 días. El valor de un día se publica a la
+#   mañana siguiente, por eso la fila de hoy queda vacía hasta mañana.
+# (Una versión anterior contaba los vencidos en la tabla EN VIVO de
+# lp-mtto-proyeccionmtto-data.php en el momento de la corrida; ese conteo
+# cambia durante el día y daba 27 de 31 días iguales.)
+# El archivo de Nuvia NO es fuente de nada: sólo se usó para comparar.
+# La tabla en vivo sólo se usa para las celdas informativas J1:J2
+# ("UNIDADES EN RENTA" y "VENCIDOS"), que Nuvia llena a mano.
+# En la tabla en vivo cada fila trae 16 valores; el índice 12 vale
+# literalmente "VENCIDO" cuando el % de Vencimiento (índice 11) es >= 100.
 #
-# Como el endpoint no acepta rango de fechas (es un snapshot del momento en
-# que se consulta), NO se puede reconstruir el histórico -- solo capturar el
-# valor de HOY, un día a la vez, hacia adelante. Confirmado contra el
-# archivo original (mantenido a mano): coincide exactamente con el mismo
-# patrón de columnas ya usado en "RESUMEN" (ver _fin_de_quincena): quincena
+# Patrón de columnas igual al de "RESUMEN" (ver _fin_de_quincena): quincena
 # YA CERRADA -> columna B como fórmula de texto "mes N"; quincena EN CURSO
-# -> número de día suelto. La columna C (FECHA) se pre-llena con TODO el mes
-# por adelantado (igual en el archivo original) -- por eso hace falta
-# extender el calendario cuando empieza un mes nuevo, no solo escribir el
-# día de hoy.
+# -> número de día suelto. La columna C (FECHA) se precarga sólo hasta el
+# fin de la quincena en curso (igual que el archivo original).
 HOJA_PROYECCION_MTTO = "Proyección de Mantenimientos"
 IDX_ESTATUS_VENCIMIENTO_MTTO = 12  # "VENCIDO" / "MAYOR A 1 MES" / "KMS EN 0" / fecha
+VENTANA_FORZAR_DIAS = 45  # con forzar=True sólo se reescriben los últimos N días
+
+
+def _post_con_reintentos(session: requests.Session, url: str, data: dict, intentos: int = 3):
+    """Maxinet a veces corta la conexión (ConnectionResetError, visto el
+    2026-10-02); un reintento corto suele bastar."""
+    for n in range(1, intentos + 1):
+        try:
+            return session.post(url, data=data, timeout=120)
+        except (requests.ConnectionError, requests.Timeout):
+            if n == intentos:
+                raise
+            log.warning("Maxinet cortó la conexión (intento %d de %d); reintentando", n, intentos)
+            time.sleep(5 * n)
 
 
 def descargar_proyeccion_mantenimientos(session: requests.Session) -> list:
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
-    resp = session.post(f"{base_url}/includes/mttoLP/lp-mtto-proyeccionmtto-data.php", data={}, timeout=120)
+    resp = _post_con_reintentos(session, f"{base_url}/includes/mttoLP/lp-mtto-proyeccionmtto-data.php", {})
     return _parse_json_bom(resp)["dataReservas"]
+
+
+def descargar_serie_vencimiento(session: requests.Session, desde: date, hasta: date) -> dict:
+    """{fecha: % de vencimiento} que Maxinet guardó para cada día del rango
+    (en %, ej. 6.55). Los días que Maxinet aún no publica no aparecen."""
+    base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
+    resp = _post_con_reintentos(
+        session, f"{base_url}/includes/mttoLP/charMttosVencidos.php",
+        {"Desde": desde.strftime("%Y-%m-%d"), "Hasta": hasta.strftime("%Y-%m-%d")},
+    )
+    texto = resp.content.decode("utf-8-sig")
+    cats = re.search(r"categories:\s*\[(.*?)\]", texto, re.S)
+    serie = re.search(r"name:\s*'% Vencimiento'.*?data:\s*\[(.*?)\]", texto, re.S)
+    if not cats or not serie:
+        raise RuntimeError("charMttosVencidos.php ya no regresa categories/serie '% Vencimiento'; el formato cambió")
+    fechas = re.findall(r"\d{4}-\d{2}-\d{2}", cats.group(1))
+    valores = re.findall(r"-?\d+(?:\.\d+)?|null", serie.group(1))
+    if len(fechas) != len(valores):
+        raise RuntimeError(f"charMttosVencidos.php: {len(fechas)} fechas pero {len(valores)} valores")
+    return {date.fromisoformat(f): float(v) for f, v in zip(fechas, valores) if v != "null"}
 
 
 def _calcular_pct_vencimiento(filas: list) -> float:
@@ -1457,46 +1494,57 @@ def actualizar_periodo_proyeccion_mtto(worksheet, hoy: date = None) -> None:
 def actualizar_proyeccion_mantenimientos(
     worksheet, session: requests.Session, hoy: date = None, forzar: bool = False
 ) -> None:
-    """Escribe el % de vencimiento de HOY en la fila de 'Proyección de
-    Mantenimientos' cuya FECHA coincide, extendiendo el calendario si hace
-    falta, y recalcula PERIODO para que la tabla quincenal (F:G, ya con
-    fórmulas UNIQUE/AVERAGEIFS) quede al día.
+    """Llena en D el % de vencimiento de cada día ya cerrado (hasta ayer)
+    que esté vacío, con el histórico que guarda Maxinet (la fuente de
+    Nuvia), extendiendo el calendario si hace falta, y recalcula PERIODO
+    para que la tabla quincenal (F:G, ya con fórmulas UNIQUE/AVERAGEIFS)
+    quede al día. También actualiza J1:J2 (unidades y vencidos de hoy).
 
-    El % es una foto en vivo de Maxinet y la captura vale por la hora a la
-    que se tomó (la de Nuvia es ~9:10). Si D{hoy} ya tiene valor NO se
-    sobrescribe -- un cron tardío o una segunda corrida pisaría esa captura
-    con una foto de otra hora (pasó el 30-sep: 6.63% escrito a las 14:00).
-    forzar=True (--forzar-mtto) la reescribe a propósito."""
+    No toca valores ya escritos (respeta ediciones de Nuvia) ni la fila de
+    hoy, que Maxinet publica hasta mañana. forzar=True (--forzar-mtto)
+    reescribe los últimos VENTANA_FORZAR_DIAS días con la serie de Maxinet."""
     hoy = hoy or _hoy_cdmx()
+    ayer = hoy - timedelta(days=1)
     _extender_calendario_proyeccion_mtto(worksheet, hoy)
 
-    col_c = worksheet.col_values(3, value_render_option="UNFORMATTED_VALUE")
-    serial_hoy = (hoy - EPOCH_SHEETS).days
-    try:
-        fila_hoy = col_c.index(serial_hoy) + 1
-    except ValueError:
-        raise RuntimeError(f"Proyección de Mantenimientos: no se encontró la fila de la fecha {hoy}")
+    filas_hoja = worksheet.get("C2:D2000", value_render_option="UNFORMATTED_VALUE")
+    pendientes = {}  # fecha -> número de fila
+    for i, fila in enumerate(filas_hoja):
+        if not fila or not isinstance(fila[0], (int, float)):
+            continue
+        fecha = _fecha_de_serial(fila[0])
+        if fecha > ayer:
+            continue
+        valor_d = fila[1] if len(fila) > 1 else ""
+        if valor_d in ("", None) or (forzar and (ayer - fecha).days < VENTANA_FORZAR_DIAS):
+            pendientes[fecha] = i + 2
 
-    actual = worksheet.get(f"D{fila_hoy}", value_render_option="UNFORMATTED_VALUE")
-    if not forzar and actual and actual[0] and actual[0][0] not in ("", None):
-        actualizar_periodo_proyeccion_mtto(worksheet, hoy)
-        log.warning(
-            "Proyección de Mantenimientos: la fila %d (%s) ya tiene captura -- se conserva "
-            "(usa --forzar-mtto para reescribirla).", fila_hoy, hoy,
+    if pendientes:
+        serie = descargar_serie_vencimiento(session, min(pendientes), max(pendientes))
+        cambios = [
+            {"range": f"D{fila}", "values": [[round(serie[fecha] / 100, 4)]]}
+            for fecha, fila in sorted(pendientes.items()) if fecha in serie
+        ]
+        if cambios:
+            worksheet.batch_update(cambios, value_input_option="USER_ENTERED")
+        log.info(
+            "Proyección de Mantenimientos: %d días escritos desde el histórico de Maxinet "
+            "(%d pendientes sin publicar)", len(cambios), len(pendientes) - len(cambios),
         )
-        return
+    else:
+        log.info("Proyección de Mantenimientos: no hay días pendientes en D")
 
-    filas = descargar_proyeccion_mantenimientos(session)
-    pct = _calcular_pct_vencimiento(filas)
+    # J1:J2 son sólo informativas: si falla la consulta en vivo no debe
+    # detener el resto (el % de D y PERIODO ya son lo importante).
+    try:
+        filas_vivo = descargar_proyeccion_mantenimientos(session)
+        vencidos = sum(1 for f in filas_vivo if f[IDX_ESTATUS_VENCIMIENTO_MTTO] == "VENCIDO")
+        worksheet.update(values=[[len(filas_vivo)], [vencidos]], range_name="J1:J2", value_input_option="USER_ENTERED")
+        log.info("Proyección de Mantenimientos: J1:J2 = %d unidades, %d vencidos", len(filas_vivo), vencidos)
+    except Exception as e:
+        log.warning("Proyección de Mantenimientos: no se pudo actualizar J1:J2 (%s)", type(e).__name__)
 
-    worksheet.update(values=[[pct]], range_name=f"D{fila_hoy}", value_input_option="USER_ENTERED")
     actualizar_periodo_proyeccion_mtto(worksheet, hoy)
-
-    vencidos = sum(1 for f in filas if f[IDX_ESTATUS_VENCIMIENTO_MTTO] == "VENCIDO")
-    log.info(
-        "Proyección de Mantenimientos: %.2f%% vencido (%d/%d) escrito en fila %d (%s)",
-        pct * 100, vencidos, len(filas), fila_hoy, hoy,
-    )
 
 
 def main():
