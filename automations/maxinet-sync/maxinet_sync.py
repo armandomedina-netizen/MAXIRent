@@ -65,6 +65,7 @@ import requests
 from zoneinfo import ZoneInfo
 import pandas as pd
 import gspread
+from gspread.http_client import HTTPClient
 from google.oauth2 import service_account
 from dotenv import load_dotenv
 
@@ -101,6 +102,34 @@ def _hoy_cdmx() -> date:
     trabaja en UTC: después de las 18:00 hora CDMX su date.today() ya sería
     "mañana" y una corrida tardía avanzaría las columnas un día de más."""
     return datetime.now(ZONA_CDMX).date()
+
+
+def _instalar_reintentos_gspread() -> None:
+    """Google Sheets limita las lecturas por minuto por usuario y esa cuota
+    la comparten TODOS los procesos que usan la misma cuenta de servicio
+    (este sync, el Query Sync, las otras automatizaciones). El 2026-10-02 un
+    429 a media corrida tiró el sync completo. Un 429 se rechaza antes de
+    procesarse, así que reintentar es seguro; los errores 5xx sólo se
+    reintentan en lecturas (GET), para no duplicar una escritura."""
+    original = HTTPClient.request
+
+    def con_reintentos(self, method, *args, **kwargs):
+        for intento in range(1, 7):
+            try:
+                return original(self, method, *args, **kwargs)
+            except gspread.exceptions.APIError as e:
+                codigo = getattr(e.response, "status_code", None)
+                reintentable = codigo == 429 or (codigo in (500, 502, 503) and str(method).lower() == "get")
+                if not reintentable or intento == 6:
+                    raise
+                espera = 20 * intento
+                log.warning("Google Sheets respondió %s; reintento %d de 5 en %d s", codigo, intento, espera)
+                time.sleep(espera)
+
+    HTTPClient.request = con_reintentos
+
+
+_instalar_reintentos_gspread()
 
 
 def _parse_json_bom(resp: requests.Response):
@@ -1348,7 +1377,11 @@ def _mantener_bloque_formulas(worksheet, bloque: dict) -> dict:
     holgura = bloque.get("holgura", 10)
     filas_hoja = worksheet.row_count
 
-    guia = worksheet.get(f"{col_guia}{desde}:{col_guia}{filas_hoja}", value_render_option="FORMATTED_VALUE")
+    letra_ini, letra_fin = bloque["cols"]
+    rango_bloque = f"{letra_ini}{desde}:{letra_fin}{filas_hoja}"
+    # Una sola petición para la guía y el bloque (la cuota de lecturas es escasa).
+    guia, valores_bloque = worksheet.batch_get(
+        [f"{col_guia}{desde}:{col_guia}{filas_hoja}", rango_bloque], value_render_option="FORMATTED_VALUE")
     ultima_guia = desde - 1
     errores_guia = 0
     for i, fila in enumerate(guia):
@@ -1358,9 +1391,8 @@ def _mantener_bloque_formulas(worksheet, bloque: dict) -> dict:
             if str(valor).startswith("#"):
                 errores_guia += 1
 
-    letra_ini, letra_fin = bloque["cols"]
-    formulas = worksheet.get(f"{letra_ini}{desde}:{letra_fin}{filas_hoja}", value_render_option="FORMULA")
-    valores = worksheet.get(f"{letra_ini}{desde}:{letra_fin}{max(ultima_guia, desde)}", value_render_option="FORMATTED_VALUE")
+    formulas = worksheet.get(rango_bloque, value_render_option="FORMULA")
+    valores = valores_bloque[: max(ultima_guia - desde + 1, 0)]
     errores_bloque = sum(1 for fila in valores for c in fila if isinstance(c, str) and c.startswith("#"))
 
     objetivo = ultima_guia + holgura
@@ -1415,11 +1447,16 @@ def _mantener_bloque_formulas(worksheet, bloque: dict) -> dict:
 def mantener_formulas_tablero() -> None:
     """Corre _mantener_bloque_formulas en cada hoja de BLOQUES_FORMULAS_TABLERO.
     Una falla (hoja protegida, API, etc.) se avisa y no detiene lo demás."""
+    try:
+        libro = conectar_sheet_secundario(next(iter(BLOQUES_FORMULAS_TABLERO))).spreadsheet
+        hojas = {w.title: w for w in libro.worksheets()}  # una sola petición para todas
+    except Exception as e:
+        log.warning("Fórmulas del tablero: no se pudo abrir el libro (%s)", type(e).__name__)
+        return
     for nombre, bloques in BLOQUES_FORMULAS_TABLERO.items():
-        try:
-            worksheet = conectar_sheet_secundario(nombre)
-        except Exception as e:
-            log.warning("Fórmulas de '%s': no se pudo abrir la hoja (%s)", nombre, type(e).__name__)
+        worksheet = hojas.get(nombre)
+        if worksheet is None:
+            log.warning("Fórmulas de '%s': la hoja no existe en el libro", nombre)
             continue
         for bloque in bloques:
             try:
