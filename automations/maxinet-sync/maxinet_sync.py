@@ -55,6 +55,7 @@ Estructura del primer Sheet (confirmada por el usuario):
 import os
 import re
 import sys
+import copy
 import time
 import json
 import logging
@@ -292,10 +293,8 @@ def actualizar_sheet(worksheet, df_nuevo: pd.DataFrame):
     log.info("Sheet actualizado: %d filas escritas en %s", n_filas, rango_datos)
 
 
-# =========================================================================
 # SEGUNDO ARCHIVO DE GOOGLE SHEETS
 # Contiene las pestañas "FLOTA LP" y "UTILIZACION V3"
-# =========================================================================
 
 def conectar_sheet_secundario(nombre_pestana: str):
     """Conecta al segundo archivo de Sheets (distinto del primero) y devuelve
@@ -355,9 +354,7 @@ def actualizar_sheet_flota_lp(worksheet, df_nuevo: pd.DataFrame):
     log.info("FLOTA LP actualizado: %d filas escritas (A%d:AN%d)", n_filas, fila_inicio, fila_final)
 
 
-# =========================================================================
 # "UTILIZACION V3": avance diario de la columna de fórmulas
-# =========================================================================
 
 FILA_FECHA_CALENDARIO = 2
 
@@ -615,9 +612,7 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     )
 
 
-# =========================================================================
 # "UTI. GRUPO DE AUTOS V1": avance diario de la columna de fórmulas
-# =========================================================================
 # Mismo mecanismo de calendario que UTILIZACION V3 (fila 2 = fechas "d-mmm"),
 # y el mismo problema: NO es un simple corte "fila 3 | 4-83 | 84-115".
 # Confirmado contra el sheet real: las filas 20, 36 y TODO el bloque 52-83
@@ -703,9 +698,7 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
     )
 
 
-# =========================================================================
 # "UTILIZACION V3": indicador VOR Cliente (filas 50-56)
-# =========================================================================
 # Fuente de datos distinta a la del resto del Sheet: no viene del reporte de
 # flota (reporte-flota-maxirent.php / COLUMNAS), sino de la tabla "VOR
 # Cliente" del portal (dashboard-flota-lp.php), endpoint confirmado a partir
@@ -779,9 +772,7 @@ def actualizar_vor_cliente(worksheet, session: requests.Session, col_referencia=
     )
 
 
-# =========================================================================
 # "RESUMEN": columna E ("PERIODO") -- agrupa cada fecha en su quincena
-# =========================================================================
 # Confirmado contra el archivo original manual: cada fecha de la columna A
 # se agrupa en "1-15" o "16-fin de mes". PERO solo se colapsa a un único
 # valor ancla (día 1 del mes, o +1 si es la segunda quincena, usando SIEMPRE
@@ -969,9 +960,7 @@ def extender_formulas_resumen(worksheet) -> None:
         spreadsheet.batch_update({"requests": requests_body})
 
 
-# =========================================================================
 # "TABLAS": fuente de las gráficas de la presentación
-# =========================================================================
 # Confirmado contra el archivo original: a diferencia de RESUMEN!E (que ya
 # trae precargadas las fechas de todo el año), acá Nuvia escribe a mano,
 # periódicamente, el mismo listado de quincenas -- pero SOLO hasta la
@@ -1152,9 +1141,7 @@ def actualizar_tablas(worksheet) -> None:
         spreadsheet.batch_update({"requests": requests_extender})
 
 
-# =========================================================================
 # "Duración rentas": fila "TIEMPO DE VIDA (ACTIVAS)" del año en curso
-# =========================================================================
 # Esta hoja NO la alimenta esta automatización -- Nuvia pega a mano nuevas
 # rentas en la tabla detalle (fila 14 en adelante). Confirmado comparando
 # contra el archivo original: la fila "TIEMPO DE VIDA (RETORNOS)" de cada
@@ -1332,9 +1319,7 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
     log.info("Duración rentas: ACTIVAS %s%d creado con fórmula viva", col_actual, fila_activas)
 
 
-# =========================================================================
 # Hojas de solo fórmulas del tablero: mantener las fórmulas por fila
-# =========================================================================
 # Estas hojas listan algo con una fórmula que se derrama (UNIQUE/SORT/FILTER)
 # en una columna "guía", y al lado llevan fórmulas por fila (COUNTIFS,
 # XLOOKUP...) que Nuvia arrastra hacia abajo a mano cuando la lista crece.
@@ -1363,6 +1348,7 @@ BLOQUES_FORMULAS_TABLERO = {
         {"guia": "J", "desde": 5, "cols": ("K", "P"), "holgura": 10},
     ],
 }
+ERRORES_SHEETS = {"#REF!", "#VALUE!", "#N/A", "#DIV/0!", "#NAME?", "#NUM!", "#NULL!", "#ERROR!"}
 MESES_MAYUSCULAS = [
     "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
     "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
@@ -1388,12 +1374,12 @@ def _mantener_bloque_formulas(worksheet, bloque: dict) -> dict:
         valor = fila[0] if fila else ""
         if valor not in ("", None):
             ultima_guia = desde + i
-            if str(valor).startswith("#"):
+            if valor in ERRORES_SHEETS:
                 errores_guia += 1
 
     formulas = worksheet.get(rango_bloque, value_render_option="FORMULA")
     valores = valores_bloque[: max(ultima_guia - desde + 1, 0)]
-    errores_bloque = sum(1 for fila in valores for c in fila if isinstance(c, str) and c.startswith("#"))
+    errores_bloque = sum(1 for fila in valores for c in fila if c in ERRORES_SHEETS)
 
     objetivo = ultima_guia + holgura
     if objetivo > filas_hoja:
@@ -1483,10 +1469,195 @@ def actualizar_mes_resumen_afectaciones(worksheet, hoy: date = None) -> None:
         log.info("RESUMEN AFECTACIONES: B2 muestra otro mes elegido a mano; se respeta")
 
 
-# =========================================================================
+# Gráficos: mantener los rangos de datos al día
+# Cada mes Nuvia "estira" a mano el rango de datos de cada gráfico de series
+# de tiempo una fila (o columna) para que incluya el periodo nuevo; si se
+# olvida, la gráfica se queda corta (la lista de TABLAS pasa de la fila 35
+# este mismo mes). Cada corrida revisa los gráficos de GRAFICOS_CRECIENTES:
+# toma el eje (dominio) del gráfico y, si inmediatamente después de su último
+# dato siguen celdas con contenido SIN huecos, extiende todos los rangos del
+# gráfico (en esa hoja y con esa orientación) hasta ahí. Sólo agranda, nunca
+# encoge, y se detiene en la primera celda vacía. Si una hoja está protegida
+# (la cuenta de servicio no es editora) avisa y sigue con el siguiente.
+GRAFICOS_CRECIENTES = {
+    "tablero": {
+        "GRAFICOS UTILIZACION": {"excluir": ["ENVIOS A SEMINUEVOS LP", "ENVIOS A SEMINUEVOS"]},
+        "COMPORTAMIENTO DE CUENTAS": {},
+        "FALLAS DE ENTREGAS": {},
+        "HISTORICO NUEVA MES": {},
+        "SINIESTROS": {},
+        "OPERACIONES": {"excluir": ["AVG DIAS TALLER"]},
+    },
+    "base": {
+        "Proyección de Mantenimientos": {},
+    },
+}
+# Gráfico cuyo rango termina en el último mes COMPLETO (no por contenido, porque
+# la lista de meses ya trae todo el año): hoja -> (título, fila donde empieza).
+GRAFICOS_POR_MES_COMPLETO = {"RESUMEN AFECTACIONES": ("Total de afectación frente a periodo", 4)}
+VENTANA_ESCANEO_GRAFICOS = 40
+
+
+def _a1_rango(titulo_hoja: str, fila_ini: int, fila_fin: int, col_ini: int, col_fin: int) -> str:
+    """Índices 0-based (fin exclusivo) -> 'Hoja'!A1:B2."""
+    inicio = f"{_indice_a_col_letra(col_ini)}{fila_ini + 1}"
+    fin = f"{_indice_a_col_letra(col_fin - 1)}{fila_fin}"
+    return "'" + titulo_hoja.replace("'", "''") + "'!" + f"{inicio}:{fin}"
+
+
+def _fuentes_basic_chart(spec: dict) -> tuple:
+    """(rangos del dominio, rangos de series) de un basicChart, como dicts vivos."""
+    basico = spec.get("basicChart") or {}
+    dominio = [rg for d in basico.get("domains", []) for rg in d.get("domain", {}).get("sourceRange", {}).get("sources", [])]
+    series = [rg for s in basico.get("series", []) for rg in s.get("series", {}).get("sourceRange", {}).get("sources", [])]
+    return dominio, series
+
+
+def _aplicar_spec_grafico(libro, chart: dict, spec_nuevo: dict, nombre_hoja: str, detalle: str) -> bool:
+    # La API devuelve lineSmoothing en gráficos de área/combinados pero lo rechaza
+    # al escribirlos ("not supported when chartType is AREA/COMBO"): sólo aplica a LINE.
+    basico = spec_nuevo.get("basicChart")
+    if basico and basico.get("chartType") != "LINE":
+        basico.pop("lineSmoothing", None)
+    try:
+        libro.batch_update({"requests": [{"updateChartSpec": {"chartId": chart["chartId"], "spec": spec_nuevo}}]})
+        log.info("Gráfico '%s' (%s): %s", spec_nuevo.get("title", ""), nombre_hoja, detalle)
+        return True
+    except gspread.exceptions.APIError as e:
+        log.warning("Gráfico '%s' (%s): no se pudo ajustar (%s)", spec_nuevo.get("title", ""), nombre_hoja,
+                    "hoja protegida" if "protected" in str(e) else type(e).__name__)
+        return False
+
+
+def _mantener_graficos_libro(libro, config_hojas: dict, hoy: date) -> None:
+    meta = libro.fetch_sheet_metadata()
+    titulo_por_id = {s["properties"]["sheetId"]: s["properties"]["title"] for s in meta["sheets"]}
+    cuadricula = {s["properties"]["sheetId"]: s["properties"].get("gridProperties", {}) for s in meta["sheets"]}
+
+    # 1. qué escanear: para cada gráfico, las celdas siguientes al último dato de su dominio
+    candidatos = []  # (hoja, chart, spec, orientacion, rango_dominio, escaneo_a1)
+    for hoja in meta["sheets"]:
+        nombre = hoja["properties"]["title"]
+        if nombre not in config_hojas:
+            continue
+        excluir = config_hojas[nombre].get("excluir", [])
+        for chart in hoja.get("charts", []):
+            spec = chart.get("spec", {})
+            titulo = spec.get("title", "")
+            if "basicChart" not in spec or not titulo or "*" in excluir or titulo in excluir:
+                continue
+            dominio, _ = _fuentes_basic_chart(spec)
+            if not dominio:
+                continue
+            d = dominio[0]
+            f0, f1, c0, c1 = d.get("startRowIndex"), d.get("endRowIndex"), d.get("startColumnIndex"), d.get("endColumnIndex")
+            if None in (f0, f1, c0, c1) or d.get("sheetId") not in titulo_por_id:
+                continue
+            hoja_dom = titulo_por_id[d["sheetId"]]
+            max_filas = cuadricula[d["sheetId"]].get("rowCount", f1)
+            max_cols = cuadricula[d["sheetId"]].get("columnCount", c1)
+            # el escaneo no puede salirse de la cuadrícula de la hoja
+            if c1 - c0 == 1 and f1 - f0 > 1:
+                if f1 >= max_filas:
+                    continue
+                orient, escaneo = "v", _a1_rango(hoja_dom, f1, min(f1 + VENTANA_ESCANEO_GRAFICOS, max_filas), c0, c1)
+            elif f1 - f0 == 1 and c1 - c0 > 1:
+                if c1 >= max_cols:
+                    continue
+                orient, escaneo = "h", _a1_rango(hoja_dom, f0, f1, c1, min(c1 + VENTANA_ESCANEO_GRAFICOS, max_cols))
+            else:
+                continue
+            candidatos.append((nombre, chart, spec, orient, d, escaneo))
+
+    # 2. una sola lectura para todos los escaneos del libro
+    extra_por_escaneo = {}
+    if candidatos:
+        lote = libro.values_batch_get(
+            [c[5] for c in candidatos], params={"valueRenderOption": "FORMATTED_VALUE"}).get("valueRanges", [])
+        for c, vr in zip(candidatos, lote):
+            filas = vr.get("values", [])
+            celdas = [(fila[0] if fila else "") for fila in filas] if c[3] == "v" else (list(filas[0]) if filas else [])
+            n = 0
+            for v in celdas:
+                if v in ("", None):
+                    break
+                n += 1
+            extra_por_escaneo[c[5]] = n
+
+    ajustados = bloqueados = sin_cambio = 0
+    for nombre, chart, spec, orient, d, escaneo in candidatos:
+        extra = extra_por_escaneo.get(escaneo, 0)
+        if extra <= 0:
+            sin_cambio += 1
+            continue
+        nuevo = copy.deepcopy(spec)
+        dominio, series = _fuentes_basic_chart(nuevo)
+        if orient == "v":
+            fin_nuevo, llave = dominio[0]["endRowIndex"] + extra, "endRowIndex"
+            propios = [r for r in dominio + series if r.get("sheetId") == d["sheetId"]
+                       and (r.get("endColumnIndex", 0) - r.get("startColumnIndex", 0)) == 1]
+        else:
+            fin_nuevo, llave = dominio[0]["endColumnIndex"] + extra, "endColumnIndex"
+            propios = [r for r in dominio + series if r.get("sheetId") == d["sheetId"]
+                       and (r.get("endRowIndex", 0) - r.get("startRowIndex", 0)) == 1]
+        cambio = False
+        for r in propios:
+            if r.get(llave, 0) < fin_nuevo:
+                r[llave] = fin_nuevo
+                cambio = True
+        if not cambio:
+            sin_cambio += 1
+        elif _aplicar_spec_grafico(libro, chart, nuevo, nombre,
+                                   f"rango extendido {extra} {'filas' if orient == 'v' else 'columnas'}"):
+            ajustados += 1
+        else:
+            bloqueados += 1
+    log.info("Gráficos: %d ajustados, %d sin cambio, %d bloqueados", ajustados, sin_cambio, bloqueados)
+
+    # 3. gráficos que terminan en el último mes completo
+    for nombre_hoja, (titulo_grafico, fila_ini) in GRAFICOS_POR_MES_COMPLETO.items():
+        if nombre_hoja not in config_hojas:
+            continue
+        for hoja in meta["sheets"]:
+            if hoja["properties"]["title"] != nombre_hoja:
+                continue
+            for chart in hoja.get("charts", []):
+                spec = chart.get("spec", {})
+                if spec.get("title") != titulo_grafico or "basicChart" not in spec:
+                    continue
+                nuevo = copy.deepcopy(spec)
+                dominio, series = _fuentes_basic_chart(nuevo)
+                fin = fila_ini + max(hoy.month - 1, 1)
+                cambio = False
+                for r in dominio + series:
+                    if r.get("sheetId") == hoja["properties"]["sheetId"] and r.get("startRowIndex") == fila_ini - 1 \
+                            and r.get("endRowIndex", 0) != fin:
+                        r["endRowIndex"] = fin
+                        cambio = True
+                if cambio:
+                    _aplicar_spec_grafico(libro, chart, nuevo, nombre_hoja, f"termina en la fila {fin} (último mes completo)")
+
+
+def mantener_graficos(hoy: date = None) -> None:
+    """Mantiene los rangos de los gráficos del tablero y de la base. Una
+    falla (hoja protegida, API...) se avisa y no detiene el sync."""
+    hoy = hoy or _hoy_cdmx()
+    try:
+        libro = conectar_sheet_secundario(next(iter(BLOQUES_FORMULAS_TABLERO))).spreadsheet
+        config = dict(GRAFICOS_CRECIENTES["tablero"])
+        config["RESUMEN AFECTACIONES"] = {"excluir": ["*"]}  # sólo la regla por mes (sección 3)
+        _mantener_graficos_libro(libro, config, hoy)
+    except Exception as e:
+        log.warning("Gráficos del tablero: no se pudieron mantener (%s: %s)", type(e).__name__, str(e)[:120])
+    try:
+        libro = conectar_sheet_por_nombre(HOJA_PROYECCION_MTTO).spreadsheet
+        _mantener_graficos_libro(libro, GRAFICOS_CRECIENTES["base"], hoy)
+    except Exception as e:
+        log.warning("Gráficos de la base: no se pudieron mantener (%s: %s)", type(e).__name__, str(e)[:120])
+
+
 # Libro "Proyección de Mantenimientos" (mismo archivo de SPREADSHEET_ID,
 # pestaña "Proyección de Mantenimientos")
-# =========================================================================
 # Fuente del % de cada día: el histórico que Maxinet guarda para la gráfica
 # "% Vencimiento y Meta" de su página "Proyección de Mtto" (lp-mtto-
 # proyector-mtto.php):
@@ -1757,6 +1928,7 @@ def main():
 
         # Hojas de solo fórmulas: no deben detener el sync si algo falla.
         mantener_formulas_tablero()
+        mantener_graficos()
         try:
             actualizar_mes_resumen_afectaciones(conectar_sheet_secundario("RESUMEN AFECTACIONES"))
         except Exception as e:

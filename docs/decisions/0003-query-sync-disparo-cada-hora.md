@@ -78,3 +78,9 @@ Requisito: la cuenta de servicio debe ser editora de los rangos protegidos de es
 ### Cuota de lecturas de Google Sheets (2026-10-02)
 
 El 2-oct un sync completo falló con `429 Quota exceeded ... Read requests per minute per user`: esa cuota (60 lecturas por minuto) la comparten todos los procesos que usan la misma cuenta de servicio (este sync, el Query Sync, pruebas manuales). `maxinet_sync.py` instala reintentos sobre el cliente de gspread: un 429 se reintenta hasta 5 veces con espera creciente (20 s, 40 s, ...), y los 5xx sólo en lecturas, para no duplicar escrituras. Además el mantenimiento de fórmulas junta sus lecturas (`batch_get`) y abre el libro una sola vez.
+
+### Gráficos del tablero y la base (2026-10-02)
+
+Cada mes se estiraba a mano el rango de datos de cada gráfico de series de tiempo (por ejemplo `COMPORTAMIENTO DE CUENTAS` pasó de `A23:AF23` a `A23:AG23`). `mantener_graficos()` revisa los gráficos de `GRAFICOS_CRECIENTES`: toma el eje del gráfico y, si inmediatamente después de su último dato hay celdas con contenido sin huecos, extiende todos los rangos del gráfico hasta ahí (sólo agranda, se detiene en la primera celda vacía y no se sale de la cuadrícula de la hoja). `RESUMEN AFECTACIONES` termina en el último mes completo. Cada gráfico se actualiza por separado: si su hoja está protegida (la cuenta de servicio debe ser editora) avisa y sigue. La API devuelve `lineSmoothing` en gráficos de área o combinados pero lo rechaza al escribirlos, por eso se quita salvo en gráficos de línea.
+
+Sólo se tocan los gráficos listados; los que se alimentan de tablas de tamaño fijo (por ejemplo los de envíos a seminuevos) no se estiran.
