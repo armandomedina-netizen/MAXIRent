@@ -1304,6 +1304,149 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
 
 
 # =========================================================================
+# Hojas de solo fórmulas del tablero: mantener las fórmulas por fila
+# =========================================================================
+# Estas hojas listan algo con una fórmula que se derrama (UNIQUE/SORT/FILTER)
+# en una columna "guía", y al lado llevan fórmulas por fila (COUNTIFS,
+# XLOOKUP...) que Nuvia arrastra hacia abajo a mano cuando la lista crece.
+# Si la lista pasa de la última fila con fórmulas, esas filas se quedan sin
+# cálculo. Cada bloque dice cuál es su columna guía, desde qué fila y qué
+# columnas de fórmulas la acompañan; cada corrida:
+#   1. extiende las fórmulas hasta la última fila de la lista + holgura
+#      (agrega filas a la hoja si hace falta, copiando fórmula y formato),
+#   2. rellena huecos (una fórmula suelta que falta en medio),
+#   3. avisa (sin fallar) si la guía o el bloque tienen errores (#REF!...),
+#      por ejemplo un derrame bloqueado por datos escritos debajo,
+#   4. si no se puede escribir (rango protegido, etc.) avisa y sigue con lo
+#      demás: estas hojas son secundarias y no deben detener el sync.
+# Nunca borra ni sobrescribe contenido existente.
+BLOQUES_FORMULAS_TABLERO = {
+    "UTILIZACION POR GRUPO": [
+        {"guia": "A", "desde": 4, "cols": ("B", "P"), "holgura": 3},
+        {"guia": "R", "desde": 4, "cols": ("S", "AG"), "holgura": 3},
+    ],
+    "RESUMEN DE RENTAS ACTIVAS": [
+        {"guia": "A", "desde": 4, "cols": ("B", "F"), "holgura": 10},
+        {"guia": "L", "desde": 4, "cols": ("M", "N"), "holgura": 10},
+        {"guia": "P", "desde": 4, "cols": ("Q", "R"), "holgura": 10},
+    ],
+    "PROXIMOS RETORNOS": [
+        {"guia": "J", "desde": 5, "cols": ("K", "P"), "holgura": 10},
+    ],
+}
+MESES_MAYUSCULAS = [
+    "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+    "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
+]
+
+
+def _mantener_bloque_formulas(worksheet, bloque: dict) -> dict:
+    col_guia = bloque["guia"]
+    c_ini = _col_letra_a_indice(bloque["cols"][0])
+    c_fin = _col_letra_a_indice(bloque["cols"][1])
+    desde = bloque["desde"]
+    holgura = bloque.get("holgura", 10)
+    filas_hoja = worksheet.row_count
+
+    guia = worksheet.get(f"{col_guia}{desde}:{col_guia}{filas_hoja}", value_render_option="FORMATTED_VALUE")
+    ultima_guia = desde - 1
+    errores_guia = 0
+    for i, fila in enumerate(guia):
+        valor = fila[0] if fila else ""
+        if valor not in ("", None):
+            ultima_guia = desde + i
+            if str(valor).startswith("#"):
+                errores_guia += 1
+
+    letra_ini, letra_fin = bloque["cols"]
+    formulas = worksheet.get(f"{letra_ini}{desde}:{letra_fin}{filas_hoja}", value_render_option="FORMULA")
+    valores = worksheet.get(f"{letra_ini}{desde}:{letra_fin}{max(ultima_guia, desde)}", value_render_option="FORMATTED_VALUE")
+    errores_bloque = sum(1 for fila in valores for c in fila if isinstance(c, str) and c.startswith("#"))
+
+    objetivo = ultima_guia + holgura
+    if objetivo > filas_hoja:
+        worksheet.add_rows(objetivo - filas_hoja)
+
+    sheet_id = worksheet.id
+
+    def rango(fila_ini, fila_fin, col):
+        return {"sheetId": sheet_id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
+                "startColumnIndex": col, "endColumnIndex": col + 1}
+
+    requests_copia = []
+    extendidas = huecos = 0
+    for k in range(c_ini, c_fin + 1):
+        col_formulas = [(fila[k - c_ini] if k - c_ini < len(fila) else "") for fila in formulas]
+        filas_con_formula = [desde + i for i, v in enumerate(col_formulas) if isinstance(v, str) and v.startswith("=")]
+        if not filas_con_formula:
+            continue  # sin plantilla en esta columna
+        plantilla = filas_con_formula[-1]
+        hasta_hueco = min(plantilla, objetivo)
+        for fila_h in range(desde, hasta_hueco + 1):
+            v = col_formulas[fila_h - desde]
+            if not (isinstance(v, str) and v.startswith("=")) and fila_h <= ultima_guia + holgura:
+                if v in ("", None):  # nunca se pisa contenido existente
+                    huecos += 1
+                    for tipo in ("PASTE_FORMULA", "PASTE_FORMAT"):
+                        requests_copia.append({"copyPaste": {
+                            "source": rango(plantilla, plantilla, k), "destination": rango(fila_h, fila_h, k),
+                            "pasteType": tipo}})
+        if plantilla < objetivo:
+            extendidas += objetivo - plantilla
+            for tipo in ("PASTE_FORMULA", "PASTE_FORMAT"):
+                requests_copia.append({"copyPaste": {
+                    "source": rango(plantilla, plantilla, k), "destination": rango(plantilla + 1, objetivo, k),
+                    "pasteType": tipo}})
+    if requests_copia:
+        worksheet.spreadsheet.batch_update({"requests": requests_copia})
+
+    log.info(
+        "Fórmulas de '%s' (guía %s): lista hasta la fila %d, %d celdas extendidas, %d huecos rellenados, %d errores",
+        worksheet.title, col_guia, ultima_guia, extendidas, huecos, errores_guia + errores_bloque,
+    )
+    if errores_guia + errores_bloque:
+        log.warning(
+            "Fórmulas de '%s' (guía %s): %d celdas con error -- revisar (¿derrame bloqueado por datos debajo?)",
+            worksheet.title, col_guia, errores_guia + errores_bloque,
+        )
+    return {"extendidas": extendidas, "huecos": huecos, "errores": errores_guia + errores_bloque}
+
+
+def mantener_formulas_tablero() -> None:
+    """Corre _mantener_bloque_formulas en cada hoja de BLOQUES_FORMULAS_TABLERO.
+    Una falla (hoja protegida, API, etc.) se avisa y no detiene lo demás."""
+    for nombre, bloques in BLOQUES_FORMULAS_TABLERO.items():
+        try:
+            worksheet = conectar_sheet_secundario(nombre)
+        except Exception as e:
+            log.warning("Fórmulas de '%s': no se pudo abrir la hoja (%s)", nombre, type(e).__name__)
+            continue
+        for bloque in bloques:
+            try:
+                _mantener_bloque_formulas(worksheet, bloque)
+            except Exception as e:
+                log.warning(
+                    "Fórmulas de '%s' (guía %s): no se pudo mantener (%s: %s)",
+                    nombre, bloque["guia"], type(e).__name__, str(e)[:120],
+                )
+
+
+def actualizar_mes_resumen_afectaciones(worksheet, hoy: date = None) -> None:
+    """B2 de 'RESUMEN AFECTACIONES' es el selector de mes (lo que Nuvia
+    cambia a mano el día 1). Si todavía muestra el mes ANTERIOR lo pasa al mes
+    en curso; si alguien eligió a propósito otro mes, se respeta."""
+    hoy = hoy or _hoy_cdmx()
+    actual = MESES_MAYUSCULAS[hoy.month - 1]
+    anterior = MESES_MAYUSCULAS[(hoy.month - 2) % 12]
+    valor = (worksheet.acell("B2").value or "").strip().upper()
+    if valor == anterior:
+        worksheet.update(values=[[actual]], range_name="B2", value_input_option="USER_ENTERED")
+        log.info("RESUMEN AFECTACIONES: selector de mes B2 pasó de %s a %s", anterior, actual)
+    elif valor != actual:
+        log.info("RESUMEN AFECTACIONES: B2 muestra otro mes elegido a mano; se respeta")
+
+
+# =========================================================================
 # Libro "Proyección de Mantenimientos" (mismo archivo de SPREADSHEET_ID,
 # pestaña "Proyección de Mantenimientos")
 # =========================================================================
@@ -1574,6 +1717,13 @@ def main():
 
         worksheet_tablas = conectar_sheet_secundario("TABLAS")
         actualizar_tablas(worksheet_tablas)
+
+        # Hojas de solo fórmulas: no deben detener el sync si algo falla.
+        mantener_formulas_tablero()
+        try:
+            actualizar_mes_resumen_afectaciones(conectar_sheet_secundario("RESUMEN AFECTACIONES"))
+        except Exception as e:
+            log.warning("RESUMEN AFECTACIONES: no se pudo actualizar el mes (%s)", type(e).__name__)
 
         worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
         avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
