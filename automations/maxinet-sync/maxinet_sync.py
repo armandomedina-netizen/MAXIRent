@@ -792,31 +792,21 @@ def actualizar_periodo_resumen(worksheet) -> None:
 
         fecha = EPOCH_SHEETS + timedelta(days=int(valor))
         es_primera_mitad = fecha.day <= 15
-        fin_periodo = _fin_de_quincena(fecha.year, fecha.month, es_primera_mitad)
 
-        # Confirmado contra el archivo original: en años YA CERRADOS
-        # (anteriores al actual), el proceso manual se quedó parado en
-        # septiembre para siempre -- 2024 y 2025 muestran septiembre 16-30
-        # con los días sueltos (16, 17, 18...30, nunca colapsados a
-        # "septiembre 2"), y de octubre en adelante la celda está
-        # completamente VACÍA (ni colapsada ni con día suelto -- Nuvia
-        # nunca llegó a esos meses ese año y no hay evidencia de que vaya a
-        # volver). "TABLAS" depende exactamente de que septiembre 16-30
-        # quede suelto para poder comparar año contra año (AVERAGEIFS por
-        # número de día) -- si además dejáramos octubre-diciembre con
-        # números sueltos, esas fechas se colarían en el promedio y ya no
-        # coincidiría con el archivo original (confirmado: así se rompió al
-        # primer intento). Para el año EN CURSO sí seguimos avanzando
-        # siempre con normalidad -- no hay razón para que la automatización
-        # se "quede parada" en septiembre como pasaba a mano.
-        if fecha.year < hoy.year and fecha.month == 9 and not es_primera_mitad:
-            estado = "numero"
-        elif fecha.year < hoy.year and fecha.month > 9:
-            estado = "vacio"
-        elif fin_periodo < hoy:
+        # Regla del archivo original (confirmada el 2026-10-02 contra todos
+        # los años), igual para TODOS los años y relativa a la quincena en
+        # curso: las quincenas anteriores se colapsan a un ancla ("septiembre
+        # 2"), la quincena en curso deja cada día con su número, y las
+        # posteriores quedan vacías. (Antes estaba amarrada a "septiembre" y
+        # a "año anterior": se quedó atrás cuando Nuvia avanzó a octubre.)
+        quincena_fecha = (fecha.month, 1 if es_primera_mitad else 2)
+        quincena_hoy = (hoy.month, 1 if hoy.day <= 15 else 2)
+        if quincena_fecha < quincena_hoy:
             estado = "ancla"
-        else:
+        elif quincena_fecha == quincena_hoy:
             estado = "numero"
+        else:
+            estado = "vacio"
 
         if estado == "ancla":
             ancla = date(2026, fecha.month, 1)
@@ -1055,7 +1045,7 @@ def _extender_bloques_formulas(worksheet, sheet_id, spreadsheet, bloques, ultima
 
 def actualizar_tablas(worksheet) -> None:
     """Automatiza lo que Nuvia hace a mano en 'TABLAS': escribe el listado
-    de periodos en A, BI y BQ, y arrastra hacia abajo las fórmulas de todos
+    de periodos en A, y arrastra hacia abajo las fórmulas de todos
     los bloques de valores para que alcancen la fila nueva."""
     hoy = _hoy_cdmx()
     filas = _generar_lista_periodos_acotada(hoy)
@@ -1066,7 +1056,9 @@ def actualizar_tablas(worksheet) -> None:
     spreadsheet = worksheet.spreadsheet
 
     valores = [[v] for v, _ in filas]
-    columnas_periodo = ["A", "BI", "BQ"]
+    # Sólo A: en el original BI2 y BQ2 son =UNIQUE(...) que se derraman hacia
+    # abajo; escribir ahí una lista las bloquea (#REF!) y rompe BJ (#DIV/0!).
+    columnas_periodo = ["A"]
     for columna in columnas_periodo:
         worksheet.update(
             values=valores, range_name=f"{columna}3:{columna}{ultima_fila}", value_input_option="USER_ENTERED"
