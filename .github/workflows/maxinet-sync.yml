@@ -1,5 +1,9 @@
 name: Maxinet Sync
 
+# La etiqueta del título (completo | proyeccion-mtto) permite al Apps Script de
+# disparo diario saber qué ventana ya corrió: la API de runs no expone el input.
+run-name: Maxinet Sync - ${{ (github.event.schedule == '10 15 * * *' || inputs.modo == 'solo_proyeccion_mtto') && 'proyeccion-mtto' || 'completo' }}
+
 on:
   schedule:
     # 9:00 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
