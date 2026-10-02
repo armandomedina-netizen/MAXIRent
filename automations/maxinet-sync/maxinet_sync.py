@@ -383,37 +383,83 @@ def _indice_a_col_letra(indice: int) -> str:
     return letras
 
 
+def _fecha_de_serial(valor):
+    return EPOCH_SHEETS + timedelta(days=int(valor))
+
+
+def _extender_columnas_calendario(worksheet, hasta: date) -> int:
+    """Agrega columnas al final del calendario (fila 1 = día de la semana,
+    fila 2 = fecha) hasta `hasta`, copiando el formato de la última columna.
+    El proceso manual ya lo hacía: el calendario se precarga por mes. Si
+    se acaba, las corridas diarias no tienen dónde avanzar."""
+    fila2 = worksheet.row_values(FILA_FECHA_CALENDARIO, value_render_option="UNFORMATTED_VALUE")
+    n_ult = len(fila2)  # columnas con fecha (1-based de la última)
+    ultima_fecha = _fecha_de_serial(fila2[-1])
+    nuevas = (hasta - ultima_fecha).days
+    if nuevas <= 0:
+        return 0
+    necesarias = n_ult + nuevas
+    if worksheet.col_count < necesarias:
+        worksheet.add_cols(necesarias - worksheet.col_count)
+
+    sheet_id = worksheet.id
+    ult_idx = n_ult - 1  # 0-based
+    def rango(fila_ini, fila_fin, col_ini, col_fin):
+        return {"sheetId": sheet_id, "startRowIndex": fila_ini, "endRowIndex": fila_fin,
+                "startColumnIndex": col_ini, "endColumnIndex": col_fin}
+    filas = worksheet.row_count
+    worksheet.spreadsheet.batch_update({"requests": [
+        {"copyPaste": {"source": rango(0, filas, ult_idx, ult_idx + 1),
+                       "destination": rango(0, filas, ult_idx + 1, ult_idx + 1 + nuevas),
+                       "pasteType": "PASTE_FORMAT"}},
+        {"copyPaste": {"source": rango(0, 1, ult_idx, ult_idx + 1),
+                       "destination": rango(0, 1, ult_idx + 1, ult_idx + 1 + nuevas),
+                       "pasteType": "PASTE_FORMULA"}},
+    ]})
+    seriales = [[(ultima_fecha + timedelta(days=i + 1) - EPOCH_SHEETS).days for i in range(nuevas)]]
+    col_ini = _indice_a_col_letra(ult_idx + 1)
+    col_fin = _indice_a_col_letra(ult_idx + nuevas)
+    worksheet.update(values=seriales, range_name=f"{col_ini}{FILA_FECHA_CALENDARIO}:{col_fin}{FILA_FECHA_CALENDARIO}",
+                     value_input_option="RAW")
+    log.info("Calendario de la hoja %d extendido %d columnas (%s a %s)", sheet_id, nuevas,
+             ultima_fecha + timedelta(days=1), hasta)
+    return nuevas
+
+
 def _encontrar_columna_por_fecha(worksheet, fecha_objetivo, col_referencia="AYT", rango_busqueda=10) -> int:
     """
-    Busca en la fila 2 la columna cuya fecha coincide con fecha_objetivo.
+    Busca en la fila 2 la columna cuya fecha es EXACTAMENTE fecha_objetivo.
 
-    BUG REAL (confirmado en producción, corridas del 2026-09-19 y 2026-09-20
-    en GitHub Actions): la versión anterior solo exploraba ±10 columnas
-    alrededor de `col_referencia` (una letra fija, ej. "AYT"). Esa letra
-    nunca se actualiza sola -- el avance real es de 1 columna por día, así
-    que la distancia entre la columna real de "hoy" y esa letra fija crece
-    día con día, y a los ~10 días de haberse fijado esa constante, la
-    búsqueda deja de encontrar la fecha y la corrida entera falla (no es un
-    problema de que la máquina/oficina esté cerrada -- el workflow de
-    GitHub Actions sí corrió, pero explotó con este error). Ahora se busca
-    en TODA la fila (no hay límite que pueda expirar); `col_referencia` solo
-    se usa como criterio de desempate si la misma fecha aparece más de una
-    vez (no debería pasar en este calendario, pero por si acaso).
+    Dos errores reales en producción dieron forma a esto:
+    - 2026-09-19/20: la versión original solo exploraba +-10 columnas
+      alrededor de una letra fija, que expira con los días.
+    - 2026-10-02: el arreglo comparaba el TEXTO "d-mmm" ("1-oct"), que se
+      repite entre 2025 y 2026. Al acabarse el calendario (terminaba el
+      30-sep) escogió "1-oct" de 2025 y VOR Cliente se escribió sobre el
+      histórico de otro año.
+    Ahora se compara el número de serie de la fecha (único). Si la fecha
+    no existe y es continuación del calendario, se extiende el calendario
+    hasta fin de mes; si no, falla fuerte -- nunca se escribe en otra fecha.
+    `col_referencia` y `rango_busqueda` se conservan sólo por compatibilidad.
     """
-    fila_valores = worksheet.row_values(FILA_FECHA_CALENDARIO)
-    fecha_str = _formatear_fecha_calendario(fecha_objetivo)
+    serial = (fecha_objetivo - EPOCH_SHEETS).days
 
-    coincidencias = [i for i, v in enumerate(fila_valores) if v.strip() == fecha_str]
+    def buscar():
+        fila = worksheet.row_values(FILA_FECHA_CALENDARIO, value_render_option="UNFORMATTED_VALUE")
+        return fila, [i for i, v in enumerate(fila) if isinstance(v, (int, float)) and int(v) == serial]
+
+    fila, coincidencias = buscar()
+    if not coincidencias:
+        ultima = _fecha_de_serial(fila[-1]) if fila and isinstance(fila[-1], (int, float)) else None
+        if ultima is not None and 0 < (fecha_objetivo - ultima).days <= 40:
+            _extender_columnas_calendario(worksheet, _fin_de_mes(fecha_objetivo))
+            fila, coincidencias = buscar()
     if not coincidencias:
         raise RuntimeError(
-            f"No se encontró columna con fecha {fecha_str} en toda la fila {FILA_FECHA_CALENDARIO}. "
-            f"Verifica FORMATO_FECHA_CALENDARIO."
+            f"No existe la columna del {fecha_objetivo} en la fila {FILA_FECHA_CALENDARIO} de la hoja "
+            f"'{worksheet.title}' y no se pudo extender el calendario."
         )
-    if len(coincidencias) == 1:
-        return coincidencias[0]
-
-    idx_referencia = _col_letra_a_indice(col_referencia)
-    return min(coincidencias, key=lambda idx: abs(idx - idx_referencia))
+    return coincidencias[0]
 
 
 def _es_autoreferencia(formula, col_letra: str, fila_fecha: int = FILA_FECHA_CALENDARIO) -> bool:
