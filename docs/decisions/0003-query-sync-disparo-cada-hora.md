@@ -54,3 +54,11 @@ Riesgo mientras convivan el cron de GitHub y el disparo externo: un cron tardío
 - Causa: ambas hojas tienen una columna por día y su calendario terminaba el 30-sep. El 2-oct no existía la columna del 1-oct y `_encontrar_columna_por_fecha` comparaba el texto "1-oct" (se repite en 2025 y 2026), así que escogió la del 2025 y VOR Cliente se escribió sobre el histórico de otro año (4 celdas, ya restauradas desde el original). Además, la hoja de datos ya tenía la foto del 1-oct y la columna viva del 30-sep quedó en ceros; se rellenó desde el original.
 - Corrección: la búsqueda compara ahora el número de serie de la fecha (único); si la fecha continúa el calendario, éste se extiende solo hasta fin de mes (`_extender_columnas_calendario`, mismo formato que la última columna); en cualquier otro caso la corrida falla en vez de escribir en otra fecha.
 - Lección: una salvaguarda "si la columna ya tiene contenido, no avanzar" evitó daños mayores, pero VOR Cliente no la tiene; por eso importa que la búsqueda falle fuerte.
+
+### Disparo del tablero LP desde el Apps Script (2026-10-02)
+
+Un solo proyecto de Apps Script, pero un disparador independiente por reporte (`ejecutarQuerySync`, `ejecutarTableroLP`, `ejecutarGestoria`) en lugar de un único `ejecutar` que lo hace todo en un ciclo: un error o un retraso en uno no afecta a los demás.
+
+- **Tablero LP** (el más importante; debe quedar actualizado antes de las 9:30, hora CDMX): disparador cada 5 minutos que sale de inmediato fuera de 8:55–20:00. Dos ventanas: 9:00 `completo` y 9:10 `solo_proyeccion_mtto`. Cada una se dispara si no hay ya una corrida (en cola, en curso o exitosa, incluido un cron tardío de GitHub), se reintenta hasta 3 veces si falla y, si a las 9:30 no hay corrida exitosa, avisa por correo. La ventana se identifica por la etiqueta del `run-name` del workflow.
+- **Query Sync:** cada hora, pero sólo en horario laboral (constantes `HORARIO_QUERY`); fuera de ese horario no se dispara ni se vigila.
+- Los `schedule` de GitHub se retiran de `maxinet-sync.yml` cuando el disparo externo funcione 3 días seguidos.
