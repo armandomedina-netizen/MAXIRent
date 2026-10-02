@@ -1,0 +1,38 @@
+name: Maxinet Clientes Nuevos CP Sync
+
+on:
+  schedule:
+    # 10:00 AM hora Ciudad de México (Maxinet importa a las 9:00 y 9:40) (UTC-6, sin horario de verano desde 2022)
+    - cron: "0 16 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: automations/maxinet-clientes-nuevos-cp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Ejecutar sincronización
+        env:
+          MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
+          MAXINET_USER: ${{ secrets.MAXINET_USER }}
+          MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-clientes-nuevos-cp/google-creds.json
+          SPREADSHEET_ID_CLIENTES_NUEVOS: ${{ secrets.SPREADSHEET_ID_CLIENTES_NUEVOS }}
+          WORKSHEET_CLIENTES_NUEVOS_NAME: ${{ secrets.WORKSHEET_CLIENTES_NUEVOS_NAME }}
+        run: python maxinet_clientes_nuevos_cp.py
