@@ -13,6 +13,8 @@ pestañas del BALANCE.
                         Recolecciones (43 columnas desde Folio)
     P:R de ONHIRE y RETORNOS: fórmulas STATUS MAXINET, FLOTA MES ANTERIOR y
                         COMPARATIVO, extendidas hasta la última fila.
+    S de ONHIRE y RETORNOS: EJECUTIVO KAM (agregada aquí, no está en el skill),
+                        buscado por cliente en la pestaña EJECUTIVO.
 
 Endpoints (confirmados contra el HTML real de cada página):
     POST {MAXINET_BASE_URL}/includes/reportesLP/reporte-entregas-retornos.php
@@ -71,7 +73,7 @@ HOJA_FLOTA_ACTUAL = "FLOTA ACTUAL"
 ENCABEZADO_ER = [
     "NO CLIENTE", "CLIENTE", "RESERVA", "ESTATUS", "PUDATE", "RETURNDATE", "DIAS", "EFECTO 0",
     "EJECUTIVO", "FOLIO TRASLADO", "TIPO TRASLADO", "EJECUTIVO PROHIRE", "PLACA", "GRUPO", "MODELO",
-    "STATUS MAXINET", "FLOTA MES ANTERIOR", "COMPARTIVO",
+    "STATUS MAXINET", "FLOTA MES ANTERIOR", "COMPARTIVO", "EJECUTIVO KAM",
 ]
 ENCABEZADO_REPORTE = [
     "Folio", "Responsable", "Fecha Solicitud", "Área", "Tipo Solicitud", "Motivo", "Req. Remolque",
@@ -109,6 +111,11 @@ RT_FORMATOS = [
 FORMULA_P = "=XLOOKUP(C{r},'REPORTE MAXINET'!$I:$I,'REPORTE MAXINET'!$E:$E,\"\")"
 FORMULA_Q = "=XLOOKUP(M{r},'FLOTA MES ANTERIOR'!$C:$C,'FLOTA MES ANTERIOR'!$J:$J,\"\")"
 FORMULA_R = '=IF(B{r}=Q{r},"CAMBIO DE RESERVA","POSIBLE ENTREGA")'
+# Ejecutivo de la cuenta: columna H ("EJECUTIVO KAM") del libro DATA EJECUTIVOS DE
+# CUENTAS, pestaña EJECUTIVOS, que la pestaña EJECUTIVO del BALANCE importa con
+# IMPORTRANGE. Es la columna que usa Nuvia para el BALANCE; ni EJECUTIVO ni
+# EJECUTIVO PROHIRE del reporte de Maxinet sirven para eso.
+FORMULA_S = '=XLOOKUP(B{r},EJECUTIVO!$B:$B,EJECUTIVO!$H:$H,"")'
 
 
 def _hoy_cdmx() -> date:
@@ -317,12 +324,15 @@ def cargar_entregas_retornos(libro, nombre_hoja: str, filas: list) -> None:
     ultima = len(valores) + 1
     if valores:
         hoja.update(values=valores, range_name=f"A2:O{ultima}", value_input_option="RAW")
-        formulas = [[FORMULA_P.format(r=r), FORMULA_Q.format(r=r), FORMULA_R.format(r=r)] for r in range(2, ultima + 1)]
-        hoja.update(values=formulas, range_name=f"P2:R{ultima}", value_input_option="USER_ENTERED")
+        formulas = [
+            [FORMULA_P.format(r=r), FORMULA_Q.format(r=r), FORMULA_R.format(r=r), FORMULA_S.format(r=r)]
+            for r in range(2, ultima + 1)
+        ]
+        hoja.update(values=formulas, range_name=f"P2:S{ultima}", value_input_option="USER_ENTERED")
     if previas > len(valores):
-        hoja.batch_clear([f"A{ultima + 1}:R{hoja.row_count}"])
+        hoja.batch_clear([f"A{ultima + 1}:S{hoja.row_count}"])
     libro.batch_update({"requests": _peticiones_formato(hoja, [(ER_FECHAS, {"type": "DATE", "pattern": "yyyy-mm-dd"})], ultima)})
-    log.info("%s: %d filas escritas en A2:O%d (P:R extendidas; antes había %d)", nombre_hoja, len(valores), ultima, previas)
+    log.info("%s: %d filas escritas en A2:O%d (P:S extendidas; antes había %d)", nombre_hoja, len(valores), ultima, previas)
 
 
 def cargar_reporte_maxinet(libro, entregas: list, recolecciones: list) -> None:
@@ -427,13 +437,14 @@ def verificar_errores(libro) -> None:
     errores = {"#REF!", "#VALUE!", "#N/A", "#DIV/0!", "#NAME?", "#NUM!", "#NULL!", "#ERROR!"}
     for nombre in (HOJA_ONHIRE, HOJA_RETORNOS):
         hoja = libro.worksheet(nombre)
-        valores = hoja.get("P2:R", value_render_option="FORMATTED_VALUE")
+        valores = hoja.get("P2:S", value_render_option="FORMATTED_VALUE")
         malas = sum(1 for fila in valores for c in fila if c in errores)
+        sin_kam = sum(1 for fila in valores if len(fila) < 4 or fila[3] in ("", "PENDIENTE"))
         sin_solicitud = sum(1 for fila in valores if fila and fila[0] == "")
         cambios = sum(1 for fila in valores if len(fila) > 2 and fila[2] == "CAMBIO DE RESERVA")
         posibles = sum(1 for fila in valores if len(fila) > 2 and fila[2] == "POSIBLE ENTREGA")
-        log.info("%s: %d CAMBIO DE RESERVA, %d POSIBLE ENTREGA, %d reservas sin solicitud de traslado, %d errores en P:R",
-                 nombre, cambios, posibles, sin_solicitud, malas)
+        log.info("%s: %d CAMBIO DE RESERVA, %d POSIBLE ENTREGA, %d reservas sin solicitud de traslado, %d sin ejecutivo KAM, %d errores en P:S",
+                 nombre, cambios, posibles, sin_solicitud, sin_kam, malas)
 
 
 def main():
