@@ -1,9 +1,11 @@
 name: Maxinet Balance
 
 on:
-  # Sólo manual / Apps Script por ahora. Cuando exista el secret
-  # SPREADSHEET_ID_BALANCE se puede agregar un respaldo, por ejemplo
-  # cron "17 14-23,0 * * *" (minuto 17 de 8:00 a 19:00 CDMX).
+  schedule:
+    # Respaldo: minuto 17 de cada hora de 8:00 a 18:00 (hora CDMX, UTC-6).
+    # GitHub no garantiza la hora de los cron; el disparo puntual es el
+    # workflow_dispatch que lanza el Apps Script.
+    - cron: "17 14-23,0 * * *"
   workflow_dispatch:
 
 concurrency:

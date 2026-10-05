@@ -24,5 +24,10 @@ Las 52 filas de su `ONHIRE` y las 57 de su `RETORNOS` (1 y 2 de octubre) salen i
 ## Pendiente
 
 - El `BALANCE` de Nuvia sigue con fórmulas que leen las columnas del formato viejo (`RETORNOS!P/M/H`, `ONHIRE!G/Q/R`) y hoy da ceros. No se tocó la pestaña `BALANCE` de la copia hasta que ella defina el mapeo; en particular falta saber qué columna de ejecutivo usa (`EJECUTIVO` o `EJECUTIVO PROHIRE`: ninguna reproduce por sí sola el BALANCE de septiembre).
-- La cuenta de servicio debe ser editora de `RETORNOS` en la copia (hoja protegida) y hace falta el secret `SPREADSHEET_ID_BALANCE`.
+- Ejecutivo: `EJECUTIVO` viene de Maxinet y `EJECUTIVO PROHIRE` de la app ProHire; los dos llegan en el mismo reporte. En octubre `EJECUTIVO` viene vacío en 12 de 57 entregas y 17 de 65 retornos, `EJECUTIVO PROHIRE` nunca; Armando se inclina por `EJECUTIVO PROHIRE`. Los ejecutivos `JESUS LIMON`, `MARCO ELIZONDO` y `GABRIEL HERNANDEZ` no están en la lista fija de 7 del `BALANCE`.
 - `SOLICITUDES ENTREGAS / RECOLECCIONES` y `PRONÓSTICO ENTREGAS` del original no forman parte del skill y no se automatizan todavía.
+
+## Estado del despliegue (2026-10-05)
+
+- Secret `SPREADSHEET_ID_BALANCE` creado y permiso en `RETORNOS` concedido. Dos corridas seguidas en GitHub terminaron en éxito con los mismos conteos (58 entregas, 65 retornos, 20 solicitudes de traslado, 0 errores en P:R): no duplica.
+- Disparo: respaldo con cron (`17 14-23,0 * * *`) y disparo puntual desde el Apps Script con una función y un disparador propios (`ejecutarBalance`, lunes a sábado de 8:30 a 19:00), independiente del Query Sync y del tablero LP.
