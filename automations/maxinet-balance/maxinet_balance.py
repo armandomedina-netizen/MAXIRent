@@ -64,6 +64,7 @@ ZONA_CDMX = ZoneInfo("America/Mexico_City")
 EPOCH_SHEETS = date(1899, 12, 30)
 EPOCH_SHEETS_DT = datetime(1899, 12, 30)
 
+HOJA_BALANCE = "BALANCE"
 HOJA_ONHIRE = "ONHIRE"
 HOJA_RETORNOS = "RETORNOS"
 HOJA_REPORTE = "REPORTE MAXINET"
@@ -433,6 +434,22 @@ def rotar_flota_mes_anterior(libro, libro_query, hoy: date) -> None:
     log.info("FLOTA ACTUAL: %d placas ON HIRE (mes %s)", len(flota), mes_actual)
 
 
+def actualizar_mes_balance(libro, hoy: date) -> None:
+    """B2 de la pestaña BALANCE es el día 1 del mes que usan todas sus
+    fórmulas (Nuvia lo cambia a mano cada mes). Se pone en el día 1 del mes
+    en curso; si la pestaña está protegida sólo avisa."""
+    try:
+        hoja = libro.worksheet(HOJA_BALANCE)
+        esperado = (hoy.replace(day=1) - EPOCH_SHEETS).days
+        actual = hoja.get("B2", value_render_option="UNFORMATTED_VALUE")
+        if actual and actual[0] and actual[0][0] == esperado:
+            return
+        hoja.update(values=[[esperado]], range_name="B2", value_input_option="RAW")
+        log.info("BALANCE: mes de las fórmulas (B2) puesto en %s", hoy.replace(day=1))
+    except (gspread.WorksheetNotFound, APIError) as e:
+        log.warning("BALANCE: no se pudo actualizar B2 (%s)", type(e).__name__)
+
+
 def verificar_errores(libro) -> None:
     errores = {"#REF!", "#VALUE!", "#N/A", "#DIV/0!", "#NAME?", "#NUM!", "#NULL!", "#ERROR!"}
     for nombre in (HOJA_ONHIRE, HOJA_RETORNOS):
@@ -471,6 +488,7 @@ def main():
         cargar_reporte_maxinet(libro, traslados_ent, traslados_rec)
         cargar_entregas_retornos(libro, HOJA_ONHIRE, entregas)
         cargar_entregas_retornos(libro, HOJA_RETORNOS, retornos)
+        actualizar_mes_balance(libro, hoy)
         verificar_errores(libro)
         log.info("BALANCE: actualización completada con éxito")
     except Exception:
