@@ -136,7 +136,8 @@ def conectar_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
-    nombre = os.environ.get("WORKSHEET_CLIENTES_POTENCIALES_NAME") or "Reporte Clientes Potenciales CP"
+    # Un secret pegado con comillas o espacios no debe romper el nombre de la pestaña
+    nombre = (os.environ.get("WORKSHEET_CLIENTES_POTENCIALES_NAME") or "").strip().strip("\"'").strip() or "Reporte Clientes Potenciales CP"
     return sh.worksheet(nombre)
 
 

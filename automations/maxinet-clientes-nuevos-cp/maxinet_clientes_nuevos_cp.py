@@ -136,7 +136,8 @@ def conectar_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
-    nombre = os.environ.get("WORKSHEET_CLIENTES_NUEVOS_NAME") or "Reporte Generales Clientes Nuevo"
+    # Un secret pegado con comillas o espacios no debe romper el nombre de la pestaña
+    nombre = (os.environ.get("WORKSHEET_CLIENTES_NUEVOS_NAME") or "").strip().strip("\"'").strip() or "Reporte Generales Clientes Nuevo"
     return sh.worksheet(nombre)
 
 
@@ -220,6 +221,9 @@ def agregar_filas_nuevas(worksheet, df: pd.DataFrame) -> int:
         log.info("No hay filas nuevas que agregar.")
         return 0
 
+    # Mismo orden que ya tiene el Sheet: fecha de creación y luego ClientNo
+    # (importa cuando una corrida cubre varios días, ej. al ponerse al día).
+    df_nuevos = df_nuevos.sort_values(["CreationDate", "ClientNo"], kind="stable")
     valores = [[_celda(r[c], c) for c in COLUMNAS] for _, r in df_nuevos.iterrows()]
     fila_inicio = ultima_fila + 1
     fila_fin = fila_inicio + len(valores) - 1
