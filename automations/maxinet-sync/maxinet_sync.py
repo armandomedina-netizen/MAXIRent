@@ -59,6 +59,7 @@ import copy
 import time
 import json
 import logging
+from bisect import bisect_right
 from collections import Counter
 from datetime import date, datetime, timedelta
 
@@ -1225,7 +1226,7 @@ def _avanzar_periodo_on_hire(worksheet, hoy: date) -> None:
     mes en curso no encuentra ninguna fila y da error de división por
     cero. Se corre TODOS los días (no solo al cambiar de mes) para que las
     rentas nuevas que Nuvia agrega a mitad de mes también cuenten."""
-    ancla_mes_actual = date(2026, hoy.month, 1)
+    ancla_mes_actual = date(hoy.year, hoy.month, 1)
     serial_mes_actual = (ancla_mes_actual - EPOCH_SHEETS).days
 
     col_g = worksheet.get(f"G{FILA_INICIO_DETALLE_RENTAS}:G", value_render_option="UNFORMATTED_VALUE")
@@ -1317,6 +1318,335 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
         values=[[formula_nueva]], range_name=f"{col_actual}{fila_activas}", value_input_option="USER_ENTERED"
     )
     log.info("Duración rentas: ACTIVAS %s%d creado con fórmula viva", col_actual, fila_activas)
+
+
+HOJA_DURACION_RENTAS = "Duración rentas"
+HOJA_RENTAS_ACTIVAS = "Rentas activas detalle"
+HOJA_HISTORIAL_ACTIVAS = "HISTORIAL ACTIVAS"
+ENCABEZADO_HISTORIAL_ACTIVAS = ["PLACA", "PU Date", "UNIFICADO", "CLIENTE", "EJECUTIVO", "TARIFA", "ULTIMA VEZ ACTIVA"]
+FILA_PRIMER_DETALLE = 15
+VENTANA_DEVOLUCIONES_DIAS = 10
+HOLGURA_FILAS_ON_HIRE = 10
+
+# Columnas del reporte LP > Entregas / Retornos (includes/reportesLP/
+# reporte-entregas-retornos.php). Es la misma fuente que la pestaña RETORNOS
+# del BALANCE.
+IDX_RER_CLIENTE = 1
+IDX_RER_ESTATUS = 3
+IDX_RER_PU = 4
+IDX_RER_RETORNO = 5
+IDX_RER_EFECTO = 7
+IDX_RER_PLACA = 12
+IDX_RER_GRUPO = 13
+IDX_RER_MODELO = 14
+
+# Columnas de "Rentas activas detalle" (copia de CLIENTES ACTIVOS (QUERY)).
+IDX_RAD_PLACA = 0
+IDX_RAD_EJECUTIVO = 4
+IDX_RAD_PU = 5
+IDX_RAD_PRECIO = 14
+IDX_RAD_CLIENTE = 19
+IDX_RAD_AGRUPADO = 20
+
+
+def _a_serial(valor):
+    """Fecha de Maxinet o de Sheets -> número de serie de Sheets (o None)."""
+    if isinstance(valor, bool):
+        return None
+    if isinstance(valor, (int, float)):
+        return int(valor)
+    texto = str(valor).strip()
+    for formato in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return (datetime.strptime(texto, formato).date() - EPOCH_SHEETS).days
+        except ValueError:
+            continue
+    return None
+
+
+def descargar_entregas_retornos(session: requests.Session, desde: date, hasta: date, tipo: str) -> list:
+    base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
+    resp = _post_con_reintentos(
+        session, f"{base_url}/includes/reportesLP/reporte-entregas-retornos.php",
+        {"Desde": desde.isoformat(), "Hasta": hasta.isoformat(), "Tipo": tipo},
+    )
+    return _parse_json_bom(resp)["data"]
+
+
+def _devoluciones_validas(retornos: list, entregas: list) -> list:
+    """Devoluciones que entran al detalle de 'Duración rentas': estatus
+    RETURNED, efecto SI APLICA y que no sean la renovación de un contrato
+    del mismo cliente (la misma placa vuelve a abrir contrato con ese
+    cliente el día de la devolución, +-1 día). Contra el detalle de Nuvia
+    de las últimas semanas acierta ~97%; el criterio exacto de ella sigue
+    por confirmar."""
+    inicios = {}
+    for fila in list(retornos) + list(entregas):
+        placa = str(fila[IDX_RER_PLACA]).strip()
+        inicios.setdefault(placa, []).append((_a_serial(fila[IDX_RER_PU]), str(fila[IDX_RER_CLIENTE]).strip()))
+
+    validas = []
+    for fila in retornos:
+        if str(fila[IDX_RER_ESTATUS]).strip() != "RETURNED" or fila[IDX_RER_EFECTO] != "SI APLICA":
+            continue
+        placa = str(fila[IDX_RER_PLACA]).strip()
+        pu = _a_serial(fila[IDX_RER_PU])
+        retorno = _a_serial(fila[IDX_RER_RETORNO])
+        cliente = str(fila[IDX_RER_CLIENTE]).strip()
+        if pu is None or retorno is None or not placa:
+            continue
+        renovacion = any(
+            abs(otro_pu - retorno) <= 1 and otro_pu != pu and otro_cliente == cliente
+            for otro_pu, otro_cliente in inicios.get(placa, [])
+            if otro_pu is not None
+        )
+        if not renovacion:
+            validas.append(fila)
+    return validas
+
+
+def _obtener_historial_activas(libro):
+    try:
+        return libro.worksheet(HOJA_HISTORIAL_ACTIVAS)
+    except gspread.WorksheetNotFound:
+        hoja = libro.add_worksheet(title=HOJA_HISTORIAL_ACTIVAS, rows=3000, cols=len(ENCABEZADO_HISTORIAL_ACTIVAS))
+        hoja.update(values=[ENCABEZADO_HISTORIAL_ACTIVAS], range_name="A1", value_input_option="RAW")
+        libro.batch_update({"requests": [{
+            "updateSheetProperties": {"properties": {"sheetId": hoja.id, "hidden": True}, "fields": "hidden"},
+        }]})
+        log.info("Duración rentas: creada la pestaña oculta %s", HOJA_HISTORIAL_ACTIVAS)
+        return hoja
+
+
+def _actualizar_historial_activas(libro, hoy: date) -> dict:
+    """Guarda, por (placa, fecha de recogida), los datos de cada renta mientras
+    sigue activa: UNIFICADO, cliente, ejecutivo y tarifa solo existen en
+    'Rentas activas detalle' y desaparecen cuando la unidad se devuelve.
+    Nunca borra filas; devuelve el historial completo."""
+    hoja = _obtener_historial_activas(libro)
+    guardado = hoja.get(f"A2:G", value_render_option="UNFORMATTED_VALUE")
+    historial = {}
+    for fila in guardado:
+        fila = list(fila) + [""] * (len(ENCABEZADO_HISTORIAL_ACTIVAS) - len(fila))
+        if str(fila[0]).strip() and fila[1] != "":
+            historial[(str(fila[0]).strip(), int(fila[1]))] = fila[:len(ENCABEZADO_HISTORIAL_ACTIVAS)]
+
+    activas = libro.worksheet(HOJA_RENTAS_ACTIVAS).get("A3:U", value_render_option="UNFORMATTED_VALUE")
+    serial_hoy = (hoy - EPOCH_SHEETS).days
+    cambios = 0
+    for fila in activas:
+        fila = list(fila) + [""] * (IDX_RAD_AGRUPADO + 1 - len(fila))
+        placa = str(fila[IDX_RAD_PLACA]).strip()
+        pu = _a_serial(fila[IDX_RAD_PU])
+        if not placa or pu is None:
+            continue
+        tarifa = fila[IDX_RAD_PRECIO] if isinstance(fila[IDX_RAD_PRECIO], (int, float)) else ""
+        nuevo = [placa, pu, fila[IDX_RAD_AGRUPADO], fila[IDX_RAD_CLIENTE], fila[IDX_RAD_EJECUTIVO], tarifa, serial_hoy]
+        if historial.get((placa, pu)) != nuevo:
+            historial[(placa, pu)] = nuevo
+            cambios += 1
+
+    if cambios:
+        filas = sorted(historial.values(), key=lambda f: (f[1], f[0]))
+        if len(filas) + 1 > hoja.row_count:
+            hoja.add_rows(len(filas) + 1 - hoja.row_count + 500)
+        hoja.update(values=filas, range_name=f"A2:G{len(filas) + 1}", value_input_option="RAW")
+    log.info("Duración rentas: historial de rentas activas con %d rentas (%d actualizadas)", len(historial), cambios)
+    return historial
+
+
+def _fila_detalle_devolucion(devolucion: list, historial: dict, ultimo_por_placa: dict) -> tuple:
+    """Valores A:M de una devolución nueva (N lleva fórmula). Devuelve
+    (valores, completa)."""
+    placa = str(devolucion[IDX_RER_PLACA]).strip()
+    pu = _a_serial(devolucion[IDX_RER_PU])
+    retorno = _a_serial(devolucion[IDX_RER_RETORNO])
+    nombre = str(devolucion[IDX_RER_CLIENTE]).strip()
+    datos = historial.get((placa, pu))
+    if datos:
+        unificado, ejecutivo, tarifa = datos[2], datos[4], datos[5]
+    else:
+        previo = ultimo_por_placa.get(placa)
+        if previo and str(previo[7]).strip() == nombre:
+            unificado, ejecutivo, tarifa = previo[0], previo[8], previo[12]
+        else:
+            unificado, ejecutivo, tarifa = nombre, "", ""
+    primer_dia_mes = (date.fromordinal(EPOCH_SHEETS.toordinal() + retorno)).replace(day=1)
+    periodo = (primer_dia_mes - EPOCH_SHEETS).days
+    completa = bool(ejecutivo) and tarifa != ""
+    valores = [
+        unificado, placa, pu, retorno, None, None, "RETURNED", nombre, ejecutivo,
+        str(devolucion[IDX_RER_GRUPO] or "").strip(), str(devolucion[IDX_RER_MODELO] or "").strip(),
+        periodo, tarifa,
+    ]
+    return valores, completa
+
+
+def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy: date = None, aplicar: bool = True) -> list:
+    """Agrega al detalle de 'Duración rentas' las devoluciones nuevas de
+    Maxinet (reporte Entregas/Retornos, Tipo=RETORNOS), en orden de fecha de
+    retorno y arriba del bloque ON HIRE, con la misma estructura que Nuvia
+    (UNIFICADO, placa, PU, retorno, DIA, MES, status, cliente, ejecutivo,
+    grupo, modelo, periodo, tarifa, mensual). Solo mira desde 10 días antes
+    de la última devolución cargada, no reescribe filas existentes y es
+    idempotente (se reconoce una devolución por placa+retorno o placa+PU).
+    Ejecutivo, tarifa y UNIFICADO salen del historial de rentas activas
+    (pestaña oculta HISTORIAL ACTIVAS) que se alimenta en cada corrida."""
+    hoy = hoy or _hoy_cdmx()
+    libro = worksheet.spreadsheet
+    historial = _actualizar_historial_activas(libro, hoy)
+
+    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:N", value_render_option="FORMULA")
+    fila_on_hire = None
+    for i, fila in enumerate(filas):
+        if len(fila) > 1 and str(fila[1]).startswith("=UNIQUE("):
+            fila_on_hire = i
+            break
+    if fila_on_hire is None:
+        log.warning("Duración rentas: no encontré la fila ON HIRE (=UNIQUE) -- no se agregan devoluciones")
+        return []
+
+    existentes = [list(f) + [""] * (14 - len(f)) for f in filas[:fila_on_hire]]
+    claves = set()
+    retornos_existentes = []
+    ultimo_por_placa = {}
+    for f in existentes:
+        placa = str(f[1]).strip()
+        if isinstance(f[3], (int, float)):
+            retornos_existentes.append(f[3])
+        if placa:
+            claves.add((placa, f[3]))
+            claves.add((placa, f[2]))
+            ultimo_por_placa[placa] = f
+    if not retornos_existentes:
+        log.warning("Duración rentas: el detalle no tiene devoluciones con fecha -- no se agregan devoluciones")
+        return []
+
+    ultimo_retorno = max(retornos_existentes)
+    desde = EPOCH_SHEETS + timedelta(days=ultimo_retorno - VENTANA_DEVOLUCIONES_DIAS)
+    retornos = descargar_entregas_retornos(session, desde - timedelta(days=2), hoy, "RETORNOS")
+    entregas = descargar_entregas_retornos(session, desde - timedelta(days=2), hoy + timedelta(days=2), "ENTREGAS")
+
+    nuevas = []
+    for devolucion in _devoluciones_validas(retornos, entregas):
+        placa = str(devolucion[IDX_RER_PLACA]).strip()
+        pu = _a_serial(devolucion[IDX_RER_PU])
+        retorno = _a_serial(devolucion[IDX_RER_RETORNO])
+        if retorno < ultimo_retorno - VENTANA_DEVOLUCIONES_DIAS:
+            continue
+        if (placa, retorno) in claves or (placa, pu) in claves:
+            continue
+        valores, completa = _fila_detalle_devolucion(devolucion, historial, ultimo_por_placa)
+        nuevas.append((retorno, valores, completa))
+        claves.add((placa, retorno))
+    if not nuevas:
+        log.info("Duración rentas: sin devoluciones nuevas (última cargada: %s)", EPOCH_SHEETS + timedelta(days=ultimo_retorno))
+        return []
+
+    nuevas.sort(key=lambda n: n[0])
+    incompletas = sum(1 for n in nuevas if not n[2])
+    if incompletas:
+        log.warning(
+            "Duración rentas: %d de %d devoluciones nuevas sin ejecutivo o tarifa (la renta no estaba en el "
+            "historial de activas); se agregan con esos campos vacíos para completarlos a mano",
+            incompletas, len(nuevas),
+        )
+    if not aplicar:
+        return nuevas
+
+    grupos = {}
+    for retorno, valores, _ in nuevas:
+        posicion = bisect_right(sorted(retornos_existentes), retorno)
+        grupos.setdefault(posicion, []).append(valores)
+
+    for posicion in sorted(grupos, reverse=True):
+        lote = grupos[posicion]
+        primera_fila = FILA_PRIMER_DETALLE + posicion
+        libro.batch_update({"requests": [{"insertDimension": {
+            "range": {"sheetId": worksheet.id, "dimension": "ROWS",
+                      "startIndex": primera_fila - 1, "endIndex": primera_fila - 1 + len(lote)},
+            "inheritFromBefore": True,
+        }}]})
+        filas_nuevas = []
+        for k, valores in enumerate(lote):
+            fila = primera_fila + k
+            valores = list(valores)
+            valores[4] = f"=D{fila}-C{fila}"
+            valores[5] = f"=E{fila}/30"
+            filas_nuevas.append(valores + [f"=M{fila}*MIN(E{fila},30)"])
+        worksheet.update(
+            values=filas_nuevas, range_name=f"A{primera_fila}:N{primera_fila + len(lote) - 1}",
+            value_input_option="USER_ENTERED",
+        )
+    log.info("Duración rentas: %d devoluciones nuevas agregadas al detalle", len(nuevas))
+    return nuevas
+
+
+def asegurar_formulas_on_hire_duracion_rentas(worksheet) -> None:
+    """Las filas ON HIRE salen de un UNIQUE que se derrama desde la columna B
+    y las demás columnas llevan una fórmula por fila que Nuvia arrastra a
+    mano. Extiende esas fórmulas hasta el final de la lista + holgura."""
+    columna_b = worksheet.get(f"B{FILA_PRIMER_DETALLE}:B", value_render_option="FORMULA")
+    fila_on_hire = None
+    for i, fila in enumerate(columna_b):
+        if fila and str(fila[0]).startswith("=UNIQUE("):
+            fila_on_hire = FILA_PRIMER_DETALLE + i
+            break
+    if fila_on_hire is None:
+        return
+    valores_b = worksheet.get(f"B{fila_on_hire}:B", value_render_option="UNFORMATTED_VALUE")
+    activas = 0
+    for fila in valores_b:
+        if not fila or fila[0] == "":
+            break
+        if isinstance(fila[0], str) and fila[0] in ERRORES_SHEETS:
+            log.warning("Duración rentas: la lista ON HIRE tiene un error (%s)", fila[0])
+            return
+        activas += 1
+    columna_k = worksheet.get(f"K{fila_on_hire}:K", value_render_option="FORMULA")
+    ultima_con_formula = fila_on_hire - 1 + sum(1 for _ in _hasta_primer_hueco(columna_k))
+    necesaria = fila_on_hire + activas - 1 + HOLGURA_FILAS_ON_HIRE
+    if ultima_con_formula >= necesaria:
+        log.info("Duración rentas: fórmulas ON HIRE cubren las %d rentas activas", activas)
+        return
+    if necesaria > worksheet.row_count:
+        worksheet.add_rows(necesaria - worksheet.row_count + 100)
+    peticiones = []
+    for col_ini, col_fin in ((0, 1), (2, 12)):  # A y C:L (B es el derrame)
+        peticiones.append({"copyPaste": {
+            "source": {"sheetId": worksheet.id, "startRowIndex": ultima_con_formula - 1, "endRowIndex": ultima_con_formula,
+                       "startColumnIndex": col_ini, "endColumnIndex": col_fin},
+            "destination": {"sheetId": worksheet.id, "startRowIndex": ultima_con_formula, "endRowIndex": necesaria,
+                            "startColumnIndex": col_ini, "endColumnIndex": col_fin},
+            "pasteType": "PASTE_NORMAL",
+        }})
+    worksheet.spreadsheet.batch_update({"requests": peticiones})
+    log.info("Duración rentas: fórmulas ON HIRE extendidas de la fila %d a la %d", ultima_con_formula, necesaria)
+
+
+def _hasta_primer_hueco(columna: list):
+    for fila in columna:
+        if not fila or fila[0] == "":
+            return
+        yield fila
+
+
+def completar_retornos_mes_duracion_rentas(worksheet, fila_encabezado=10, fila_retornos=11, hoy: date = None) -> None:
+    """Crea la fórmula TIEMPO DE VIDA (RETORNOS) del mes en curso si falta
+    (Nuvia la escribe a mano cada mes)."""
+    hoy = hoy or _hoy_cdmx()
+    idx = hoy.month - 1
+    fila = worksheet.get(f"B{fila_retornos}:M{fila_retornos}", value_render_option="FORMULA")
+    fila = fila[0] if fila else []
+    if idx < len(fila) and fila[idx] != "":
+        return
+    col = _indice_a_col_letra(_col_letra_a_indice("B") + idx)
+    formula = (
+        f'=IFERROR(AVERAGEIFS($F${FILA_INICIO_DETALLE_RENTAS}:$F,$L${FILA_INICIO_DETALLE_RENTAS}:$L,'
+        f'{col}{fila_encabezado},$G${FILA_INICIO_DETALLE_RENTAS}:$G,"RETURNED"),0)'
+    )
+    worksheet.update(values=[[formula]], range_name=f"{col}{fila_retornos}", value_input_option="USER_ENTERED")
+    log.info("Duración rentas: RETORNOS %s%d creado con fórmula viva", col, fila_retornos)
 
 
 # Hojas de solo fórmulas del tablero: mantener las fórmulas por fila
@@ -1935,6 +2265,12 @@ def main():
             log.warning("RESUMEN AFECTACIONES: no se pudo actualizar el mes (%s)", type(e).__name__)
 
         worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
+        try:
+            actualizar_detalle_duracion_rentas(worksheet_duracion_rentas, session)
+            asegurar_formulas_on_hire_duracion_rentas(worksheet_duracion_rentas)
+            completar_retornos_mes_duracion_rentas(worksheet_duracion_rentas)
+        except Exception as e:
+            log.warning("Duración rentas: no se pudo actualizar el detalle (%s: %s)", type(e).__name__, str(e)[:200])
         avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
         avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
 
