@@ -36,3 +36,13 @@ automations/automatización Gestoría/*.venv/
 automations/automatización Gestoría/logs/
 
 *.venv/
+
+# Clientes Nuevos CP automation: local secrets and runtime artifacts
+automations/maxinet-clientes-nuevos-cp/google-creds.json
+automations/maxinet-clientes-nuevos-cp/*.venv/
+automations/maxinet-clientes-nuevos-cp/logs/
+
+# Clientes Potenciales CP automation: local secrets and runtime artifacts
+automations/maxinet-clientes-potenciales-cp/google-creds.json
+automations/maxinet-clientes-potenciales-cp/*.venv/
+automations/maxinet-clientes-potenciales-cp/logs/
