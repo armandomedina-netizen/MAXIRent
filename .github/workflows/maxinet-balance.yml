@@ -1,0 +1,44 @@
+name: Maxinet Balance
+
+on:
+  # Sólo manual / Apps Script por ahora. Cuando exista el secret
+  # SPREADSHEET_ID_BALANCE se puede agregar un respaldo, por ejemplo
+  # cron "17 14-23,0 * * *" (minuto 17 de 8:00 a 19:00 CDMX).
+  workflow_dispatch:
+
+concurrency:
+  group: maxinet-balance
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: automations/maxinet-balance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Ejecutar actualización del BALANCE
+        env:
+          MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
+          MAXINET_USER: ${{ secrets.MAXINET_USER }}
+          MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-balance/google-creds.json
+          SPREADSHEET_ID_BALANCE: ${{ secrets.SPREADSHEET_ID_BALANCE }}
+          SPREADSHEET_ID_QUERY: ${{ secrets.SPREADSHEET_ID_QUERY }}
+          WORKSHEET_QUERY_NAME: ${{ secrets.WORKSHEET_QUERY_NAME }}
+        run: python maxinet_balance.py
