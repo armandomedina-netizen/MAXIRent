@@ -8,13 +8,16 @@ pestañas del BALANCE.
 
     ONHIRE           <- LP > Entregas / Retornos, Tipo = ENTREGAS  (A:O)
     RETORNOS         <- LP > Entregas / Retornos, Tipo = RETORNOS  (A:O)
-    REPORTE MAXINET  <- LP > Solicitudes de traslado, filtrando por Fecha
+    SOLICITUDES ENTREGAS / RECOLECCIONES <- LP > Solicitudes de traslado, filtrando por Fecha
                         Entrega/Recolección: primero Entregas y debajo
                         Recolecciones (43 columnas desde Folio)
     P:R de ONHIRE y RETORNOS: fórmulas STATUS MAXINET, FLOTA MES ANTERIOR y
                         COMPARATIVO, extendidas hasta la última fila.
-    S de ONHIRE y RETORNOS: EJECUTIVO KAM (agregada aquí, no está en el skill),
-                        buscado por cliente en la pestaña EJECUTIVO.
+    S de ONHIRE y RETORNOS: EJECUTIVO REAL (columna H de EJECUTIVOS buscada
+                        por cliente en la pestaña EJECUTIVO), como en el archivo
+                        de Nuvia.
+    BALANCE: dos bloques (entregas nuevas y recolecciones por ejecutivo y día)
+                        con la estructura que Nuvia dejó el 6-oct.
 
 Endpoints (confirmados contra el HTML real de cada página):
     POST {MAXINET_BASE_URL}/includes/reportesLP/reporte-entregas-retornos.php
@@ -67,14 +70,14 @@ EPOCH_SHEETS_DT = datetime(1899, 12, 30)
 HOJA_BALANCE = "BALANCE"
 HOJA_ONHIRE = "ONHIRE"
 HOJA_RETORNOS = "RETORNOS"
-HOJA_REPORTE = "REPORTE MAXINET"
+HOJA_REPORTE = "SOLICITUDES ENTREGAS / RECOLECCIONES"
 HOJA_FLOTA_ANTERIOR = "FLOTA MES ANTERIOR"
 HOJA_FLOTA_ACTUAL = "FLOTA ACTUAL"
 
 ENCABEZADO_ER = [
     "NO CLIENTE", "CLIENTE", "RESERVA", "ESTATUS", "PUDATE", "RETURNDATE", "DIAS", "EFECTO 0",
     "EJECUTIVO", "FOLIO TRASLADO", "TIPO TRASLADO", "EJECUTIVO PROHIRE", "PLACA", "GRUPO", "MODELO",
-    "STATUS MAXINET", "FLOTA MES ANTERIOR", "COMPARTIVO", "EJECUTIVO KAM",
+    "STATUS MAXINET", "FLOTA MES ANTERIOR", "COMPARTIVO", "EJECUTIVO REAL",
 ]
 ENCABEZADO_REPORTE = [
     "Folio", "Responsable", "Fecha Solicitud", "Área", "Tipo Solicitud", "Motivo", "Req. Remolque",
@@ -107,16 +110,29 @@ RT_FORMATOS = [
     (RT_FECHAS, {"type": "DATE", "pattern": "yyyy-mm-dd"}),
     (RT_HORAS, {"type": "TIME", "pattern": "h:mm"}),
     (RT_COSTOS, {"type": "CURRENCY", "pattern": '#,##0.00"$"'}),
+    (RT_ENTEROS, {"type": "NUMBER", "pattern": "0"}),
 ]
 
-FORMULA_P = "=XLOOKUP(C{r},'REPORTE MAXINET'!$I:$I,'REPORTE MAXINET'!$E:$E,\"\")"
+FORMULA_P = "=XLOOKUP(C{r},'SOLICITUDES ENTREGAS / RECOLECCIONES'!$I:$I,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E:$E,\"\")"
 FORMULA_Q = "=XLOOKUP(M{r},'FLOTA MES ANTERIOR'!$C:$C,'FLOTA MES ANTERIOR'!$J:$J,\"\")"
-FORMULA_R = '=IF(B{r}=Q{r},"CAMBIO DE RESERVA","POSIBLE ENTREGA")'
+# Nuvia guarda R distinto en cada pestaña: en ONHIRE vacía si no hay flota
+# anterior (Q) y en RETORNOS vacía si no hay placa (M).
+FORMULA_R = {
+    "ONHIRE": '=IF(Q{r}="","",IF(B{r}=Q{r},"CAMBIO DE RESERVA","POSIBLE ENTREGA"))',
+    "RETORNOS": '=IF(M{r}="","",IF(B{r}=Q{r},"CAMBIO DE RESERVA","POSIBLE ENTREGA"))',
+}
 # Ejecutivo de la cuenta: columna H ("EJECUTIVO KAM") del libro DATA EJECUTIVOS DE
 # CUENTAS, pestaña EJECUTIVOS, que la pestaña EJECUTIVO del BALANCE importa con
-# IMPORTRANGE. Es la columna que usa Nuvia para el BALANCE; ni EJECUTIVO ni
-# EJECUTIVO PROHIRE del reporte de Maxinet sirven para eso.
-FORMULA_S = '=XLOOKUP(B{r},EJECUTIVO!$B:$B,EJECUTIVO!$H:$H,"")'
+# IMPORTRANGE. Nuvia la llama EJECUTIVO REAL; ni EJECUTIVO ni EJECUTIVO PROHIRE
+# del reporte de Maxinet sirven para el BALANCE.
+FORMULA_S = '=IF(M{r}="","",XLOOKUP(B{r},EJECUTIVO!$B:$B,EJECUTIVO!$H:$H,"SIN ASIGNACIÓN"))'
+
+# Pestaña BALANCE (estructura de Nuvia del 6-oct): dos bloques, cada uno con la
+# lista de ejecutivos (UNIQUE) y una columna por día del mes.
+BALANCE_COL_INICIO = 3     # C
+BALANCE_DIAS = 31          # C:AG
+BALANCE_FILAS_EJEC = 8     # filas 2-9 (entregas) y 11-18 (retornos)
+BALANCE_FILA_RETORNOS = 10
 
 
 def _hoy_cdmx() -> date:
@@ -301,6 +317,19 @@ def _peticiones_formato(hoja, indices_formato: list, ultima_fila: int) -> list:
     return peticiones
 
 
+def _resetear_formato(libro, hoja, filas: int, columnas: int) -> None:
+    """Quita el formato y las celdas combinadas que haya dejado el diseño
+    anterior de una pestaña que se reconstruye (por ejemplo un formato de
+    fecha en una columna de folios, o una fila combinada que se traga lo que
+    se escribe en ella)."""
+    rango = {"sheetId": hoja.id, "startRowIndex": 0, "endRowIndex": filas,
+             "startColumnIndex": 0, "endColumnIndex": columnas}
+    libro.batch_update({"requests": [
+        {"unmergeCells": {"range": rango}},
+        {"repeatCell": {"range": rango, "cell": {}, "fields": "userEnteredFormat"}},
+    ]})
+
+
 def _asegurar_tamano(hoja, filas: int, columnas: int) -> None:
     if hoja.row_count < filas:
         hoja.add_rows(filas - hoja.row_count + 200)
@@ -318,6 +347,7 @@ def cargar_entregas_retornos(libro, nombre_hoja: str, filas: list) -> None:
         if any(c.strip() for c in hoja.row_values(1)):
             log.warning("%s: el encabezado no coincide con el formato nuevo; se reconstruye toda la hoja", nombre_hoja)
             hoja.clear()
+            _resetear_formato(libro, hoja, hoja.row_count, hoja.col_count)
         hoja.update(values=[ENCABEZADO_ER], range_name="A1", value_input_option="RAW")
 
     previas = len([c for c in hoja.col_values(1)[1:] if c.strip()])
@@ -326,7 +356,7 @@ def cargar_entregas_retornos(libro, nombre_hoja: str, filas: list) -> None:
     if valores:
         hoja.update(values=valores, range_name=f"A2:O{ultima}", value_input_option="RAW")
         formulas = [
-            [FORMULA_P.format(r=r), FORMULA_Q.format(r=r), FORMULA_R.format(r=r), FORMULA_S.format(r=r)]
+            [FORMULA_P.format(r=r), FORMULA_Q.format(r=r), FORMULA_R[nombre_hoja].format(r=r), FORMULA_S.format(r=r)]
             for r in range(2, ultima + 1)
         ]
         hoja.update(values=formulas, range_name=f"P2:S{ultima}", value_input_option="USER_ENTERED")
@@ -341,6 +371,10 @@ def cargar_reporte_maxinet(libro, entregas: list, recolecciones: list) -> None:
     valores = [convertir_fila_traslado(f) for f in entregas + recolecciones]
     _asegurar_tamano(hoja, len(valores) + 2, len(ENCABEZADO_REPORTE))
     if hoja.row_values(1)[:len(ENCABEZADO_REPORTE)] != ENCABEZADO_REPORTE:
+        if any(c.strip() for c in hoja.row_values(1)):
+            log.warning("%s: el encabezado no coincide con el formato nuevo; se reconstruye toda la hoja", HOJA_REPORTE)
+            hoja.clear()
+            _resetear_formato(libro, hoja, hoja.row_count, hoja.col_count)
         hoja.update(values=[ENCABEZADO_REPORTE], range_name="A1", value_input_option="RAW")
 
     previas = len([c for c in hoja.col_values(1)[1:] if c.strip()])
@@ -360,7 +394,7 @@ def _mes_de_serial(serial) -> str:
 
 def archivar_mes_cerrado(libro, hoy: date) -> None:
     """Si RETORNOS todavía trae devoluciones de un mes anterior, guarda
-    ONHIRE, RETORNOS y REPORTE MAXINET de ese mes como valores en pestañas
+    ONHIRE, RETORNOS y SOLICITUDES de ese mes como valores en pestañas
     ocultas antes de que se sobrescriban."""
     try:
         fechas = libro.worksheet(HOJA_RETORNOS).get("F2:F", value_render_option="UNFORMATTED_VALUE")
@@ -434,20 +468,77 @@ def rotar_flota_mes_anterior(libro, libro_query, hoy: date) -> None:
     log.info("FLOTA ACTUAL: %d placas ON HIRE (mes %s)", len(flota), mes_actual)
 
 
-def actualizar_mes_balance(libro, hoy: date) -> None:
-    """B2 de la pestaña BALANCE es el día 1 del mes que usan todas sus
-    fórmulas (Nuvia lo cambia a mano cada mes). Se pone en el día 1 del mes
-    en curso; si la pestaña está protegida sólo avisa."""
+def _formulas_balance(hoy: date) -> tuple:
+    """Valores y fórmulas de BALANCE A1:AG18 como las tiene Nuvia: la lista de
+    ejecutivos sale de UNIQUE sobre la columna S ("EJECUTIVO REAL") de ONHIRE
+    y RETORNOS; cada celda cuenta las entregas nuevas (ONHIRE, STATUS MAXINET
+    = ENTREGA (NUEVO)) o las recolecciones (RETORNOS, STATUS MAXINET =
+    RECOLECCION) de ese ejecutivo ese día. Las filas de ejecutivos que sobran
+    quedan vacías (IF sobre la columna A) para que un COUNTIFS con criterio
+    vacío no cuente celdas en blanco."""
+    columnas = BALANCE_COL_INICIO + BALANCE_DIAS - 1
+    primer_dia = (hoy.replace(day=1) - EPOCH_SHEETS).days
+    letra = lambda n: gspread.utils.rowcol_to_a1(1, n)[:-1]
+    ultima = letra(columnas)
+    primera = letra(BALANCE_COL_INICIO)
+
+    filas = {}
+    filas[1] = ["=UNIQUE(ONHIRE!S:S)", "TOTAL DE ENTREGAS"] + [primer_dia + k for k in range(BALANCE_DIAS)]
+    for r in range(2, 2 + BALANCE_FILAS_EJEC):
+        fila = [None, f'=IF($A{r}="","",SUM({primera}{r}:{ultima}{r}))']
+        for c in range(BALANCE_COL_INICIO, columnas + 1):
+            col = letra(c)
+            fila.append(f'=IF($A{r}="","",COUNTIFS(ONHIRE!$S:$S,$A{r},ONHIRE!$E:$E,{col}$1,ONHIRE!$P:$P,"ENTREGA (NUEVO)"))')
+        filas[r] = fila
+    h = BALANCE_FILA_RETORNOS
+    filas[h] = ["=UNIQUE(RETORNOS!S:S)", "TOTAL DE RETORNOS"] + [f"={letra(c)}1" for c in range(BALANCE_COL_INICIO, columnas + 1)]
+    for r in range(h + 1, h + 1 + BALANCE_FILAS_EJEC):
+        fila = [None, f'=IF($A{r}="","",SUM({primera}{r}:{ultima}{r}))']
+        for c in range(BALANCE_COL_INICIO, columnas + 1):
+            col = letra(c)
+            fila.append(f'=IF($A{r}="","",COUNTIFS(RETORNOS!$S:$S,$A{r},RETORNOS!$F:$F,{col}${h},RETORNOS!$P:$P,"RECOLECCION"))')
+        filas[r] = fila
+    return filas, columnas
+
+
+def actualizar_balance(libro, hoy: date) -> None:
+    """Deja la pestaña BALANCE con la estructura de Nuvia y los días del mes
+    en curso (C1 es el día 1). Cada corrida sólo reescribe si la estructura
+    cambió o si cambió el mes; si la pestaña está protegida sólo avisa."""
     try:
         hoja = libro.worksheet(HOJA_BALANCE)
-        esperado = (hoy.replace(day=1) - EPOCH_SHEETS).days
-        actual = hoja.get("B2", value_render_option="UNFORMATTED_VALUE")
-        if actual and actual[0] and actual[0][0] == esperado:
+        filas, columnas = _formulas_balance(hoy)
+        actual = hoja.get("A1:C1", value_render_option="FORMULA")
+        actual = actual[0] if actual else []
+        esperado = [filas[1][0], filas[1][1], filas[1][2]]
+        if actual[:3] == esperado:
             return
-        hoja.update(values=[[esperado]], range_name="B2", value_input_option="RAW")
-        log.info("BALANCE: mes de las fórmulas (B2) puesto en %s", hoy.replace(day=1))
+        _asegurar_tamano(hoja, 2 + 2 * (BALANCE_FILAS_EJEC + 1), columnas)
+        hoja.batch_clear([f"A1:AH{hoja.row_count}"])
+        _resetear_formato(libro, hoja, hoja.row_count, hoja.col_count)
+        # fila 1 y fila 10 primero (UNIQUE), luego el resto
+        valores = []
+        for r in sorted(filas):
+            valores.append([("" if v is None else v) for v in filas[r]])
+        # el bloque 1 ocupa filas 1-9 y el de retornos empieza en la fila 10
+        hoja.update(values=valores[:1 + BALANCE_FILAS_EJEC], range_name="A1", value_input_option="USER_ENTERED")
+        hoja.update(values=valores[1 + BALANCE_FILAS_EJEC:], range_name=f"A{BALANCE_FILA_RETORNOS}", value_input_option="USER_ENTERED")
+        fmt_fecha = {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}, "textFormat": {"bold": True}}
+        fmt_negrita = {"textFormat": {"bold": True}}
+        peticiones = []
+        for fila_idx, ancho_ini in ((0, BALANCE_COL_INICIO - 1), (BALANCE_FILA_RETORNOS - 1, BALANCE_COL_INICIO - 1)):
+            peticiones.append({"repeatCell": {
+                "range": {"sheetId": hoja.id, "startRowIndex": fila_idx, "endRowIndex": fila_idx + 1,
+                          "startColumnIndex": ancho_ini, "endColumnIndex": columnas},
+                "cell": {"userEnteredFormat": fmt_fecha}, "fields": "userEnteredFormat(numberFormat,textFormat)"}})
+            peticiones.append({"repeatCell": {
+                "range": {"sheetId": hoja.id, "startRowIndex": fila_idx, "endRowIndex": fila_idx + 1,
+                          "startColumnIndex": 0, "endColumnIndex": 2},
+                "cell": {"userEnteredFormat": fmt_negrita}, "fields": "userEnteredFormat.textFormat"}})
+        libro.batch_update({"requests": peticiones})
+        log.info("BALANCE: estructura reconstruida para %s", hoy.strftime("%Y-%m"))
     except (gspread.WorksheetNotFound, APIError) as e:
-        log.warning("BALANCE: no se pudo actualizar B2 (%s)", type(e).__name__)
+        log.warning("BALANCE: no se pudo actualizar la pestaña (%s)", type(e).__name__)
 
 
 def verificar_errores(libro) -> None:
@@ -456,11 +547,11 @@ def verificar_errores(libro) -> None:
         hoja = libro.worksheet(nombre)
         valores = hoja.get("P2:S", value_render_option="FORMATTED_VALUE")
         malas = sum(1 for fila in valores for c in fila if c in errores)
-        sin_kam = sum(1 for fila in valores if len(fila) < 4 or fila[3] in ("", "PENDIENTE"))
+        sin_kam = sum(1 for fila in valores if len(fila) < 4 or fila[3] in ("", "PENDIENTE", "SIN ASIGNACIÓN"))
         sin_solicitud = sum(1 for fila in valores if fila and fila[0] == "")
         cambios = sum(1 for fila in valores if len(fila) > 2 and fila[2] == "CAMBIO DE RESERVA")
         posibles = sum(1 for fila in valores if len(fila) > 2 and fila[2] == "POSIBLE ENTREGA")
-        log.info("%s: %d CAMBIO DE RESERVA, %d POSIBLE ENTREGA, %d reservas sin solicitud de traslado, %d sin ejecutivo KAM, %d errores en P:S",
+        log.info("%s: %d CAMBIO DE RESERVA, %d POSIBLE ENTREGA, %d reservas sin solicitud de traslado, %d sin ejecutivo, %d errores en P:S",
                  nombre, cambios, posibles, sin_solicitud, sin_kam, malas)
 
 
@@ -488,7 +579,7 @@ def main():
         cargar_reporte_maxinet(libro, traslados_ent, traslados_rec)
         cargar_entregas_retornos(libro, HOJA_ONHIRE, entregas)
         cargar_entregas_retornos(libro, HOJA_RETORNOS, retornos)
-        actualizar_mes_balance(libro, hoy)
+        actualizar_balance(libro, hoy)
         verificar_errores(libro)
         log.info("BALANCE: actualización completada con éxito")
     except Exception:
