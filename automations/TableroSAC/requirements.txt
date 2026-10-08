@@ -1,0 +1,4 @@
+requests>=2.31
+gspread>=6,<7
+google-auth>=2
+python-dotenv>=1

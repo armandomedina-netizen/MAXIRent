@@ -1,0 +1,21 @@
+{
+  "tablero_id": 1000000001,
+  "grupos": [
+    { "hoja": "Pestana A", "grupo_id": "grupo_a", "periodica": true },
+    { "hoja": "Pestana B", "grupo_id": "grupo_b" }
+  ],
+  "columnas": [
+    { "encabezado": "Nombre", "origen": "nombre" },
+    { "encabezado": "Estado", "columna_id": "col_estado" },
+    { "encabezado": "Responsable", "columna_id": "col_personas" },
+    { "encabezado": "Fecha limite", "columna_id": "col_fecha", "tipo": "fecha" },
+    { "encabezado": "Fecha de registro", "columna_id": "col_fecha_hora", "tipo": "fecha" },
+    { "encabezado": "Telefono", "columna_id": "col_reflejo" },
+    { "encabezado": "Folio", "columna_id": "col_folio", "tipo": "numero", "clave": true },
+    { "encabezado": "Cronometro", "columna_id": "col_cronometro", "tipo": "duracion" },
+    { "encabezado": "Tiempo por area", "columna_id": "col_reflejo_duracion", "tipo": "duracion" },
+    { "encabezado": "Dias", "columna_id": "col_formula_dias", "tipo": "numero" },
+    { "encabezado": "Enlace", "columna_id": "col_formula_url" },
+    { "encabezado": "Grupo", "origen": "grupo" }
+  ]
+}

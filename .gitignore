@@ -46,3 +46,11 @@ automations/maxinet-clientes-nuevos-cp/logs/
 automations/maxinet-clientes-potenciales-cp/google-creds.json
 automations/maxinet-clientes-potenciales-cp/*.venv/
 automations/maxinet-clientes-potenciales-cp/logs/
+
+# Tablero SAC automation (monday -> Google Sheets): local secrets, schema with real IDs and runtime artifacts
+automations/TableroSAC/google-creds.json
+automations/TableroSAC/JSON/
+automations/TableroSAC/private/
+automations/TableroSAC/*.venv/
+automations/TableroSAC/logs/
+.pytest_cache/

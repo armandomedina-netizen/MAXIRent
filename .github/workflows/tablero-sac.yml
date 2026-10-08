@@ -1,0 +1,46 @@
+name: Tablero SAC
+
+on:
+  schedule:
+    # Seguro del disparo exacto de Apps Script: cada hora a los 20 minutos, hora CDMX (UTC-6).
+    # Lunes a viernes de 7:20 a 17:20 y sábado de 7:20 a 14:20.
+    - cron: "20 13-23 * * 1-5"
+    - cron: "20 13-20 * * 6"
+  workflow_dispatch: {}
+
+concurrency:
+  group: tablero-sac
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: automations/TableroSAC
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Sincronizar el tablero SAC
+        env:
+          MONDAY_TOKEN: ${{ secrets.MONDAY_TOKEN }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/TableroSAC/google-creds.json
+          SPREADSHEET_ID_SAC: ${{ secrets.SPREADSHEET_ID_SAC }}
+          MONDAY_SAC_SCHEMA_JSON: ${{ secrets.MONDAY_SAC_SCHEMA_JSON }}
+        run: python monday_sac_sync.py --periodicas
