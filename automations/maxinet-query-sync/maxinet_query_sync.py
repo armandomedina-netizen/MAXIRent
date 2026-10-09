@@ -65,7 +65,9 @@ Flujo (cada corrida, pensada para correr cada hora):
        copyPaste falla y repeatCell se salta las filas que un filtro oculta
        (pasó el 8-oct con un filtro por PERIODO DE RETORNO); así el filtro
        del usuario se respeta.
-    7. Avisa en el log si alguna placa trae más de una línea RENT (ver
+    7. Pone en TABLA RESUMEN!B1 (fecha de corte de "Duración avg") el último
+       día del mes en curso, que Nuvia cambiaba a mano cada mes.
+    8. Avisa en el log si alguna placa trae más de una línea RENT (ver
        PENDIENTE abajo).
 
 PENDIENTE (confirmado el 2026-09-18, todavía SIN implementar -- falta
@@ -86,7 +88,8 @@ import re
 import sys
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
 import pandas as pd
@@ -101,6 +104,14 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("maxinet_query_sync")
+
+EPOCH_SHEETS = date(1899, 12, 30)
+
+
+def _hoy_cdmx() -> date:
+    # El runner de GitHub está en UTC: después de las 18:00 de CDMX ya es
+    # "mañana" y se bajaba el reporte del día siguiente.
+    return datetime.now(ZoneInfo("America/Mexico_City")).date()
 
 # Mismo orden de columnas confirmado en el HTML real de
 # reporte-cargo-de-reservas.php (sin columna de acciones al inicio)
@@ -152,7 +163,7 @@ def descargar_cargo_de_reservas() -> pd.DataFrame:
     fecha de hoy) -- el snapshot diario que ya se pegaba a mano en "QUERY".
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
-    hoy = date.today().strftime("%Y-%m-%d")
+    hoy = _hoy_cdmx().strftime("%Y-%m-%d")
 
     session = login_maxinet()
     resp = session.post(
@@ -405,6 +416,25 @@ def ajustar_filas_tarifa(libro, df_nuevo: pd.DataFrame):
              HOJA_TARIFA, COL_TARIFA_INICIO, COL_TARIFA_FIN, n_placas, FILA_TARIFA_MODELO, fila_final)
 
 
+def actualizar_fecha_corte(libro):
+    """
+    TABLA RESUMEN!B1 es la fecha de corte de "Duración avg (meses)" en TARIFA
+    (QUERY)!R (y de ahí TIPO DE CUENTA). Nuvia la cambia a mano cada mes al
+    último día del mes en curso; en la copia se quedó en el 30-sep y la
+    duración de todas las placas salía un mes corta. Sólo escribe si cambió.
+    """
+    hoy = _hoy_cdmx()
+    fin_de_mes = (hoy.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    serial = (fin_de_mes - EPOCH_SHEETS).days
+    ws = libro.worksheet("TABLA RESUMEN")
+    actual = ws.get("B1", value_render_option="UNFORMATTED_VALUE")
+    actual = actual[0][0] if actual and actual[0] else None
+    if actual == serial:
+        return
+    ws.update(values=[[serial]], range_name="B1", raw=True)
+    log.info("TABLA RESUMEN!B1 (fecha de corte) actualizada a %s", fin_de_mes.isoformat())
+
+
 def avisar_duplicados_rent(df: pd.DataFrame):
     """Solo avisa (no borra): placas con más de una línea RENT el mismo día."""
     rent = df[df["CONCEPTO_CARGO"].str.strip().str.upper() == "RENT"]
@@ -474,6 +504,12 @@ def main():
         except Exception:
             log.exception("No se pudieron ajustar las filas de TARIFA (QUERY)")
             fallos.append("ajustar_filas_tarifa")
+
+        try:
+            actualizar_fecha_corte(libro)
+        except Exception:
+            log.exception("No se pudo actualizar la fecha de corte de TABLA RESUMEN")
+            fallos.append("actualizar_fecha_corte")
 
         if fallos:
             log.error("Datos actualizados, pero fallaron pasos secundarios: %s", ", ".join(fallos))
