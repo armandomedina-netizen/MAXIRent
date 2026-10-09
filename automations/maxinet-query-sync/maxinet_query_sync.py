@@ -40,7 +40,8 @@ Flujo (cada corrida, pensada para correr cada hora):
        Desde=Hasta=hoy) -- no se filtra nada más, el reporte ya viene tal
        cual, solo se limpian espacios de más en columnas de texto.
     3. Espeja desde el Sheet ORIGINAL las reglas listadas en REGLAS_ESPEJO
-       (hoy QUERY!P2:T2 y el bloque por ejecutivo de TABLA RESUMEN!Z10:AB30):
+       (hoy QUERY!P2:T2, la fila modelo TARIFA (QUERY)!B2:AA2 y el bloque
+       por ejecutivo de TABLA RESUMEN!Z10:AB30):
        si Nuvia cambia una regla ahí, la copia la recoge sola. Solo lectura
        sobre el original, nunca se escribe en él.
     4. Reemplaza POR COMPLETO el bloque A2:O... de la pestaña "QUERY" con
@@ -60,7 +61,9 @@ Flujo (cada corrida, pensada para correr cada hora):
        placas del día: copia la fórmula de la fila 2 hacia abajo y limpia
        las que sobren. Es lo que Nuvia hacía a mano; sin esto, los días
        que baja la flota quedan filas con #N/A y los que sube, placas sin
-       datos.
+       datos. Las fórmulas se escriben con repeatCell y no con copyPaste:
+       copyPaste falla si alguien dejó un filtro que oculta filas (pasó el
+       8-oct con un filtro por PERIODO DE RETORNO), y el filtro se respeta.
     7. Avisa en el log si alguna placa trae más de una línea RENT (ver
        PENDIENTE abajo).
 
@@ -233,6 +236,24 @@ def _valores_para_hoja(df: pd.DataFrame) -> list:
     return [[_celda(v) for v in fila] for fila in df.values.tolist()]
 
 
+def _repetir_formulas_modelo(worksheet, fila_modelo: int, fila_final: int, col_ini: int, formulas: list):
+    """
+    Escribe cada fórmula de la fila modelo en su columna, desde la fila
+    modelo hasta fila_final, con un repeatCell por columna: la API recorre
+    las referencias relativas fila por fila (igual que arrastrar) y, a
+    diferencia de copyPaste, funciona aunque un filtro oculte filas.
+    col_ini es el índice (base 0) de la columna de la primera fórmula.
+    """
+    worksheet.spreadsheet.batch_update({"requests": [{
+        "repeatCell": {
+            "range": {"sheetId": worksheet.id, "startRowIndex": fila_modelo - 1, "endRowIndex": fila_final,
+                      "startColumnIndex": col_ini + j, "endColumnIndex": col_ini + j + 1},
+            "cell": {"userEnteredValue": {"formulaValue": formula}},
+            "fields": "userEnteredValue",
+        }
+    } for j, formula in enumerate(formulas)]})
+
+
 def _extender_formulas(worksheet, fila_final: int):
     """
     Copia las fórmulas de la fila modelo (FILA_INICIO_DATOS, columnas P:U)
@@ -256,25 +277,7 @@ def _extender_formulas(worksheet, fila_final: int):
         )
 
     if fila_final > FILA_INICIO_DATOS:
-        worksheet.spreadsheet.batch_update({"requests": [{
-            "copyPaste": {
-                "source": {
-                    "sheetId": worksheet.id,
-                    "startRowIndex": FILA_INICIO_DATOS - 1,
-                    "endRowIndex": FILA_INICIO_DATOS,
-                    "startColumnIndex": col_ini,
-                    "endColumnIndex": col_fin,
-                },
-                "destination": {
-                    "sheetId": worksheet.id,
-                    "startRowIndex": FILA_INICIO_DATOS,
-                    "endRowIndex": fila_final,
-                    "startColumnIndex": col_ini,
-                    "endColumnIndex": col_fin,
-                },
-                "pasteType": "PASTE_FORMULA",
-            }
-        }]})
+        _repetir_formulas_modelo(worksheet, FILA_INICIO_DATOS, fila_final, col_ini, fila_modelo[:n_cols])
 
     sobrante = f"{COL_FORMULAS_INICIO}{fila_final + 1}:{COL_FORMULAS_FIN}{fila_final + MAX_FILAS_BUFFER}"
     worksheet.batch_clear([sobrante])
@@ -287,6 +290,9 @@ def _extender_formulas(worksheet, fila_final: int):
 # (por ejemplo las que son resultado de un UNIQUE) se ignoran.
 REGLAS_ESPEJO = [
     ("QUERY", "P2:T2"),
+    # Fila modelo de TARIFA (QUERY); ajustar_filas_tarifa la extiende a todas
+    # las placas (p. ej. la regla de PROX RETORNOS de la columna X).
+    ("TARIFA (QUERY)", "B2:AA2"),
     ("TABLA RESUMEN", "Z10:AB30"),
 ]
 
@@ -378,13 +384,7 @@ def ajustar_filas_tarifa(libro, df_nuevo: pd.DataFrame):
 
     _asegurar_filas(ws, fila_final)
     if fila_final > FILA_TARIFA_MODELO:
-        libro.batch_update({"requests": [{"copyPaste": {
-            "source": {"sheetId": ws.id, "startRowIndex": FILA_TARIFA_MODELO - 1, "endRowIndex": FILA_TARIFA_MODELO,
-                       "startColumnIndex": col_ini, "endColumnIndex": col_fin},
-            "destination": {"sheetId": ws.id, "startRowIndex": FILA_TARIFA_MODELO, "endRowIndex": fila_final,
-                            "startColumnIndex": col_ini, "endColumnIndex": col_fin},
-            "pasteType": "PASTE_FORMULA",
-        }}]})
+        _repetir_formulas_modelo(ws, FILA_TARIFA_MODELO, fila_final, col_ini, fila_modelo[:col_fin - col_ini])
     ws.batch_clear([f"{COL_TARIFA_INICIO}{fila_final + 1}:{COL_TARIFA_FIN}{fila_final + MAX_FILAS_BUFFER}"])
     log.info("%s: fórmulas %s:%s ajustadas a %d placas (filas %d-%d)",
              HOJA_TARIFA, COL_TARIFA_INICIO, COL_TARIFA_FIN, n_placas, FILA_TARIFA_MODELO, fila_final)
