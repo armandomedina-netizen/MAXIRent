@@ -2,8 +2,8 @@ name: Maxinet Clientes Potenciales CP Sync
 
 on:
   schedule:
-    # 10:15 AM hora Ciudad de México (este reporte se importa de madrugada, ~3:30) (UTC-6, sin horario de verano desde 2022)
-    - cron: "15 16 * * *"
+    # 9:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
+    - cron: "30 15 * * *"
   workflow_dispatch: {}
 
 jobs:

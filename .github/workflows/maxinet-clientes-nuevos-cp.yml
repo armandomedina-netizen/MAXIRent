@@ -2,8 +2,8 @@ name: Maxinet Clientes Nuevos CP Sync
 
 on:
   schedule:
-    # 10:00 AM hora Ciudad de México (Maxinet importa a las 9:00 y 9:40) (UTC-6, sin horario de verano desde 2022)
-    - cron: "0 16 * * *"
+    # 9:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
+    - cron: "30 15 * * *"
   workflow_dispatch: {}
 
 jobs:

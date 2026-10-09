@@ -15,9 +15,10 @@ Endpoint confirmado a partir del JS real de Maxinet
             SUB_TOTAL llega numérico en texto ("1409.48"); el "$ " del
             navegador lo agrega el render de DataTables, no el servidor.
 
-Regla de fechas ("día vencido", decidida por el usuario): se consulta
-Desde = ayer, Hasta = hoy (hora Ciudad de México). Ej.: el 29 se consulta del
-28 al 29 y el servidor devuelve los clientes creados el 28.
+Regla de fechas ("día vencido", decidida por el usuario): el dato nuevo es el
+de ayer (hora Ciudad de México). La consulta va de anteayer a hoy porque la
+corrida es a las 9:30 y Maxinet también importa a las 9:40; lo que ya está en
+el Sheet se omite, así que solo se agrega lo que falte.
 
 Estructura de la pestaña destino (confirmada contra el Sheet real):
     - Columna A (PERIODO) y columnas R:V (TIPO DE CLIENTE, RECLASIFICADO, año,
@@ -75,6 +76,7 @@ COL_CLAVE = 2        # B: ClientNo, define la "última fila con datos"
 COL_BOOKING = 6      # F: BookingNo, para no duplicar
 FILA_INICIO_DATOS = 2
 ZONA = ZoneInfo("America/Mexico_City")
+DIAS_ATRAS = 2       # ventana: anteayer -> hoy (ver rango_fechas)
 
 
 def _parse_json_bom(resp: requests.Response):
@@ -102,9 +104,12 @@ def login_maxinet() -> requests.Session:
 
 
 def rango_fechas() -> tuple[str, str]:
-    """Día vencido: ayer -> hoy en hora CDMX (o el override de entorno)."""
+    """Día vencido en hora CDMX (o el override de entorno). La ventana empieza
+    DIAS_ATRAS días antes de hoy: la corrida es a las 9:30 y Maxinet importa
+    también a las 9:40, así que los clientes de ayer importados después de la
+    corrida se recogen al día siguiente (el control de repetidos evita duplicar)."""
     hoy = datetime.now(ZONA).date()
-    desde = os.environ.get("FECHA_DESDE") or (hoy - timedelta(days=1)).strftime("%Y-%m-%d")
+    desde = os.environ.get("FECHA_DESDE") or (hoy - timedelta(days=DIAS_ATRAS)).strftime("%Y-%m-%d")
     hasta = os.environ.get("FECHA_HASTA") or hoy.strftime("%Y-%m-%d")
     return desde, hasta
 
@@ -136,7 +141,8 @@ def conectar_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
-    nombre = os.environ.get("WORKSHEET_CLIENTES_NUEVOS_NAME") or "Reporte Generales Clientes Nuevo"
+    # Un secret pegado con comillas o espacios no debe romper el nombre de la pestaña
+    nombre = (os.environ.get("WORKSHEET_CLIENTES_NUEVOS_NAME") or "").strip().strip("\"'").strip() or "Reporte Generales Clientes Nuevo"
     return sh.worksheet(nombre)
 
 
@@ -220,6 +226,9 @@ def agregar_filas_nuevas(worksheet, df: pd.DataFrame) -> int:
         log.info("No hay filas nuevas que agregar.")
         return 0
 
+    # Mismo orden que ya tiene el Sheet: fecha de creación y luego ClientNo
+    # (importa cuando una corrida cubre varios días, ej. al ponerse al día).
+    df_nuevos = df_nuevos.sort_values(["CreationDate", "ClientNo"], kind="stable")
     valores = [[_celda(r[c], c) for c in COLUMNAS] for _, r in df_nuevos.iterrows()]
     fila_inicio = ultima_fila + 1
     fila_fin = fila_inicio + len(valores) - 1
