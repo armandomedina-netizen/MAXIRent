@@ -94,3 +94,16 @@ El detalle de devoluciones de `Duración rentas` se capturaba a mano a partir de
 - `EJECUTIVO`, `TARIFA` y `UNIFICADO` sólo existen mientras la renta está activa. La pestaña oculta `HISTORIAL ACTIVAS` guarda, por placa y fecha de recogida, los datos de cada renta activa en cada corrida (nunca borra). Si una devolución no está en el historial se busca la misma placa y cliente en el detalle; si tampoco, se agrega con esos campos vacíos y un aviso en el log.
 - También se mantienen sin captura: las fórmulas por fila del bloque ON HIRE (hasta el final de la lista + 10 filas) y la fórmula `TIEMPO DE VIDA (RETORNOS)` del mes en curso. `MENSUAL` pasa a `=M*MIN(E,30)`, como en el archivo de Nuvia.
 - Principio de independencia: ningún proceso lee el archivo de Nuvia; su versión sólo fue la base inicial.
+
+## Query Sync: falla por filtros y alineación con el archivo de Nuvia (2026-10-09)
+
+- **Falla.** Desde el 8-oct (~16:00 CDMX) cada corrida terminaba en error. Alguien dejó en la copia un filtro en `TARIFA (QUERY)!Y` (PERIODO DE RETORNO) que sólo muestra un mes, y la API de Sheets no permite `copyPaste` sobre filas ocultas por un filtro. QUERY se actualizaba, pero TARIFA no: las placas nuevas quedaban sin fórmulas. `repeatCell` tampoco sirve, porque responde con éxito y se salta en silencio las filas ocultas. Ahora el script escribe por la API de valores la fórmula de cada fila, recorriendo las filas relativas de la fila modelo como al arrastrar; el texto entre comillas no se toca. El generador reproduce las 20,577 fórmulas que Nuvia arrastró en su TARIFA y las de `QUERY!P:U`. El filtro del usuario se respeta.
+- **Reglas de Nuvia.** `TARIFA (QUERY)!B2:AA2` se espeja del original (solo lectura) y se extiende a todas las placas. Así `X` (PROX RETORNOS) usa su lógica: todo es "PROX. RETORNO" salvo los clientes "SE EXTIENDE". Antes la copia sólo marcaba los retornos del mes en curso.
+- **Fecha de corte.** `TABLA RESUMEN!B1` alimenta "Duración avg (meses)" y "TIPO DE CUENTA" de TARIFA. Nuvia la cambia a mano al último día del mes en curso; en la copia seguía en el 30-sep. Cada corrida la pone en el fin del mes en curso.
+- **Fecha de Maxinet.** "Hoy" se calcula con la hora de CDMX; con la del runner (UTC), después de las 18:00 se pedía el reporte del día siguiente.
+- **Cambios de una vez en la copia.** Se restauró la pestaña `KAM` copiándola del original (`copyTo`, que sólo lee el original), oculta y en la misma posición; alguien la había borrado y ninguna fórmula la usa. `QUERY!Y2:Y84` se envolvió en `IF(X="","",...)`: la lista `UNIQUE` de `X` termina en un renglón vacío y su `XLOOKUP` daba `#N/A`.
+- **Diferencias que quedan contra el original.** Todas son de datos, no de lógica:
+  - La copia tiene 2 placas más, porque se actualiza cada hora.
+  - TABLA RESUMEN lista los estados en otro orden: sale de `UNIQUE` y sigue el orden de filas de Maxinet.
+  - En 21 placas, el TARIFA de Nuvia no tiene las fórmulas de las últimas filas (PERIODO DE RETORNO, CODIGO y lo que depende de ellas).
+  - Los errores de `EJECUTIVOS` (11 `#NUM!` y 2 `#N/A`) vienen de los libros que importa con `IMPORTRANGE` y son iguales en ambos archivos.
