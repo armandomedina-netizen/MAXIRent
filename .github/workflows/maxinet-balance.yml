@@ -43,4 +43,6 @@ jobs:
           SPREADSHEET_ID_BALANCE: ${{ secrets.SPREADSHEET_ID_BALANCE }}
           SPREADSHEET_ID_QUERY: ${{ secrets.SPREADSHEET_ID_QUERY }}
           WORKSHEET_QUERY_NAME: ${{ secrets.WORKSHEET_QUERY_NAME }}
+          # Opcional (variable del repositorio, no secret); vacío = 7 días.
+          SOLICITUDES_DIAS_FUTUROS: ${{ vars.SOLICITUDES_DIAS_FUTUROS }}
         run: python maxinet_balance.py

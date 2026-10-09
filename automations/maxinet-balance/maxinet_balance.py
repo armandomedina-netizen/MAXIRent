@@ -10,7 +10,13 @@ pestañas del BALANCE.
     RETORNOS         <- LP > Entregas / Retornos, Tipo = RETORNOS  (A:O)
     SOLICITUDES ENTREGAS / RECOLECCIONES <- LP > Solicitudes de traslado, filtrando por Fecha
                         Entrega/Recolección: primero Entregas y debajo
-                        Recolecciones (43 columnas desde Folio)
+                        Recolecciones (43 columnas desde Folio). Esta
+                        descarga llega hasta hoy + SOLICITUDES_DIAS_FUTUROS
+                        (7 por omisión), como el pegado de Nuvia, para
+                        incluir las solicitudes ya programadas.
+    PRONÓSTICO ENTREGAS: entregas y recolecciones de los próximos 7 días
+                        (fórmulas de Nuvia sobre SOLICITUDES); se crea si
+                        falta y se corrigen sus fórmulas si alguien las cambia.
     P:R de ONHIRE y RETORNOS: fórmulas STATUS MAXINET, FLOTA MES ANTERIOR y
                         COMPARATIVO, extendidas hasta la última fila.
     S de ONHIRE y RETORNOS: EJECUTIVO REAL (columna H de EJECUTIVOS buscada
@@ -40,6 +46,8 @@ Variables de entorno (ver .env.example):
     MAXINET_BASE_URL, MAXINET_USER, MAXINET_PASS, GOOGLE_CREDS_PATH
     SPREADSHEET_ID_BALANCE  -> copia automatizada del BALANCE (destino)
     SPREADSHEET_ID_QUERY    -> copia automatizada de CLIENTES ACTIVOS (QUERY)
+    SOLICITUDES_DIAS_FUTUROS -> días después de hoy que abarca la descarga
+                               de SOLICITUDES (opcional, 7 por omisión)
 """
 
 import os
@@ -73,6 +81,9 @@ HOJA_RETORNOS = "RETORNOS"
 HOJA_REPORTE = "SOLICITUDES ENTREGAS / RECOLECCIONES"
 HOJA_FLOTA_ANTERIOR = "FLOTA MES ANTERIOR"
 HOJA_FLOTA_ACTUAL = "FLOTA ACTUAL"
+HOJA_PRONOSTICO = "PRONÓSTICO ENTREGAS"
+
+SOLICITUDES_DIAS_FUTUROS_DEFAULT = 7
 
 ENCABEZADO_ER = [
     "NO CLIENTE", "CLIENTE", "RESERVA", "ESTATUS", "PUDATE", "RETURNDATE", "DIAS", "EFECTO 0",
@@ -98,6 +109,10 @@ ENCABEZADO_FLOTA = [
 # Reporte Entregas / Retornos: A:O. Índices que no son texto.
 ER_FECHAS = (4, 5)      # PUDATE, RETURNDATE
 ER_ENTEROS = (6, 9)     # DIAS, FOLIO TRASLADO (viene como enlace HTML)
+ER_FORMATOS = [
+    (ER_FECHAS, {"type": "DATE", "pattern": "yyyy-mm-dd"}),
+    ((6,), {"type": "NUMBER", "pattern": "0"}),   # DIAS
+]
 
 # Reporte de traslados (43 columnas desde Folio, índice 0).
 RT_FECHA_HORA = (2,)
@@ -133,10 +148,50 @@ BALANCE_COL_INICIO = 3     # C
 BALANCE_DIAS = 31          # C:AG
 BALANCE_FILAS_EJEC = 8     # filas 2-9 (entregas) y 11-18 (retornos)
 BALANCE_FILA_RETORNOS = 10
+# Resaltado de Nuvia en BALANCE (días con al menos un movimiento), sobre las
+# filas de ejecutivos de cada bloque, desde la columna A hasta el día 31.
+BALANCE_RESALTADO = {
+    "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": "1"}]},
+    "format": {"backgroundColor": {"red": 1, "green": 0.7529412}, "textFormat": {"bold": True}},
+}
+
+# PRONÓSTICO ENTREGAS: fórmulas de Nuvia tal cual (A1, F1, A3, F3). C1 y H1
+# suman hasta la fila 1000, como dicen los textos de A1 y F1 (en su archivo
+# sólo suman C3:C9 y H3:H35). A3 y F3 se derraman hacia abajo: nada se escribe
+# debajo de ellas.
+_FILTRO_PRONOSTICO = (
+    "=IFERROR(QUERY(FILTER({{'SOLICITUDES ENTREGAS / RECOLECCIONES'!K2:K,'SOLICITUDES ENTREGAS / RECOLECCIONES'!L2:L,"
+    "'SOLICITUDES ENTREGAS / RECOLECCIONES'!R2:R}}, TRIM(UPPER('SOLICITUDES ENTREGAS / RECOLECCIONES'!E2:E))=\"{tipo}\", "
+    "TRIM(UPPER('SOLICITUDES ENTREGAS / RECOLECCIONES'!H2:H))<>\"TRASLADO CANCELADO\", "
+    "'SOLICITUDES ENTREGAS / RECOLECCIONES'!R2:R>=TODAY(), 'SOLICITUDES ENTREGAS / RECOLECCIONES'!R2:R<=TODAY()+7), "
+    "\"select Col1, Col2, count(Col1), Col3 group by Col1, Col2, Col3 order by Col3, Col1 label count(Col1) ''\", 0),"
+    "\"Sin movimientos\")"
+)
+PRONOSTICO_CELDAS = {
+    "A1": '="ENTREGAS: "&SUM(C3:C)&" placas en próximos 7 días"',
+    "C1": "=SUM(C3:C1000)",
+    "F1": '="RECOLECCIONES: "&SUM(H3:H)&" placas en próximos 7 días"',
+    "H1": "=SUM(H3:H1000)",
+    "A3": _FILTRO_PRONOSTICO.format(tipo="ENTREGA (NUEVO)"),
+    "F3": _FILTRO_PRONOSTICO.format(tipo="RECOLECCION"),
+}
+PRONOSTICO_ENCABEZADO = ["CLIENTE", "GRUPO", "PLACAS", "FECHA", "", "CLIENTE", "GRUPO", "PLACAS", "FECHA"]
 
 
 def _hoy_cdmx() -> date:
     return datetime.now(ZONA_CDMX).date()
+
+
+def _dias_futuros_solicitudes() -> int:
+    """Días después de hoy que abarca la descarga de SOLICITUDES. Nuvia pega
+    también las solicitudes ya programadas (Fecha Rec. futura), que usan la
+    columna P de RETORNOS y la pestaña PRONÓSTICO ENTREGAS."""
+    valor = os.environ.get("SOLICITUDES_DIAS_FUTUROS", "").strip()
+    if not valor:
+        return SOLICITUDES_DIAS_FUTUROS_DEFAULT
+    if not re.fullmatch(r"\d+", valor):
+        raise ValueError("SOLICITUDES_DIAS_FUTUROS debe ser un entero de 0 en adelante")
+    return int(valor)
 
 
 def _instalar_reintentos_gspread() -> None:
@@ -317,6 +372,30 @@ def _peticiones_formato(hoja, indices_formato: list, ultima_fila: int) -> list:
     return peticiones
 
 
+def _quitar_tipos_de_tabla(libro, hoja) -> None:
+    """Si la pestaña tiene una tabla de Sheets con tipos de columna, se los
+    quita: un tipo de columna se impone a cualquier formato y en la copia
+    venían desfasados del diseño anterior (PUDATE, RETURNDATE y DIAS como
+    texto, DIAS como fecha), así que las fechas se guardaban como texto. Los
+    formatos de estas pestañas los pone el script; la tabla y sus datos se
+    conservan."""
+    meta = libro.fetch_sheet_metadata(params={"fields": "sheets(properties(sheetId),tables(tableId,columnProperties))"})
+    peticiones = []
+    for s in meta.get("sheets", []):
+        if s["properties"]["sheetId"] != hoja.id:
+            continue
+        for tabla in s.get("tables", []):
+            columnas = tabla.get("columnProperties", [])
+            if not any(c.get("columnType") not in (None, "COLUMN_TYPE_UNSPECIFIED") for c in columnas):
+                continue
+            nuevas = [{**c, "columnType": "COLUMN_TYPE_UNSPECIFIED"} for c in columnas]
+            peticiones.append({"updateTable": {"table": {"tableId": tabla["tableId"], "columnProperties": nuevas},
+                                               "fields": "columnProperties"}})
+    if peticiones:
+        libro.batch_update({"requests": peticiones})
+        log.info("%s: se quitaron los tipos de columna de %d tabla(s) para que valgan los formatos del script", hoja.title, len(peticiones))
+
+
 def _resetear_formato(libro, hoja, filas: int, columnas: int) -> None:
     """Quita el formato y las celdas combinadas que haya dejado el diseño
     anterior de una pestaña que se reconstruye (por ejemplo un formato de
@@ -353,6 +432,11 @@ def cargar_entregas_retornos(libro, nombre_hoja: str, filas: list) -> None:
     previas = len([c for c in hoja.col_values(1)[1:] if c.strip()])
     valores = [convertir_fila_er(f) for f in filas]
     ultima = len(valores) + 1
+    # El formato va antes que los valores: un número escrito en una celda con
+    # formato de texto se guarda como texto, y cambiar el formato después no
+    # lo convierte.
+    _quitar_tipos_de_tabla(libro, hoja)
+    libro.batch_update({"requests": _peticiones_formato(hoja, ER_FORMATOS, ultima)})
     if valores:
         hoja.update(values=valores, range_name=f"A2:O{ultima}", value_input_option="RAW")
         formulas = [
@@ -362,7 +446,6 @@ def cargar_entregas_retornos(libro, nombre_hoja: str, filas: list) -> None:
         hoja.update(values=formulas, range_name=f"P2:S{ultima}", value_input_option="USER_ENTERED")
     if previas > len(valores):
         hoja.batch_clear([f"A{ultima + 1}:S{hoja.row_count}"])
-    libro.batch_update({"requests": _peticiones_formato(hoja, [(ER_FECHAS, {"type": "DATE", "pattern": "yyyy-mm-dd"})], ultima)})
     log.info("%s: %d filas escritas en A2:O%d (P:S extendidas; antes había %d)", nombre_hoja, len(valores), ultima, previas)
 
 
@@ -379,11 +462,12 @@ def cargar_reporte_maxinet(libro, entregas: list, recolecciones: list) -> None:
 
     previas = len([c for c in hoja.col_values(1)[1:] if c.strip()])
     ultima = len(valores) + 1
+    _quitar_tipos_de_tabla(libro, hoja)
+    libro.batch_update({"requests": _peticiones_formato(hoja, RT_FORMATOS, ultima)})
     if valores:
         hoja.update(values=valores, range_name=f"A2:AQ{ultima}", value_input_option="RAW")
     if previas > len(valores):
         hoja.batch_clear([f"A{ultima + 1}:AQ{hoja.row_count}"])
-    libro.batch_update({"requests": _peticiones_formato(hoja, RT_FORMATOS, ultima)})
     log.info("%s: %d solicitudes escritas (%d entregas, %d recolecciones; antes había %d)",
              HOJA_REPORTE, len(valores), len(entregas), len(recolecciones), previas)
 
@@ -541,6 +625,98 @@ def actualizar_balance(libro, hoy: date) -> None:
         log.warning("BALANCE: no se pudo actualizar la pestaña (%s)", type(e).__name__)
 
 
+def asegurar_resaltado_balance(libro) -> None:
+    """Deja en BALANCE una sola regla de formato condicional, la de Nuvia
+    (>= 1 en naranja y negrita), sobre las filas de ejecutivos de los dos
+    bloques (2-9 y 11-18) desde la columna A hasta el día 31. Sólo escribe
+    si las reglas actuales son distintas."""
+    try:
+        hoja = libro.worksheet(HOJA_BALANCE)
+        meta = libro.fetch_sheet_metadata(params={"fields": "sheets(properties(sheetId,gridProperties),conditionalFormats)"})
+        datos = next(s for s in meta["sheets"] if s["properties"]["sheetId"] == hoja.id)
+        ultima_col = min(BALANCE_COL_INICIO + BALANCE_DIAS, datos["properties"]["gridProperties"]["columnCount"])
+        rangos = [
+            {"sheetId": hoja.id, "startRowIndex": inicio, "endRowIndex": inicio + BALANCE_FILAS_EJEC,
+             "startColumnIndex": 0, "endColumnIndex": ultima_col}
+            for inicio in (1, BALANCE_FILA_RETORNOS)
+        ]
+        actuales = datos.get("conditionalFormats", [])
+        if (len(actuales) == 1 and actuales[0].get("ranges") == rangos
+                and actuales[0].get("booleanRule", {}).get("condition") == BALANCE_RESALTADO["condition"]):
+            return
+        peticiones = [{"deleteConditionalFormatRule": {"sheetId": hoja.id, "index": i}} for i in reversed(range(len(actuales)))]
+        peticiones.append({"addConditionalFormatRule": {"index": 0, "rule": {"ranges": rangos, "booleanRule": BALANCE_RESALTADO}}})
+        libro.batch_update({"requests": peticiones})
+        log.info("BALANCE: formato condicional ajustado a los bloques de ejecutivos (antes había %d regla(s))", len(actuales))
+    except (gspread.WorksheetNotFound, APIError) as e:
+        log.warning("BALANCE: no se pudo ajustar el formato condicional (%s)", type(e).__name__)
+
+
+def _formato_pronostico(hoja) -> list:
+    """Formato del archivo de Nuvia: títulos en verde (entregas) y naranja
+    (recolecciones), encabezados en negrita, PLACAS centrado y FECHA como
+    fecha. Sólo se aplica al crear la pestaña."""
+    def rango(f0, f1, c0, c1):
+        return {"sheetId": hoja.id, "startRowIndex": f0, "endRowIndex": f1, "startColumnIndex": c0, "endColumnIndex": c1}
+
+    def celda(r, formato, campos):
+        return {"repeatCell": {"range": r, "cell": {"userEnteredFormat": formato}, "fields": f"userEnteredFormat({campos})"}}
+
+    verde = {"red": 0.20392157, "green": 0.65882355, "blue": 0.3254902}
+    naranja = {"red": 1, "green": 0.42745098, "blue": 0.003921569}
+    numero = {"numberFormat": {"type": "NUMBER", "pattern": "0"}, "horizontalAlignment": "CENTER"}
+    fecha = {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}}
+    peticiones = [
+        celda(rango(0, 1, 0, 4), {"backgroundColor": verde, "textFormat": {"bold": True}}, "backgroundColor,textFormat"),
+        celda(rango(0, 1, 5, 12), {"backgroundColor": naranja, "textFormat": {"bold": True}}, "backgroundColor,textFormat"),
+        celda(rango(0, 1, 2, 4), {"horizontalAlignment": "CENTER"}, "horizontalAlignment"),
+        celda(rango(0, 1, 7, 8), {"horizontalAlignment": "CENTER"}, "horizontalAlignment"),
+        celda(rango(1, 2, 0, 12), {"textFormat": {"bold": True}}, "textFormat"),
+        celda(rango(1, 2, 3, 4), {"horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "wrapStrategy": "WRAP"},
+              "horizontalAlignment,verticalAlignment,wrapStrategy"),
+        celda(rango(2, 1000, 2, 3), numero, "numberFormat,horizontalAlignment"),
+        celda(rango(2, 1000, 7, 8), numero, "numberFormat,horizontalAlignment"),
+        celda(rango(2, 1000, 3, 4), {**fecha, "horizontalAlignment": "CENTER"}, "numberFormat,horizontalAlignment"),
+        celda(rango(2, 1000, 8, 12), fecha, "numberFormat"),
+    ]
+    for col, ancho in enumerate([340, 100, 66, 100, 100, 342, 100, 100, 100, 100, 100, 100]):
+        peticiones.append({"updateDimensionProperties": {
+            "range": {"sheetId": hoja.id, "dimension": "COLUMNS", "startIndex": col, "endIndex": col + 1},
+            "properties": {"pixelSize": ancho}, "fields": "pixelSize"}})
+    return peticiones
+
+
+def asegurar_pronostico(libro) -> None:
+    """Crea PRONÓSTICO ENTREGAS (junto a SOLICITUDES, como en el archivo de
+    Nuvia) si no existe y repone sus fórmulas y encabezados si cambiaron.
+    Nunca escribe dentro del derrame de A3 y F3."""
+    try:
+        try:
+            hoja = libro.worksheet(HOJA_PRONOSTICO)
+            nueva = False
+        except gspread.WorksheetNotFound:
+            indice = next((w.index + 1 for w in libro.worksheets() if w.title == HOJA_REPORTE), None)
+            hoja = libro.add_worksheet(title=HOJA_PRONOSTICO, rows=1000, cols=24, index=indice)
+            nueva = True
+        actuales = hoja.batch_get(["A1:I3"], value_render_option="FORMULA")[0]
+        actuales = [list(f) + [""] * (9 - len(f)) for f in actuales] + [[""] * 9] * (3 - len(actuales))
+        cambios = []
+        for a1, formula in PRONOSTICO_CELDAS.items():
+            fila, col = gspread.utils.a1_to_rowcol(a1)
+            if actuales[fila - 1][col - 1] != formula:
+                cambios.append({"range": a1, "values": [[formula]]})
+        if actuales[1] != PRONOSTICO_ENCABEZADO:
+            cambios.append({"range": "A2:I2", "values": [PRONOSTICO_ENCABEZADO]})
+        if nueva:
+            libro.batch_update({"requests": _formato_pronostico(hoja)})
+        if cambios:
+            hoja.batch_update(cambios, value_input_option="USER_ENTERED")
+            log.info("%s: %s; %d rango(s) de fórmulas o encabezados escritos", HOJA_PRONOSTICO,
+                     "pestaña creada" if nueva else "fórmulas repuestas", len(cambios))
+    except APIError as e:
+        log.warning("%s: no se pudo mantener la pestaña (%s)", HOJA_PRONOSTICO, type(e).__name__)
+
+
 def verificar_errores(libro) -> None:
     errores = {"#REF!", "#VALUE!", "#N/A", "#DIV/0!", "#NAME?", "#NUM!", "#NULL!", "#ERROR!"}
     for nombre in (HOJA_ONHIRE, HOJA_RETORNOS):
@@ -553,6 +729,22 @@ def verificar_errores(libro) -> None:
         posibles = sum(1 for fila in valores if len(fila) > 2 and fila[2] == "POSIBLE ENTREGA")
         log.info("%s: %d CAMBIO DE RESERVA, %d POSIBLE ENTREGA, %d reservas sin solicitud de traslado, %d sin ejecutivo, %d errores en P:S",
                  nombre, cambios, posibles, sin_solicitud, sin_kam, malas)
+    # BALANCE (p. ej. un UNIQUE de ejecutivos que ya no cabe en su bloque) y
+    # el derrame del pronóstico.
+    for rango in (f"{HOJA_BALANCE}!A1:AG18", f"'{HOJA_PRONOSTICO}'!A1:I1000"):
+        try:
+            valores = libro.values_get(rango, params={"valueRenderOption": "FORMATTED_VALUE"}).get("values", [])
+        except APIError:
+            continue
+        malas = sum(1 for fila in valores for c in fila if c in errores)
+        if malas:
+            log.warning("%s: %d celdas con error", rango, malas)
+    try:
+        pron = libro.values_get(f"'{HOJA_PRONOSTICO}'!A1:I1", params={"valueRenderOption": "UNFORMATTED_VALUE"}).get("values", [[]])[0]
+        pron += [""] * (8 - len(pron))
+        log.info("%s: %s placas a entregar y %s a recolectar en los próximos 7 días", HOJA_PRONOSTICO, pron[2], pron[7])
+    except APIError:
+        pass
 
 
 def main():
@@ -560,14 +752,15 @@ def main():
         _instalar_reintentos_gspread()
         hoy = _hoy_cdmx()
         desde = hoy.replace(day=1)
+        hasta_solicitudes = hoy + timedelta(days=_dias_futuros_solicitudes())
         session = login_maxinet()
 
         entregas = descargar_entregas_retornos(session, desde, hoy, "ENTREGAS")
         retornos = descargar_entregas_retornos(session, desde, hoy, "RETORNOS")
-        traslados_ent = descargar_traslados(session, desde, hoy, "entregas")
-        traslados_rec = descargar_traslados(session, desde, hoy, "recolecciones")
-        log.info("Maxinet %s a %s: %d entregas, %d retornos, %d solicitudes de entrega, %d de recolección",
-                 desde, hoy, len(entregas), len(retornos), len(traslados_ent), len(traslados_rec))
+        traslados_ent = descargar_traslados(session, desde, hasta_solicitudes, "entregas")
+        traslados_rec = descargar_traslados(session, desde, hasta_solicitudes, "recolecciones")
+        log.info("Maxinet %s a %s: %d entregas, %d retornos; solicitudes hasta %s: %d de entrega, %d de recolección",
+                 desde, hoy, len(entregas), len(retornos), hasta_solicitudes, len(traslados_ent), len(traslados_rec))
         if not entregas and not retornos and hoy.day > 1:
             raise RuntimeError("Maxinet no regresó entregas ni retornos del mes; no se sobrescribe nada")
 
@@ -580,6 +773,8 @@ def main():
         cargar_entregas_retornos(libro, HOJA_ONHIRE, entregas)
         cargar_entregas_retornos(libro, HOJA_RETORNOS, retornos)
         actualizar_balance(libro, hoy)
+        asegurar_resaltado_balance(libro)
+        asegurar_pronostico(libro)
         verificar_errores(libro)
         log.info("BALANCE: actualización completada con éxito")
     except Exception:
