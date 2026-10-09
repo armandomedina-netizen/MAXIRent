@@ -40,7 +40,8 @@ Flujo (cada corrida, pensada para correr cada hora):
        Desde=Hasta=hoy) -- no se filtra nada más, el reporte ya viene tal
        cual, solo se limpian espacios de más en columnas de texto.
     3. Espeja desde el Sheet ORIGINAL las reglas listadas en REGLAS_ESPEJO
-       (hoy QUERY!P2:T2 y el bloque por ejecutivo de TABLA RESUMEN!Z10:AB30):
+       (hoy QUERY!P2:T2, la fila modelo TARIFA (QUERY)!B2:AA2 y el bloque
+       por ejecutivo de TABLA RESUMEN!Z10:AB30):
        si Nuvia cambia una regla ahí, la copia la recoge sola. Solo lectura
        sobre el original, nunca se escribe en él.
     4. Reemplaza POR COMPLETO el bloque A2:O... de la pestaña "QUERY" con
@@ -60,8 +61,13 @@ Flujo (cada corrida, pensada para correr cada hora):
        placas del día: copia la fórmula de la fila 2 hacia abajo y limpia
        las que sobren. Es lo que Nuvia hacía a mano; sin esto, los días
        que baja la flota quedan filas con #N/A y los que sube, placas sin
-       datos.
-    7. Avisa en el log si alguna placa trae más de una línea RENT (ver
+       datos. Las fórmulas se escriben fila por fila con la API de valores:
+       copyPaste falla y repeatCell se salta las filas que un filtro oculta
+       (pasó el 8-oct con un filtro por PERIODO DE RETORNO); así el filtro
+       del usuario se respeta.
+    7. Pone en TABLA RESUMEN!B1 (fecha de corte de "Duración avg") el último
+       día del mes en curso, que Nuvia cambiaba a mano cada mes.
+    8. Avisa en el log si alguna placa trae más de una línea RENT (ver
        PENDIENTE abajo).
 
 PENDIENTE (confirmado el 2026-09-18, todavía SIN implementar -- falta
@@ -78,10 +84,12 @@ para el estado de este pendiente antes de implementar un dedup.
 """
 
 import os
+import re
 import sys
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import requests
 import pandas as pd
@@ -96,6 +104,14 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("maxinet_query_sync")
+
+EPOCH_SHEETS = date(1899, 12, 30)
+
+
+def _hoy_cdmx() -> date:
+    # El runner de GitHub está en UTC: después de las 18:00 de CDMX ya es
+    # "mañana" y se bajaba el reporte del día siguiente.
+    return datetime.now(ZoneInfo("America/Mexico_City")).date()
 
 # Mismo orden de columnas confirmado en el HTML real de
 # reporte-cargo-de-reservas.php (sin columna de acciones al inicio)
@@ -147,7 +163,7 @@ def descargar_cargo_de_reservas() -> pd.DataFrame:
     fecha de hoy) -- el snapshot diario que ya se pegaba a mano en "QUERY".
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
-    hoy = date.today().strftime("%Y-%m-%d")
+    hoy = _hoy_cdmx().strftime("%Y-%m-%d")
 
     session = login_maxinet()
     resp = session.post(
@@ -233,6 +249,37 @@ def _valores_para_hoja(df: pd.DataFrame) -> list:
     return [[_celda(v) for v in fila] for fila in df.values.tolist()]
 
 
+# Referencia a celda: columna y fila con $ opcionales. No debe ir precedida de
+# letra, dígito, "_" o "." (nombres de función como LOG10) ni seguida de "(".
+_REF_CELDA = re.compile(r"(?<![A-Za-z0-9_.])(\$?)([A-Z]{1,3})(\$?)(\d+)(?![\w(])")
+
+
+def _formula_para_fila(formula: str, desplazamiento: int) -> str:
+    """Recorre las filas relativas (sin $) de una fórmula, como al arrastrarla
+    hacia abajo; el texto entre comillas no se toca. Verificado contra las
+    20,577 fórmulas que Nuvia arrastró en TARIFA (QUERY) y las de QUERY!P:U."""
+    partes = re.split(r'("(?:[^"]|"")*")', formula)
+    for i in range(0, len(partes), 2):
+        partes[i] = _REF_CELDA.sub(
+            lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}"
+                      f"{m.group(4) if m.group(3) else int(m.group(4)) + desplazamiento}",
+            partes[i])
+    return "".join(partes)
+
+
+def _escribir_formulas_por_fila(worksheet, fila_modelo: int, fila_final: int, col_inicio: str, formulas: list):
+    """
+    Escribe debajo de la fila modelo, hasta fila_final, sus fórmulas con las
+    filas recorridas. Se usa la API de valores porque copyPaste falla y
+    repeatCell se salta las filas que un filtro oculta (pasó el 8-oct con un
+    filtro por PERIODO DE RETORNO en TARIFA); así el filtro se respeta.
+    """
+    valores = [[_formula_para_fila(f, fila - fila_modelo) for f in formulas]
+               for fila in range(fila_modelo + 1, fila_final + 1)]
+    col_fin = gspread.utils.rowcol_to_a1(1, gspread.utils.a1_to_rowcol(f"{col_inicio}1")[1] + len(formulas) - 1)[:-1]
+    worksheet.update(values=valores, range_name=f"{col_inicio}{fila_modelo + 1}:{col_fin}{fila_final}", raw=False)
+
+
 def _extender_formulas(worksheet, fila_final: int):
     """
     Copia las fórmulas de la fila modelo (FILA_INICIO_DATOS, columnas P:U)
@@ -256,25 +303,7 @@ def _extender_formulas(worksheet, fila_final: int):
         )
 
     if fila_final > FILA_INICIO_DATOS:
-        worksheet.spreadsheet.batch_update({"requests": [{
-            "copyPaste": {
-                "source": {
-                    "sheetId": worksheet.id,
-                    "startRowIndex": FILA_INICIO_DATOS - 1,
-                    "endRowIndex": FILA_INICIO_DATOS,
-                    "startColumnIndex": col_ini,
-                    "endColumnIndex": col_fin,
-                },
-                "destination": {
-                    "sheetId": worksheet.id,
-                    "startRowIndex": FILA_INICIO_DATOS,
-                    "endRowIndex": fila_final,
-                    "startColumnIndex": col_ini,
-                    "endColumnIndex": col_fin,
-                },
-                "pasteType": "PASTE_FORMULA",
-            }
-        }]})
+        _escribir_formulas_por_fila(worksheet, FILA_INICIO_DATOS, fila_final, COL_FORMULAS_INICIO, fila_modelo[:n_cols])
 
     sobrante = f"{COL_FORMULAS_INICIO}{fila_final + 1}:{COL_FORMULAS_FIN}{fila_final + MAX_FILAS_BUFFER}"
     worksheet.batch_clear([sobrante])
@@ -287,6 +316,9 @@ def _extender_formulas(worksheet, fila_final: int):
 # (por ejemplo las que son resultado de un UNIQUE) se ignoran.
 REGLAS_ESPEJO = [
     ("QUERY", "P2:T2"),
+    # Fila modelo de TARIFA (QUERY); ajustar_filas_tarifa la extiende a todas
+    # las placas (p. ej. la regla de PROX RETORNOS de la columna X).
+    ("TARIFA (QUERY)", "B2:AA2"),
     ("TABLA RESUMEN", "Z10:AB30"),
 ]
 
@@ -378,16 +410,29 @@ def ajustar_filas_tarifa(libro, df_nuevo: pd.DataFrame):
 
     _asegurar_filas(ws, fila_final)
     if fila_final > FILA_TARIFA_MODELO:
-        libro.batch_update({"requests": [{"copyPaste": {
-            "source": {"sheetId": ws.id, "startRowIndex": FILA_TARIFA_MODELO - 1, "endRowIndex": FILA_TARIFA_MODELO,
-                       "startColumnIndex": col_ini, "endColumnIndex": col_fin},
-            "destination": {"sheetId": ws.id, "startRowIndex": FILA_TARIFA_MODELO, "endRowIndex": fila_final,
-                            "startColumnIndex": col_ini, "endColumnIndex": col_fin},
-            "pasteType": "PASTE_FORMULA",
-        }}]})
+        _escribir_formulas_por_fila(ws, FILA_TARIFA_MODELO, fila_final, COL_TARIFA_INICIO, fila_modelo[:col_fin - col_ini])
     ws.batch_clear([f"{COL_TARIFA_INICIO}{fila_final + 1}:{COL_TARIFA_FIN}{fila_final + MAX_FILAS_BUFFER}"])
     log.info("%s: fórmulas %s:%s ajustadas a %d placas (filas %d-%d)",
              HOJA_TARIFA, COL_TARIFA_INICIO, COL_TARIFA_FIN, n_placas, FILA_TARIFA_MODELO, fila_final)
+
+
+def actualizar_fecha_corte(libro):
+    """
+    TABLA RESUMEN!B1 es la fecha de corte de "Duración avg (meses)" en TARIFA
+    (QUERY)!R (y de ahí TIPO DE CUENTA). Nuvia la cambia a mano cada mes al
+    último día del mes en curso; en la copia se quedó en el 30-sep y la
+    duración de todas las placas salía un mes corta. Sólo escribe si cambió.
+    """
+    hoy = _hoy_cdmx()
+    fin_de_mes = (hoy.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    serial = (fin_de_mes - EPOCH_SHEETS).days
+    ws = libro.worksheet("TABLA RESUMEN")
+    actual = ws.get("B1", value_render_option="UNFORMATTED_VALUE")
+    actual = actual[0][0] if actual and actual[0] else None
+    if actual == serial:
+        return
+    ws.update(values=[[serial]], range_name="B1", raw=True)
+    log.info("TABLA RESUMEN!B1 (fecha de corte) actualizada a %s", fin_de_mes.isoformat())
 
 
 def avisar_duplicados_rent(df: pd.DataFrame):
@@ -459,6 +504,12 @@ def main():
         except Exception:
             log.exception("No se pudieron ajustar las filas de TARIFA (QUERY)")
             fallos.append("ajustar_filas_tarifa")
+
+        try:
+            actualizar_fecha_corte(libro)
+        except Exception:
+            log.exception("No se pudo actualizar la fecha de corte de TABLA RESUMEN")
+            fallos.append("actualizar_fecha_corte")
 
         if fallos:
             log.error("Datos actualizados, pero fallaron pasos secundarios: %s", ", ".join(fallos))
