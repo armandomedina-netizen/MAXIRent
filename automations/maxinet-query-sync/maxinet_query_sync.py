@@ -61,9 +61,10 @@ Flujo (cada corrida, pensada para correr cada hora):
        placas del día: copia la fórmula de la fila 2 hacia abajo y limpia
        las que sobren. Es lo que Nuvia hacía a mano; sin esto, los días
        que baja la flota quedan filas con #N/A y los que sube, placas sin
-       datos. Las fórmulas se escriben con repeatCell y no con copyPaste:
-       copyPaste falla si alguien dejó un filtro que oculta filas (pasó el
-       8-oct con un filtro por PERIODO DE RETORNO), y el filtro se respeta.
+       datos. Las fórmulas se escriben fila por fila con la API de valores:
+       copyPaste falla y repeatCell se salta las filas que un filtro oculta
+       (pasó el 8-oct con un filtro por PERIODO DE RETORNO); así el filtro
+       del usuario se respeta.
     7. Avisa en el log si alguna placa trae más de una línea RENT (ver
        PENDIENTE abajo).
 
@@ -81,6 +82,7 @@ para el estado de este pendiente antes de implementar un dedup.
 """
 
 import os
+import re
 import sys
 import json
 import logging
@@ -236,22 +238,35 @@ def _valores_para_hoja(df: pd.DataFrame) -> list:
     return [[_celda(v) for v in fila] for fila in df.values.tolist()]
 
 
-def _repetir_formulas_modelo(worksheet, fila_modelo: int, fila_final: int, col_ini: int, formulas: list):
+# Referencia a celda: columna y fila con $ opcionales. No debe ir precedida de
+# letra, dígito, "_" o "." (nombres de función como LOG10) ni seguida de "(".
+_REF_CELDA = re.compile(r"(?<![A-Za-z0-9_.])(\$?)([A-Z]{1,3})(\$?)(\d+)(?![\w(])")
+
+
+def _formula_para_fila(formula: str, desplazamiento: int) -> str:
+    """Recorre las filas relativas (sin $) de una fórmula, como al arrastrarla
+    hacia abajo; el texto entre comillas no se toca. Verificado contra las
+    20,577 fórmulas que Nuvia arrastró en TARIFA (QUERY) y las de QUERY!P:U."""
+    partes = re.split(r'("(?:[^"]|"")*")', formula)
+    for i in range(0, len(partes), 2):
+        partes[i] = _REF_CELDA.sub(
+            lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}"
+                      f"{m.group(4) if m.group(3) else int(m.group(4)) + desplazamiento}",
+            partes[i])
+    return "".join(partes)
+
+
+def _escribir_formulas_por_fila(worksheet, fila_modelo: int, fila_final: int, col_inicio: str, formulas: list):
     """
-    Escribe cada fórmula de la fila modelo en su columna, desde la fila
-    modelo hasta fila_final, con un repeatCell por columna: la API recorre
-    las referencias relativas fila por fila (igual que arrastrar) y, a
-    diferencia de copyPaste, funciona aunque un filtro oculte filas.
-    col_ini es el índice (base 0) de la columna de la primera fórmula.
+    Escribe debajo de la fila modelo, hasta fila_final, sus fórmulas con las
+    filas recorridas. Se usa la API de valores porque copyPaste falla y
+    repeatCell se salta las filas que un filtro oculta (pasó el 8-oct con un
+    filtro por PERIODO DE RETORNO en TARIFA); así el filtro se respeta.
     """
-    worksheet.spreadsheet.batch_update({"requests": [{
-        "repeatCell": {
-            "range": {"sheetId": worksheet.id, "startRowIndex": fila_modelo - 1, "endRowIndex": fila_final,
-                      "startColumnIndex": col_ini + j, "endColumnIndex": col_ini + j + 1},
-            "cell": {"userEnteredValue": {"formulaValue": formula}},
-            "fields": "userEnteredValue",
-        }
-    } for j, formula in enumerate(formulas)]})
+    valores = [[_formula_para_fila(f, fila - fila_modelo) for f in formulas]
+               for fila in range(fila_modelo + 1, fila_final + 1)]
+    col_fin = gspread.utils.rowcol_to_a1(1, gspread.utils.a1_to_rowcol(f"{col_inicio}1")[1] + len(formulas) - 1)[:-1]
+    worksheet.update(values=valores, range_name=f"{col_inicio}{fila_modelo + 1}:{col_fin}{fila_final}", raw=False)
 
 
 def _extender_formulas(worksheet, fila_final: int):
@@ -277,7 +292,7 @@ def _extender_formulas(worksheet, fila_final: int):
         )
 
     if fila_final > FILA_INICIO_DATOS:
-        _repetir_formulas_modelo(worksheet, FILA_INICIO_DATOS, fila_final, col_ini, fila_modelo[:n_cols])
+        _escribir_formulas_por_fila(worksheet, FILA_INICIO_DATOS, fila_final, COL_FORMULAS_INICIO, fila_modelo[:n_cols])
 
     sobrante = f"{COL_FORMULAS_INICIO}{fila_final + 1}:{COL_FORMULAS_FIN}{fila_final + MAX_FILAS_BUFFER}"
     worksheet.batch_clear([sobrante])
@@ -384,7 +399,7 @@ def ajustar_filas_tarifa(libro, df_nuevo: pd.DataFrame):
 
     _asegurar_filas(ws, fila_final)
     if fila_final > FILA_TARIFA_MODELO:
-        _repetir_formulas_modelo(ws, FILA_TARIFA_MODELO, fila_final, col_ini, fila_modelo[:col_fin - col_ini])
+        _escribir_formulas_por_fila(ws, FILA_TARIFA_MODELO, fila_final, COL_TARIFA_INICIO, fila_modelo[:col_fin - col_ini])
     ws.batch_clear([f"{COL_TARIFA_INICIO}{fila_final + 1}:{COL_TARIFA_FIN}{fila_final + MAX_FILAS_BUFFER}"])
     log.info("%s: fórmulas %s:%s ajustadas a %d placas (filas %d-%d)",
              HOJA_TARIFA, COL_TARIFA_INICIO, COL_TARIFA_FIN, n_placas, FILA_TARIFA_MODELO, fila_final)
