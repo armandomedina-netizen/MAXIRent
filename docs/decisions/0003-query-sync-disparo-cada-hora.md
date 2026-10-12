@@ -114,3 +114,10 @@ El mismo mantenimiento de las hojas de solo fórmulas se aplica ahora al libro b
 - Fuera de alcance, sin fuente automatizable conocida: los datos de `UBICACIONES!A:G` (reporte de GPS que se pega a mano) y el registro de `ENVIOS SEMINUEVOS` (1200 filas, llenas hasta el límite de la hoja, con MES y AÑO en AC:AD).
 
 Las dos llamadas son secundarias: una falla (rango protegido, cuota) se registra como aviso y no detiene el sync. Como en el resto, nunca se borra ni se sobrescribe contenido.
+
+### Query Sync: el Sheet destino pasa a "REPORTE TARIFA" (2026-10-12)
+
+- Del 10-oct (~16:30 CDMX) al 12-oct (~12:45) la cuenta de servicio no tuvo acceso al Sheet destino (403 al abrirlo); fallaron Query Sync y BALANCE, que lee de ahí la flota. Antes de eso, desde el 8-oct, Query Sync ya fallaba por un filtro de usuario en `TARIFA (QUERY)` (`copyPaste` no admite filas filtradas).
+- Al volver el acceso, el Sheet estaba rediseñado como "REPORTE TARIFA". `TARIFA (QUERY)`, `RESUMEN RENTA ACTIVAS` y `QUERY!P:R` son ahora fórmulas matriciales (`ARRAYFORMULA`/`LET`) que se calculan solas sobre `QUERY!A:O`. Se retiraron `TABLA RESUMEN`, `KAM`, `PROYECCION POR CLIENTE` y `TABLA TARIFA`.
+- El script ya sólo escribe `QUERY!A2:O` y limpia las filas sobrantes de `A:O`. Se retiraron el espejo de reglas del archivo de Nuvia (además de fallar, su escritura en `QUERY!P2:T2` bloqueaba los derrames de `P1:R1` con `#REF!`), la extensión de fórmulas por fila y el ajuste de filas de TARIFA. Ya no se usa `SPREADSHEET_ID_ORIGINAL`. "Hoy" se calcula con la hora de CDMX.
+- El acceso de la cuenta de servicio a este Sheet depende de que esté compartido con ella (ver la nota del 18-sep sobre la Unidad compartida). Si se cambia el modo de compartir, hay que volver a darle acceso de editor.
