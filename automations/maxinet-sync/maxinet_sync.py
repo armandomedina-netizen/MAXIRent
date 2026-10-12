@@ -1866,9 +1866,13 @@ def calcular_ubicaciones(existentes: list, df: pd.DataFrame) -> tuple:
     tabla, y si Maxinet no trae estado se CONSERVA el que ya hay (es el
     glosario propio: lo sembró la tabla de Nuvia y se completa a mano hasta
     tener la extracción de los proveedores de GPS). D (localización) nunca se
-    toca. Las placas nuevas se agregan al final. Devuelve (filas, conteos)."""
+    toca. Las placas nuevas se agregan al final; si una placa está en dos filas
+    (GPS RT y VIRTUAL) se actualizan las dos. Devuelve (filas, conteos)."""
     filas = [(list(f) + [""] * COLUMNAS_UBICACIONES)[:COLUMNAS_UBICACIONES] for f in existentes]
-    por_placa = {str(f[0]).strip(): i for i, f in enumerate(filas) if str(f[0]).strip()}
+    por_placa = {}
+    for i, f in enumerate(filas):
+        if str(f[0]).strip():
+            por_placa.setdefault(str(f[0]).strip(), []).append(i)
     nuevas = actualizadas = con_estado = 0
     for _, r in df.iterrows():
         placa = str(r["Placa"]).strip()
@@ -1876,26 +1880,34 @@ def calcular_ubicaciones(existentes: list, df: pd.DataFrame) -> tuple:
             continue
         if placa not in por_placa:
             filas.append([placa] + [""] * (COLUMNAS_UBICACIONES - 1))
-            por_placa[placa] = len(filas) - 1
+            por_placa[placa] = [len(filas) - 1]
             nuevas += 1
-        fila = filas[por_placa[placa]]
-        antes = list(fila)
         mensaje = _serial_de_texto_fecha(r["Ultimo Msj"])
-        if mensaje != "":
-            fila[1] = mensaje
         km = _numero_de_texto(r["Odometro"])
-        if km != "":
-            fila[2] = km
-        if fila[4] == "" and str(r["RT"]).strip() == "1":
-            fila[4] = "RT"
         estado = str(r["Estado"]).strip()
         if estado:
-            fila[5] = ESTADOS_NOMBRE_UBICACIONES.get(estado, estado)
             con_estado += 1
-        if fila != antes:
+        cambio = False
+        # una placa puede salir en dos filas (GPS RT y GPS VIRTUAL): se actualizan todas
+        for i in por_placa[placa]:
+            fila = filas[i]
+            antes = list(fila)
+            if mensaje != "":
+                fila[1] = mensaje
+            if km != "":
+                fila[2] = km
+            if fila[4] == "" and str(r["RT"]).strip() == "1":
+                fila[4] = "RT"
+            if estado:
+                fila[5] = ESTADOS_NOMBRE_UBICACIONES.get(estado, estado)
+            cambio = cambio or fila != antes
+        if cambio:
             actualizadas += 1
     en_reporte = {str(p).strip() for p in df["Placa"]}
-    sin_estado = sum(1 for f in filas if str(f[0]).strip() in en_reporte and str(f[5]).strip() == "")
+    sin_estado = sum(
+        1 for placa, idx in por_placa.items()
+        if placa in en_reporte and all(str(filas[i][5]).strip() == "" for i in idx)
+    )
     return filas, {"nuevas": nuevas, "actualizadas": actualizadas, "con_estado_maxinet": con_estado, "sin_estado": sin_estado}
 
 
