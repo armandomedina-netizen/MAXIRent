@@ -1772,16 +1772,15 @@ def _mantener_bloque_formulas(worksheet, bloque: dict) -> dict:
     return {"extendidas": extendidas, "huecos": huecos, "errores": errores_guia + errores_bloque}
 
 
-def mantener_formulas_tablero() -> None:
-    """Corre _mantener_bloque_formulas en cada hoja de BLOQUES_FORMULAS_TABLERO.
+def _mantener_formulas_libro(libro, bloques_por_hoja: dict, etiqueta: str) -> None:
+    """Corre _mantener_bloque_formulas en cada hoja de bloques_por_hoja.
     Una falla (hoja protegida, API, etc.) se avisa y no detiene lo demás."""
     try:
-        libro = conectar_sheet_secundario(next(iter(BLOQUES_FORMULAS_TABLERO))).spreadsheet
         hojas = {w.title: w for w in libro.worksheets()}  # una sola petición para todas
     except Exception as e:
-        log.warning("Fórmulas del tablero: no se pudo abrir el libro (%s)", type(e).__name__)
+        log.warning("Fórmulas %s: no se pudo abrir el libro (%s)", etiqueta, type(e).__name__)
         return
-    for nombre, bloques in BLOQUES_FORMULAS_TABLERO.items():
+    for nombre, bloques in bloques_por_hoja.items():
         worksheet = hojas.get(nombre)
         if worksheet is None:
             log.warning("Fórmulas de '%s': la hoja no existe en el libro", nombre)
@@ -1794,6 +1793,44 @@ def mantener_formulas_tablero() -> None:
                     "Fórmulas de '%s' (guía %s): no se pudo mantener (%s: %s)",
                     nombre, bloque["guia"], type(e).__name__, str(e)[:120],
                 )
+
+
+def mantener_formulas_tablero() -> None:
+    """Hojas de solo fórmulas del libro del tablero (BLOQUES_FORMULAS_TABLERO)."""
+    try:
+        libro = conectar_sheet_secundario(next(iter(BLOQUES_FORMULAS_TABLERO))).spreadsheet
+    except Exception as e:
+        log.warning("Fórmulas del tablero: no se pudo abrir el libro (%s)", type(e).__name__)
+        return
+    _mantener_formulas_libro(libro, BLOQUES_FORMULAS_TABLERO, "del tablero")
+
+
+# Libro base (el de SPREADSHEET_ID). "RESERVAS CP&LP"!A (GRUPO) es una fórmula por
+# fila a la izquierda del bloque B:AN que el sync reescribe cada día: se
+# arrastraba a mano cuando había más reservaciones que fórmulas (el 2026-10-12
+# las fórmulas terminaban en la fila 1705 y ya había reservaciones hasta la
+# 1707, así que esas filas salían sin GRUPO). La guía es la columna B (el
+# bloque de datos), con holgura para que el crecimiento del día no la rebase.
+# No se incluyen ONHIRE ni UBICACIONES: sus fórmulas ya cubren con mucha
+# holgura (ONHIRE llega a la fila 1673 con datos hasta la 797; UBICACIONES
+# tiene totales hasta la 1056 con 31 ubicaciones).
+BLOQUES_FORMULAS_BASE = {
+    "RESERVAS CP&LP": [
+        {"guia": "B", "desde": 2, "cols": ("A", "A"), "holgura": 40},
+    ],
+}
+# "Proyección de Mantenimientos": F es un derrame (UNIQUE de PERIODO) y G su
+# promedio por fila (AVERAGEIFS). Al empezar una quincena el calendario se
+# precarga completo y F gana ~15 filas de golpe (en la quincena en curso cada
+# día es su propia fila, ver _fin_de_quincena); G se arrastraba a mano y se
+# quedaba atrás (el 2026-10-12 terminaba en la fila 33 con F ya en la 34).
+# Corre al final de actualizar_proyeccion_mantenimientos, ya con PERIODO al día.
+BLOQUE_FORMULAS_PROYECCION_MTTO = {"guia": "F", "desde": 2, "cols": ("G", "G"), "holgura": 20}
+
+
+def mantener_formulas_base(libro) -> None:
+    """Hojas del libro base que listan algo con fórmulas por fila (BLOQUES_FORMULAS_BASE)."""
+    _mantener_formulas_libro(libro, BLOQUES_FORMULAS_BASE, "de la base")
 
 
 def actualizar_mes_resumen_afectaciones(worksheet, hoy: date = None) -> None:
@@ -2190,8 +2227,8 @@ def actualizar_proyeccion_mantenimientos(
     """Llena en D el % de vencimiento de cada día ya cerrado (hasta ayer)
     que esté vacío, con el histórico que guarda Maxinet (la fuente de
     Nuvia), extendiendo el calendario si hace falta, y recalcula PERIODO
-    para que la tabla quincenal (F:G, ya con fórmulas UNIQUE/AVERAGEIFS)
-    quede al día. También actualiza J1:J2 (unidades y vencidos de hoy).
+    para que la tabla quincenal (F:G, UNIQUE/AVERAGEIFS) quede al día,
+    y extiende las fórmulas de G hasta el final de la lista de F. También actualiza J1:J2 (unidades y vencidos de hoy).
 
     No toca valores ya escritos (respeta ediciones de Nuvia) ni la fila de
     hoy, que Maxinet publica hasta mañana. forzar=True (--forzar-mtto)
@@ -2238,6 +2275,16 @@ def actualizar_proyeccion_mantenimientos(
         log.warning("Proyección de Mantenimientos: no se pudo actualizar J1:J2 (%s)", type(e).__name__)
 
     actualizar_periodo_proyeccion_mtto(worksheet, hoy)
+
+    # Promedios por periodo (G): se extienden hasta el final de la lista de F.
+    # Secundario: una falla se avisa y no cuenta como falla de la captura.
+    try:
+        _mantener_bloque_formulas(worksheet, BLOQUE_FORMULAS_PROYECCION_MTTO)
+    except Exception as e:
+        log.warning(
+            "Proyección de Mantenimientos: no se pudieron mantener los promedios de G (%s: %s)",
+            type(e).__name__, str(e)[:120],
+        )
 
 
 def main():
@@ -2297,6 +2344,14 @@ def main():
 
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
+
+        # Fórmulas por fila de la base (GRUPO en RESERVAS CP&LP): después de
+        # reescribir el bloque de datos, para cubrir las filas de hoy. No debe
+        # detener el sync si algo falla.
+        try:
+            mantener_formulas_base(worksheet.spreadsheet)
+        except Exception as e:
+            log.warning("Fórmulas de la base: no se pudieron mantener (%s: %s)", type(e).__name__, str(e)[:120])
 
         # FLOTA LP ya NO se escribe desde aquí: esa pestaña se alimenta con
         # un IMPORTRANGE en vivo desde "RESERVAS CP&LP" (decisión del
