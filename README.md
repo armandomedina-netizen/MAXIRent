@@ -1,6 +1,7 @@
 # MAXIRent
 
 Desarrollo y gestión de proyectos MAXIRent.
+Proyectos construidos por AMC
 
 ## Centro Interno de Solicitudes
 
