@@ -167,9 +167,9 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
     fecha_ayer = (_hoy_cdmx() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    resp = session.post(
-        f"{base_url}/includes/gpsrt/reporte-flota-maxirent.php",
-        data={"Desde": fecha_ayer, "Hasta": fecha_ayer},
+    resp = _post_con_reintentos(
+        session, f"{base_url}/includes/gpsrt/reporte-flota-maxirent.php",
+        {"Desde": fecha_ayer, "Hasta": fecha_ayer},
     )
     payload = _parse_json_bom(resp)
 
