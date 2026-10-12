@@ -5,7 +5,7 @@ on:
     # Respaldo: 8:45, 12:45 y 16:45 hora Ciudad de México (UTC-6, sin horario
     # de verano desde 2022). GitHub no garantiza la hora de los cron; el
     # disparo puntual (cada hora en horario laboral) es el workflow_dispatch
-    # que lanza el Apps Script (automations/automatización Gestoría/apps-script).
+    # que lanza el Apps Script Vigilante_Maxinet (ver docs/decisions/0005).
     - cron: "45 14,18,22 * * *"
   workflow_dispatch: {}
 
