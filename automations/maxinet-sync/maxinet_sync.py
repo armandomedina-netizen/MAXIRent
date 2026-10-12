@@ -1828,6 +1828,101 @@ BLOQUES_FORMULAS_BASE = {
 BLOQUE_FORMULAS_PROYECCION_MTTO = {"guia": "F", "desde": 2, "cols": ("G", "G"), "holgura": 20}
 
 
+HOJA_UBICACIONES = "UBICACIONES"
+# Primera columna de la tabla UBICACIONES de la base: A placa, B último mensaje,
+# C kilometraje, D localización (dirección), E GPS, F ubicación (estado),
+# G días sin reportar (fórmula =TODAY()-B). I:J llevan los totales por
+# ubicación y no se tocan.
+COLUMNAS_UBICACIONES = 6
+# El ranking de unidades por estado de "RESUMEN DE RENTAS ACTIVAS" cuenta con
+# UNIQUE: Maxinet y la tabla histórica escriben distinto estos estados y se
+# contarían por separado.
+ESTADOS_NOMBRE_UBICACIONES = {
+    "Coahuila": "Coahuila De Zaragoza",
+    "Michoacán": "Michoacán De Ocampo",
+    "Ciudad de México": "Ciudad De México",
+}
+
+
+def _serial_de_texto_fecha(texto):
+    try:
+        return (datetime.strptime(str(texto).strip()[:10], "%Y-%m-%d").date() - EPOCH_SHEETS).days
+    except ValueError:
+        return ""
+
+
+def _numero_de_texto(texto):
+    try:
+        return float(str(texto).replace(",", "").replace("$", "").strip())
+    except ValueError:
+        return ""
+
+
+def calcular_ubicaciones(existentes: list, df: pd.DataFrame) -> tuple:
+    """Une la tabla UBICACIONES (A:F, valores sin formato) con el reporte de
+    flota de hoy. Por placa: B (último mensaje) y C (kilometraje = odómetro)
+    salen del reporte; E (GPS) se llena con "RT" sólo si estaba vacío y el
+    reporte marca RT; F (estado) sale del reporte ya con el nombre de la
+    tabla, y si Maxinet no trae estado se CONSERVA el que ya hay (es el
+    glosario propio: lo sembró la tabla de Nuvia y se completa a mano hasta
+    tener la extracción de los proveedores de GPS). D (localización) nunca se
+    toca. Las placas nuevas se agregan al final. Devuelve (filas, conteos)."""
+    filas = [(list(f) + [""] * COLUMNAS_UBICACIONES)[:COLUMNAS_UBICACIONES] for f in existentes]
+    por_placa = {str(f[0]).strip(): i for i, f in enumerate(filas) if str(f[0]).strip()}
+    nuevas = actualizadas = con_estado = 0
+    for _, r in df.iterrows():
+        placa = str(r["Placa"]).strip()
+        if not placa:
+            continue
+        if placa not in por_placa:
+            filas.append([placa] + [""] * (COLUMNAS_UBICACIONES - 1))
+            por_placa[placa] = len(filas) - 1
+            nuevas += 1
+        fila = filas[por_placa[placa]]
+        antes = list(fila)
+        mensaje = _serial_de_texto_fecha(r["Ultimo Msj"])
+        if mensaje != "":
+            fila[1] = mensaje
+        km = _numero_de_texto(r["Odometro"])
+        if km != "":
+            fila[2] = km
+        if fila[4] == "" and str(r["RT"]).strip() == "1":
+            fila[4] = "RT"
+        estado = str(r["Estado"]).strip()
+        if estado:
+            fila[5] = ESTADOS_NOMBRE_UBICACIONES.get(estado, estado)
+            con_estado += 1
+        if fila != antes:
+            actualizadas += 1
+    en_reporte = {str(p).strip() for p in df["Placa"]}
+    sin_estado = sum(1 for f in filas if str(f[0]).strip() in en_reporte and str(f[5]).strip() == "")
+    return filas, {"nuevas": nuevas, "actualizadas": actualizadas, "con_estado_maxinet": con_estado, "sin_estado": sin_estado}
+
+
+def actualizar_ubicaciones(libro, df: pd.DataFrame) -> None:
+    """Mantiene la tabla UBICACIONES de la base con el reporte de flota que ya
+    se descarga (antes se pegaba a mano). Sólo toca A:F (y la fórmula de G en
+    las filas nuevas); si nada cambió no escribe."""
+    hoja = libro.worksheet(HOJA_UBICACIONES)
+    existentes = hoja.get("A2:F", value_render_option="UNFORMATTED_VALUE")
+    filas, conteos = calcular_ubicaciones(existentes, df)
+    previas = len(existentes)
+    if filas != [(list(f) + [""] * COLUMNAS_UBICACIONES)[:COLUMNAS_UBICACIONES] for f in existentes]:
+        ultima = len(filas) + 1
+        if hoja.row_count < ultima:
+            hoja.add_rows(ultima - hoja.row_count + 50)
+        hoja.update(values=filas, range_name=f"A2:F{ultima}", value_input_option="RAW")
+        if len(filas) > previas:
+            hoja.update(
+                values=[[f"=TODAY()-B{r}"] for r in range(previas + 2, ultima + 1)],
+                range_name=f"G{previas + 2}:G{ultima}", value_input_option="USER_ENTERED",
+            )
+    log.info(
+        "UBICACIONES: %d placas (%d nuevas, %d actualizadas); %d con estado de Maxinet; %d del reporte sin estado en el glosario",
+        len(filas), conteos["nuevas"], conteos["actualizadas"], conteos["con_estado_maxinet"], conteos["sin_estado"],
+    )
+
+
 def mantener_formulas_base(libro) -> None:
     """Hojas del libro base que listan algo con fórmulas por fila (BLOQUES_FORMULAS_BASE)."""
     _mantener_formulas_libro(libro, BLOQUES_FORMULAS_BASE, "de la base")
@@ -2352,6 +2447,13 @@ def main():
             mantener_formulas_base(worksheet.spreadsheet)
         except Exception as e:
             log.warning("Fórmulas de la base: no se pudieron mantener (%s: %s)", type(e).__name__, str(e)[:120])
+
+        # Tabla UBICACIONES (estado, km y último mensaje por placa) desde el
+        # mismo reporte de flota; no detiene el sync si algo falla.
+        try:
+            actualizar_ubicaciones(worksheet.spreadsheet, df_nuevo)
+        except Exception as e:
+            log.warning("UBICACIONES: no se pudo actualizar (%s: %s)", type(e).__name__, str(e)[:120])
 
         # FLOTA LP ya NO se escribe desde aquí: esa pestaña se alimenta con
         # un IMPORTRANGE en vivo desde "RESERVAS CP&LP" (decisión del
