@@ -114,3 +114,7 @@ El mismo mantenimiento de las hojas de solo fórmulas se aplica ahora al libro b
 - Fuera de alcance, sin fuente automatizable conocida: los datos de `UBICACIONES!A:G` (reporte de GPS que se pega a mano) y el registro de `ENVIOS SEMINUEVOS` (1200 filas, llenas hasta el límite de la hoja, con MES y AÑO en AC:AD).
 
 Las dos llamadas son secundarias: una falla (rango protegido, cuota) se registra como aviso y no detiene el sync. Como en el resto, nunca se borra ni se sobrescribe contenido.
+
+### UBICACIONES de la base mantenida por el sync (2026-10-12)
+
+La pestaña `UBICACIONES` de la base (que importa la copia del Query en `ESTADOS` para el ESTADO de cada renta) ya no se pega a mano: el sync completo la actualiza con el reporte de flota y un glosario propio sembrado una vez con la tabla de Nuvia. Detalle y pendientes en `0006-ubicaciones-glosario-hibrido-e-independencia-rentas-activas.md`.
