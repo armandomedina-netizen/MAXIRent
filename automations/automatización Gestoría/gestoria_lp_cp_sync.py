@@ -10,29 +10,46 @@ Endpoint confirmado a partir del JS real de Maxinet
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
             body: email=<usuario>, password=<contraseña>
     Datos:  POST {MAXINET_BASE_URL}/api/postventa/gestoria/
-            body: Estatus=ABIERTO, Desde=, Hasta=, placa=, alerta_evento=,
-            tipoTicketId=, FromSite=, cargo_cliente=0 -- mismos valores que
-            trae el formulario por default al abrir la liga (filtro
-            "Abierto", sin restricción de fecha). A diferencia de los otros
-            reportes de Maxinet ya automatizados, esta respuesta NO trae BOM
-            y es un dict con llave "data" = lista de OBJETOS (no listas),
-            confirmado contra el servidor real el 2026-09-28.
+            body: Estatus=, Desde=, Hasta=, placa=, alerta_evento=,
+            tipoTicketId=, FromSite=, cargo_cliente=0 -- es el botón "Ver
+            Todo" de la página: TODOS los tickets, abiertos y cerrados.
+            (Hasta el 2026-10-12 se pedía Estatus=ABIERTO; eso dejaba fuera
+            los tickets de VERIFICACIÓN/TRÁMITES que se abren y se cierran en
+            menos de un minuto, que nunca aparecen como abiertos en ninguna
+            corrida y el original de Nuvia sí registra.) A diferencia de los
+            otros reportes de Maxinet ya automatizados, esta respuesta NO
+            trae BOM y es un dict con llave "data" = lista de OBJETOS (no
+            listas), confirmado contra el servidor real el 2026-09-28.
 
 Lógica de sincronización (decidida por el usuario, no inventada aquí):
-    1. Todo folio que venga en el fetch de Maxinet (Estatus=ABIERTO) y que
-       NO exista todavía en el Sheet -> se agrega como fila nueva, pegada
-       debajo de la última fila con datos (ordenados por Folio ascendente,
-       igual que el orden que ya tiene el Sheet).
+    1. Todo folio que venga en Maxinet, con cualquier estatus, y que NO exista
+       todavía en el Sheet -> se agrega como fila nueva, pegada debajo de la
+       última fila con datos (ordenados por Folio ascendente), con el estatus
+       y la fecha de cierre que traiga Maxinet.
     2. Todo folio que SÍ exista en el Sheet, cuyo Estatus actual ahí no sea
-       ya "CERRADO", y que YA NO aparezca en el fetch de Maxinet (Estatus=
-       ABIERTO) -> se marca como "CERRADO" en la columna B, sin tocar el
-       resto de la fila.
-    3. Caso inverso (Sheet ya dice CERRADO pero Maxinet lo sigue mostrando
-       ABIERTO) -> NO se reabre. El usuario no pidió esa regla y no hay que
-       adivinarla.
+       ya "CERRADO", y que Maxinet muestre como CERRADO o ya no muestre (si
+       lo borraron) -> se marca como "CERRADO" en la columna B.
+    3. Columna AI "Cerrado": si la fila queda CERRADO y AI está vacía, se
+       llena con la fecha de cierre de Maxinet (`estatus_created_at`). Nunca
+       se sobrescribe un valor que ya tenga AI. Ninguna fórmula depende de
+       esa columna (revisado el 2026-10-12).
+    4. Caso inverso (Sheet ya dice CERRADO pero Maxinet lo muestra ABIERTO)
+       -> NO se reabre; sólo se avisa en el log con el conteo. El usuario no
+       pidió esa regla y no hay que adivinarla.
+    Del resto de las columnas de una fila ya existente no se actualiza nada:
+    el equipo tampoco las refresca a mano (el original de Nuvia tiene la misma
+    "deriva" en estatus de cargo adicional y factura).
     La columna "Alerta Siniestro" (campo `alerta_evento` de Maxinet) existe
     en el reporte pero NO en este Sheet -- se ignora a propósito, tal como
     indicó el usuario, dejándola documentada aquí por si se agrega después.
+
+Guardia: si Maxinet devuelve menos de la mitad de los folios que ya tiene el
+    Sheet (sesión vencida, mantenimiento, respuesta vacía) la corrida aborta
+    sin escribir; de lo contrario cerraría casi todo por ausencia.
+
+Uso:
+    python gestoria_lp_cp_sync.py             corrida normal
+    python gestoria_lp_cp_sync.py --dry-run   sólo informa qué cambiaría
 
 IMPORTANTE sobre cómo se agregan las filas nuevas:
     NO se usa `Worksheet.append_rows()`. Ese método le pide a la API de
@@ -51,8 +68,8 @@ automatización): AJ/AK/AL calculan mes/año a partir de la Fecha del Evento
 (columna C), y AM devuelve "OK" si el año es 2025 o 2026. La pestaña
 "2026" (histórico) usa esas columnas -- ver abajo.
 
-Pestaña "2026" (histórico de eventos, mismo Sheet): -- NO LA TOCA ESTA
-    AUTOMATIZACIÓN, A PROPÓSITO. El usuario pidió en algún momento agregar
+Pestaña "2026" (histórico de eventos, mismo Sheet): -- NUNCA se escribe su
+    columna A. El usuario pidió en algún momento agregar
     ahí Folio/Fecha/Tipo/Placa/Cliente/Sucursal/Site/BSite para cada evento
     nuevo, pero inspeccionando el Sheet real se encontró que esa pestaña ya
     hace exactamente eso SOLA, vía fórmulas:
@@ -74,7 +91,12 @@ Pestaña "2026" (histórico de eventos, mismo Sheet): -- NO LA TOCA ESTA
     fórmula colapsó a #REF!, vaciando visualmente el histórico completo
     (sin pérdida real de datos: "GESTORIA CP - LP" nunca se tocó). Se
     corrigió borrando esa única celda y dejando que la fórmula se
-    reexpandiera sola. No se debe volver a escribir nada en esa pestaña.
+    reexpandiera sola. No se debe volver a escribir la columna A de esa pestaña.
+    Lo único que se escribe ahí son las fórmulas por fila de B:H, que sí había
+    que arrastrar a mano hacia abajo: sin ellas, un folio nuevo aparece en A
+    sin fecha, tipo, placa ni cliente (el 2026-10-12 los folios 1630 a 1654
+    estaban así: las fórmulas terminaban en la fila 1290 y el derrame en la
+    1310). Ver mantener_formulas_historico().
 
 Requiere:
     pip install -r requirements.txt
@@ -87,9 +109,11 @@ Variables de entorno esperadas (ver .env.example):
         automatizada, no el original que usa el equipo)
     WORKSHEET_GESTORIA_NAME    -> nombre de la pestaña principal (default
         "GESTORIA CP - LP")
+    WORKSHEET_HISTORICO_NAME   -> pestaña histórico (default "2026")
 """
 
 import os
+import re
 import sys
 import json
 import logging
@@ -150,11 +174,23 @@ COLUMNAS_SHEET = [
 
 FOLIO_COL = "id"
 ESTATUS_COL = "estatus"
+CERRADO_COL = "estatus_created_at"
 
 COL_INICIO = "A"
 COL_FIN = "AI"
+COL_CERRADO = "AI"
+IDX_ESTATUS = 1   # columna B
+IDX_CERRADO = 34  # columna AI
 FILA_ENCABEZADO = 1
 FILA_INICIO_DATOS = 2
+
+# Guardia contra una respuesta vacía o parcial de Maxinet (ver docstring).
+MIN_FRACCION_MAXINET = 0.5
+# Tope de rangos por llamada a batch_update.
+TAMANO_LOTE = 400
+# Filas de fórmulas por fila que se mantienen de más, debajo del último folio
+# del derrame de la pestaña histórico.
+HOLGURA_FILAS_HISTORICO = 50
 
 
 def _parse_json(resp: requests.Response):
@@ -188,12 +224,11 @@ def login_maxinet() -> requests.Session:
     return session
 
 
-def descargar_gestoria_abiertos() -> pd.DataFrame:
+def descargar_gestoria_todos() -> pd.DataFrame:
     """
-    Pide al endpoint de Gestoría LP & CP los tickets con Estatus=ABIERTO,
-    sin ningún otro filtro -- mismos valores que trae el formulario por
-    default al abrir la liga. Devuelve TODOS los tickets abiertos sin
-    importar su fecha (incluye tickets viejos que llevan meses sin cerrar).
+    Pide al endpoint de Gestoría LP & CP todos los tickets (Estatus vacío,
+    como el botón "Ver Todo" de la página), abiertos y cerrados, sin
+    importar su fecha.
     """
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
 
@@ -201,7 +236,7 @@ def descargar_gestoria_abiertos() -> pd.DataFrame:
     resp = session.post(
         f"{base_url}/api/postventa/gestoria/",
         data={
-            "Estatus": "ABIERTO",
+            "Estatus": "",
             "Desde": "",
             "Hasta": "",
             "placa": "",
@@ -213,7 +248,7 @@ def descargar_gestoria_abiertos() -> pd.DataFrame:
     )
     payload = _parse_json(resp)
     filas = payload.get("data", [])
-    log.info("Tickets ABIERTO descargados de Maxinet: %d", len(filas))
+    log.info("Tickets descargados de Maxinet: %d", len(filas))
 
     df = pd.DataFrame(filas)
     for col in COLUMNAS_SHEET:
@@ -246,88 +281,221 @@ def conectar_sheet_gestoria():
     return sh.worksheet(nombre_pestana)
 
 
-def leer_folios_existentes(worksheet):
+def leer_filas_existentes(worksheet):
     """
-    Lee las columnas A (Folio) y B (Estatus) del Sheet completo y devuelve
-    un dict {folio: (fila, estatus_actual)}. No lee el resto de columnas:
-    esta automatización nunca actualiza datos de filas existentes, solo
-    agrega filas nuevas o cambia la columna B a CERRADO.
+    Lee el bloque A:AI del Sheet en una sola llamada y devuelve un dict
+    {folio: (fila, estatus_actual, cerrado_actual)}. No se leen valores de
+    otras columnas: esta automatización sólo agrega filas nuevas, cambia la
+    columna B a CERRADO y llena AI cuando está vacía.
     """
-    valores = worksheet.get(f"A{FILA_INICIO_DATOS}:B")
+    valores = worksheet.get(f"{COL_INICIO}{FILA_INICIO_DATOS}:{COL_FIN}")
     existentes = {}
     for i, fila in enumerate(valores):
         num_fila = FILA_INICIO_DATOS + i
-        if not fila or not fila[0]:
+        if not fila or not str(fila[0]).strip():
             continue
         try:
             folio = int(str(fila[0]).strip())
         except ValueError:
             continue
-        estatus_actual = fila[1].strip() if len(fila) > 1 and fila[1] else ""
-        existentes[folio] = (num_fila, estatus_actual)
+        estatus = fila[IDX_ESTATUS].strip().upper() if len(fila) > IDX_ESTATUS else ""
+        cerrado = fila[IDX_CERRADO].strip() if len(fila) > IDX_CERRADO else ""
+        existentes[folio] = (num_fila, estatus, cerrado)
     return existentes
 
 
-def sincronizar_gestoria(worksheet, df_abiertos: pd.DataFrame):
-    existentes = leer_folios_existentes(worksheet)
-    folios_maxinet_abiertos = set(int(f) for f in df_abiertos[FOLIO_COL].dropna().tolist())
+def _escribir_en_lotes(worksheet, actualizaciones):
+    for i in range(0, len(actualizaciones), TAMANO_LOTE):
+        worksheet.batch_update(actualizaciones[i:i + TAMANO_LOTE], value_input_option="USER_ENTERED")
+
+
+def _texto(valor) -> str:
+    """Nulos de pandas (None, NaN, pd.NA) -> "" en vez de "nan"/"<NA>"."""
+    return "" if pd.isna(valor) else str(valor).strip()
+
+
+def sincronizar_gestoria(worksheet, df_maxinet: pd.DataFrame, dry_run: bool = False):
+    existentes = leer_filas_existentes(worksheet)
+    mx = {
+        int(r[FOLIO_COL]): (_texto(r[ESTATUS_COL]).upper(), _texto(r[CERRADO_COL]))
+        for _, r in df_maxinet.dropna(subset=[FOLIO_COL]).iterrows()
+    }
+
+    # Guardia: una respuesta vacía o parcial de Maxinet cerraría casi todo
+    # por ausencia (ver docstring del módulo).
+    if existentes and len(mx) < MIN_FRACCION_MAXINET * len(existentes):
+        raise RuntimeError(
+            f"Maxinet devolvió {len(mx)} tickets y el Sheet tiene {len(existentes)}: "
+            "se aborta sin escribir para no cerrar filas por una respuesta incompleta."
+        )
 
     # 1. Folios nuevos (no existen todavía en el Sheet) -> agregar al final,
-    #    ordenados por Folio ascendente (mismo orden que ya tiene el Sheet).
-    #    Se calcula la fila exacta a mano (última fila con folio + 1) y se
-    #    escribe con update() -- NUNCA con append_rows(): ese método deja
-    #    que la API decida dónde "termina la tabla", y en este Sheet esa
-    #    detección está rota por columnas auxiliares con formato aplicado
-    #    muy por debajo del último dato real (ver docstring del módulo).
-    df_nuevos = df_abiertos[~df_abiertos[FOLIO_COL].isin(existentes.keys())].copy()
-    df_nuevos = df_nuevos.sort_values(FOLIO_COL, ascending=True)
+    #    ordenados por Folio ascendente. La fila de inicio se calcula a mano
+    #    (última fila con folio + 1) y se escribe con update() -- NUNCA con
+    #    append_rows(): ese método deja que la API decida dónde "termina la
+    #    tabla", y en este Sheet esa detección está rota por columnas
+    #    auxiliares con formato aplicado muy por debajo del último dato real
+    #    (ver docstring del módulo).
+    df_nuevos = df_maxinet[~df_maxinet[FOLIO_COL].isin(existentes.keys())].copy()
+    df_nuevos = df_nuevos.dropna(subset=[FOLIO_COL]).sort_values(FOLIO_COL, ascending=True)
 
     if len(df_nuevos) > 0:
-        fila_inicio = FILA_INICIO_DATOS + len(existentes)
+        ultima_fila = max((f for f, _, _ in existentes.values()), default=FILA_ENCABEZADO)
+        fila_inicio = ultima_fila + 1
         fila_fin = fila_inicio + len(df_nuevos) - 1
         valores_nuevos = df_nuevos.fillna("").astype(str).values.tolist()
-        worksheet.update(
-            range_name=f"{COL_INICIO}{fila_inicio}:{COL_FIN}{fila_fin}",
-            values=valores_nuevos,
-            value_input_option="USER_ENTERED",
-        )
+        if not dry_run:
+            worksheet.update(
+                range_name=f"{COL_INICIO}{fila_inicio}:{COL_FIN}{fila_fin}",
+                values=valores_nuevos,
+                value_input_option="USER_ENTERED",
+            )
         log.info(
-            "Filas nuevas agregadas: %d en %s%d:%s%d (folios %s)",
-            len(df_nuevos), COL_INICIO, fila_inicio, COL_FIN, fila_fin,
-            sorted(df_nuevos[FOLIO_COL].tolist()),
+            "%sFilas nuevas: %d en %s%d:%s%d (folios %s; %d ya cerrados en Maxinet)",
+            "[dry-run] " if dry_run else "", len(df_nuevos), COL_INICIO, fila_inicio, COL_FIN, fila_fin,
+            sorted(int(f) for f in df_nuevos[FOLIO_COL]),
+            int((df_nuevos[ESTATUS_COL].str.upper() == "CERRADO").sum()),
         )
     else:
         log.info("No hay folios nuevos que agregar.")
 
-    # 2. Folios que YA NO aparecen como ABIERTO en Maxinet y que en el Sheet
-    #    no estén ya marcados CERRADO -> marcar CERRADO en columna B.
-    #    (No se toca el caso inverso: eso no fue pedido y no hay que
-    #    adivinar la regla.)
+    # 2 y 3. Folios existentes: cerrar los que Maxinet muestra CERRADO o ya
+    #    no muestra, y llenar AI (sólo si está vacía) en los que queden
+    #    CERRADO. No se toca el caso inverso (reabrir): no fue pedido.
     actualizaciones = []
-    for folio, (num_fila, estatus_actual) in existentes.items():
-        if folio in folios_maxinet_abiertos:
-            continue
-        if estatus_actual.upper() == "CERRADO":
-            continue
-        actualizaciones.append({"range": f"B{num_fila}", "values": [["CERRADO"]]})
+    n_cerrados = n_cerrado_fecha = n_reabiertos = 0
+    for folio, (fila, estatus, cerrado_actual) in existentes.items():
+        estatus_mx, cerrado_mx = mx.get(folio, (None, ""))
+        if estatus != "CERRADO" and estatus_mx in (None, "CERRADO"):
+            actualizaciones.append({"range": f"B{fila}", "values": [["CERRADO"]]})
+            n_cerrados += 1
+            estatus = "CERRADO"
+        elif estatus == "CERRADO" and estatus_mx == "ABIERTO":
+            n_reabiertos += 1
+        if estatus == "CERRADO" and not cerrado_actual and cerrado_mx:
+            actualizaciones.append({"range": f"{COL_CERRADO}{fila}", "values": [[cerrado_mx]]})
+            n_cerrado_fecha += 1
 
+    if n_reabiertos:
+        log.warning(
+            "%d folios están CERRADO en el Sheet pero ABIERTO en Maxinet; no se reabren "
+            "(no es parte de las reglas acordadas).", n_reabiertos,
+        )
     if actualizaciones:
-        worksheet.batch_update(actualizaciones)
-        log.info("Folios marcados como CERRADO: %d", len(actualizaciones))
+        if not dry_run:
+            _escribir_en_lotes(worksheet, actualizaciones)
+        log.info(
+            "%sFolios marcados como CERRADO: %d | fechas de cierre (AI) llenadas: %d",
+            "[dry-run] " if dry_run else "", n_cerrados, n_cerrado_fecha,
+        )
     else:
-        log.info("No hay folios para marcar como CERRADO.")
+        log.info("No hay folios para cerrar ni fechas de cierre por llenar.")
 
-    return len(df_nuevos), len(actualizaciones)
+    return len(df_nuevos), n_cerrados, n_cerrado_fecha
+
+
+def conectar_hoja_historico(libro):
+    # Mismo patrón que conectar_sheet_gestoria: un secret vacío no debe pasar
+    # un nombre vacío.
+    return libro.worksheet(os.environ.get("WORKSHEET_HISTORICO_NAME") or "2026")
+
+
+def mantener_formulas_historico(libro, dry_run: bool = False) -> int:
+    """
+    En la pestaña "2026" la columna A es un derrame (UNIQUE/FILTER) que nunca
+    se escribe, y B:H son fórmulas XLOOKUP por fila que alguien arrastraba a
+    mano. Aquí se extienden esas fórmulas hasta el último folio del derrame
+    más HOLGURA_FILAS_HISTORICO, copiando su formato (la fecha de B), y se
+    rellenan huecos. Sólo se escribe en filas con B:H totalmente vacías: nunca
+    se pisa contenido. La fórmula se toma de la última fila que ya la tenga,
+    cambiando únicamente su referencia a la columna A de esa fila.
+    """
+    ws = conectar_hoja_historico(libro)
+    col_a = ws.get(f"A{FILA_INICIO_DATOS}:A")
+    if col_a and col_a[0] and str(col_a[0][0]).startswith("#"):
+        log.warning("Histórico '%s': A%d muestra %s (derrame bloqueado); no se toca nada.",
+                    ws.title, FILA_INICIO_DATOS, col_a[0][0])
+        return 0
+    ultima_lista = FILA_INICIO_DATOS + max((i for i, r in enumerate(col_a) if r and str(r[0]).strip()), default=-1)
+    objetivo = ultima_lista + HOLGURA_FILAS_HISTORICO
+
+    leer_hasta = min(objetivo, ws.row_count)
+    bloque = ws.get(f"B{FILA_INICIO_DATOS}:H{leer_hasta}", value_render_option="FORMULA")
+    bloque += [[]] * (leer_hasta - FILA_INICIO_DATOS + 1 - len(bloque))
+
+    plantilla_fila = None
+    for i in range(len(bloque) - 1, -1, -1):
+        if bloque[i] and str(bloque[i][0]).startswith("="):
+            plantilla_fila = FILA_INICIO_DATOS + i
+            break
+    if plantilla_fila is None:
+        log.warning("Histórico '%s': no hay ninguna fila con fórmulas de la cual copiar; no se toca nada.", ws.title)
+        return 0
+    plantilla = [str(c) for c in bloque[plantilla_fila - FILA_INICIO_DATOS]]
+
+    vacias = []
+    for fila in range(FILA_INICIO_DATOS, objetivo + 1):
+        i = fila - FILA_INICIO_DATOS
+        celdas = bloque[i] if i < len(bloque) else []
+        if not any(str(c).strip() for c in celdas):
+            vacias.append(fila)
+    if not vacias:
+        log.info("Histórico '%s': las fórmulas ya cubren el derrame (hasta la fila %d).", ws.title, ultima_lista)
+        return 0
+
+    log.info("%sHistórico '%s': %d filas sin fórmulas (de %d a %d); derrame hasta la fila %d.",
+             "[dry-run] " if dry_run else "", ws.title, len(vacias), vacias[0], vacias[-1], ultima_lista)
+    if dry_run:
+        return len(vacias)
+
+    if objetivo > ws.row_count:
+        ws.add_rows(objetivo - ws.row_count)
+
+    # Bloques contiguos de filas vacías -> una escritura y un copiado de formato por bloque.
+    bloques, ini = [], vacias[0]
+    for previa, actual in zip(vacias, vacias[1:] + [None]):
+        if actual != previa + 1:
+            bloques.append((ini, previa))
+            ini = actual
+    escrituras, formatos = [], []
+    patron = re.compile(rf"\bA{plantilla_fila}\b")
+    for ini, fin in bloques:
+        escrituras.append({
+            "range": f"B{ini}:H{fin}",
+            "values": [[patron.sub(f"A{f}", c) for c in plantilla] for f in range(ini, fin + 1)],
+        })
+        formatos.append({"copyPaste": {
+            "source": {"sheetId": ws.id, "startRowIndex": plantilla_fila - 1, "endRowIndex": plantilla_fila,
+                       "startColumnIndex": 1, "endColumnIndex": 8},
+            "destination": {"sheetId": ws.id, "startRowIndex": ini - 1, "endRowIndex": fin,
+                            "startColumnIndex": 1, "endColumnIndex": 8},
+            "pasteType": "PASTE_FORMAT",
+        }})
+    ws.batch_update(escrituras, value_input_option="USER_ENTERED")
+    libro.batch_update({"requests": formatos})
+    log.info("Histórico '%s': fórmulas de B:H escritas en %d filas.", ws.title, len(vacias))
+    return len(vacias)
 
 
 def main():
+    dry_run = "--dry-run" in sys.argv
     try:
-        df_abiertos = descargar_gestoria_abiertos()
+        df_maxinet = descargar_gestoria_todos()
 
         worksheet = conectar_sheet_gestoria()
-        nuevos, cerrados = sincronizar_gestoria(worksheet, df_abiertos)
+        nuevos, cerrados, fechas = sincronizar_gestoria(worksheet, df_maxinet, dry_run=dry_run)
 
-        log.info("Automatización completada con éxito (%d nuevos, %d cerrados)", nuevos, cerrados)
+        # Secundario: si falla (cuota, rango protegido) se avisa pero no se
+        # considera fallida la sincronización principal, que ya terminó.
+        try:
+            mantener_formulas_historico(worksheet.spreadsheet, dry_run=dry_run)
+        except Exception:
+            log.exception("No se pudieron mantener las fórmulas de la pestaña histórico")
+
+        log.info(
+            "Automatización completada con éxito%s (%d nuevos, %d cerrados, %d fechas de cierre)",
+            " [dry-run: no se escribió nada]" if dry_run else "", nuevos, cerrados, fechas,
+        )
     except Exception:
         log.exception("Error en la automatización de Gestoría LP & CP")
         sys.exit(1)
