@@ -19,7 +19,7 @@ Variables de entorno esperadas (usar un gestor de secretos, nunca hardcodear):
     MAXINET_USER         -> usuario de Maxinet (parte antes de @maxirent.com.mx)
     MAXINET_PASS         -> contraseña de Maxinet
     GOOGLE_CREDS_PATH        -> ruta al JSON de la cuenta de servicio de Google
-    SPREADSHEET_ID           -> ID del primer Google Sheet (rango B:AN)
+    SPREADSHEET_ID           -> ID del primer Google Sheet (rango B:AP)
     WORKSHEET_NAME           -> pestaña dentro del primer Sheet
     SPREADSHEET_ID_SECUNDARIO -> ID del segundo archivo de Sheets (FLOTA LP / UTILIZACION V3)
     WORKSHEET_FLOTA_LP       -> nombre de la pestaña "FLOTA LP"
@@ -28,11 +28,11 @@ Variables de entorno esperadas (usar un gestor de secretos, nunca hardcodear):
 
 Flujo completo de la automatización diaria:
     1. Login en Maxinet + descarga de datos de flota del día anterior.
-    2. Sobrescribe el rango de DATOS B2:AN... del primer Sheet (columna A,
+    2. Sobrescribe el rango de DATOS B2:AP... del primer Sheet (columna A,
        la fila de encabezados reales (fila 1), y lo que está a la derecha
-       de AN tienen su propia estructura fija -> no se tocan).
+       de AP tienen su propia estructura fija -> no se tocan).
     3. Pega el mismo bloque de datos (incluyendo columna A vacía, desde
-       A2:AN...) en la pestaña "FLOTA LP" del segundo archivo. La fila de
+       A2:AP...) en la pestaña "FLOTA LP" del segundo archivo. La fila de
        encabezados reales (fila 1) tampoco se toca ahí.
     4. En la pestaña "UTILIZACION V3" (tablero tipo calendario, 1 columna
        por día): encuentra la columna de "ayer" en la fila 2, copia las
@@ -40,13 +40,13 @@ Flujo completo de la automatización diaria:
        anterior a valores fijos (para no acumular peso en el archivo).
 
 Estructura del primer Sheet (confirmada por el usuario):
-    - Encabezados reales en la fila 1, columnas B a AN (39 columnas) -> son
+    - Encabezados reales en la fila 1, columnas B a AP (41 columnas) -> son
       fijos del archivo, la automatización NUNCA los sobrescribe (aunque el
       orden o nombre de columnas del reporte de Maxinet cambiara, la
       estructura del Sheet manda).
     - Datos desde la fila 2 hacia abajo (inmediatamente debajo del
       encabezado, sin renglón en blanco de por medio).
-    - La columna A y todo lo que esté a la derecha de AN tiene fórmulas
+    - La columna A y todo lo que esté a la derecha de AP tiene fórmulas
       propias del Sheet -> NUNCA se tocan.
     - Cada corrida SOBRESCRIBE por completo el bloque de datos (no se hace
       merge/match por fila; el reporte de Maxinet reemplaza al anterior).
@@ -81,7 +81,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("maxinet_sync")
 
 # Mismo orden de columnas confirmado en el HTML y en el Excel de ejemplo
-# (la columna vacía inicial del reporte -checkbox/acciones- se descarta)
+# (la columna vacía inicial del reporte -checkbox/acciones- se descarta).
+# El 9-oct-2026 Maxinet agregó VIN y EntryDate al final del reporte (41
+# columnas, antes 39): el sync completo falló con "39 columns passed, passed
+# data had 41 columns" hasta que se agregaron aquí y el rango pasó a B:AP.
 COLUMNAS = [
     "Fecha", "Estado", "Placa", "BSite", "CurrentSite", "Segmento",
     "Estatus Vehiculo", "Geocerca", "Odometro", "Km", "Nombre Geocerca",
@@ -92,7 +95,7 @@ COLUMNAS = [
     "Reserva Ult. Renta", "Cliente Ult. Renta", "PUDate Ult. Renta",
     "Proxima Reserva", "Cliente Prox. Reserva", "PUDate Prox. Reserva",
     "Memo Reserva actual", "Comentario", "Fecha Ult.Coment.",
-    "Responsable Ult.Coment.",
+    "Responsable Ult.Coment.", "VIN", "EntryDate",
 ]
 
 
@@ -174,6 +177,15 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     # trae como primer elemento el link HTML del botón de comentarios
     # (checkbox/acciones de la tabla web) -> se descarta antes de armar el DF.
     filas = [fila[1:] for fila in payload["data"]]
+
+    # Si Maxinet vuelve a cambiar el ancho del reporte, fallar con un mensaje
+    # claro (y sin escribir nada) en vez de pegar columnas corridas.
+    anchos = {len(fila) for fila in filas}
+    if anchos != {len(COLUMNAS)}:
+        raise RuntimeError(
+            f"El reporte de flota trae {sorted(anchos)} columnas y el script espera {len(COLUMNAS)}: "
+            "Maxinet cambió la estructura; revisar COLUMNAS, COL_FIN y las columnas de la base antes de correr."
+        )
 
     df = pd.DataFrame(filas, columns=COLUMNAS)
     log.info("Datos descargados de Maxinet: %d filas (fecha %s)", len(df), fecha_ayer)
@@ -257,10 +269,10 @@ def conectar_sheet():
 
 # Rango fijo de datos: encabezados reales en fila 1 (NUNCA se tocan), datos
 # desde la fila 2 (inmediatamente debajo del encabezado, sin renglón en
-# blanco de por medio). La columna A y todo lo que esté a la derecha de AN
+# blanco de por medio). La columna A y todo lo que esté a la derecha de AP
 # tiene fórmulas propias del Sheet y NUNCA debe tocarse.
 COL_INICIO = "B"
-COL_FIN = "AN"
+COL_FIN = "AP"
 FILA_INICIO_DATOS = 2
 # Buffer de filas a limpiar antes de escribir, por si el reporte de hoy
 # trae menos filas que el de ayer (evita dejar datos viejos "pegados" abajo)
@@ -269,8 +281,8 @@ MAX_FILAS_BUFFER = 5000
 
 def actualizar_sheet(worksheet, df_nuevo: pd.DataFrame):
     """
-    Sobrescribe el bloque de datos (B2:AN...) con la información nueva del día,
-    sin tocar la columna A ni las columnas a la derecha de AN (que tienen
+    Sobrescribe el bloque de datos (B2:AP...) con la información nueva del día,
+    sin tocar la columna A ni las columnas a la derecha de AP (que tienen
     fórmulas propias del Sheet). No se toca la fila de encabezados (fila 1):
     modificarla altera la estructura del archivo, que debe mantenerse fija
     tal como la definió el usuario, sin importar el orden/nombre de columnas
@@ -342,17 +354,17 @@ def actualizar_sheet_flota_lp(worksheet, df_nuevo: pd.DataFrame):
     # Limpiar todo el rango de datos posible primero (por si el reporte de
     # hoy trae menos filas que el de ayer, para no dejar residuos pegados
     # abajo -- misma razón que en actualizar_sheet).
-    rango_limpiar = f"A{fila_inicio}:AN{fila_inicio + MAX_FILAS_BUFFER}"
+    rango_limpiar = f"A{fila_inicio}:AP{fila_inicio + MAX_FILAS_BUFFER}"
     worksheet.batch_clear([rango_limpiar])
 
     # Datos (fillna("") por la misma razón que en actualizar_sheet: NaN no
     # es JSON válido)
     worksheet.update(
         values=df_con_columna_a.fillna("").astype(str).values.tolist(),
-        range_name=f"A{fila_inicio}:AN{fila_final}",
+        range_name=f"A{fila_inicio}:AP{fila_final}",
     )
 
-    log.info("FLOTA LP actualizado: %d filas escritas (A%d:AN%d)", n_filas, fila_inicio, fila_final)
+    log.info("FLOTA LP actualizado: %d filas escritas (A%d:AP%d)", n_filas, fila_inicio, fila_final)
 
 
 # "UTILIZACION V3": avance diario de la columna de fórmulas
