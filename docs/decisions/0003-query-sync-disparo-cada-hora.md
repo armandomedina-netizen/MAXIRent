@@ -94,3 +94,14 @@ El detalle de devoluciones de `Duración rentas` se capturaba a mano a partir de
 - `EJECUTIVO`, `TARIFA` y `UNIFICADO` sólo existen mientras la renta está activa. La pestaña oculta `HISTORIAL ACTIVAS` guarda, por placa y fecha de recogida, los datos de cada renta activa en cada corrida (nunca borra). Si una devolución no está en el historial se busca la misma placa y cliente en el detalle; si tampoco, se agrega con esos campos vacíos y un aviso en el log.
 - También se mantienen sin captura: las fórmulas por fila del bloque ON HIRE (hasta el final de la lista + 10 filas) y la fórmula `TIEMPO DE VIDA (RETORNOS)` del mes en curso. `MENSUAL` pasa a `=M*MIN(E,30)`, como en el archivo de Nuvia.
 - Principio de independencia: ningún proceso lee el archivo de Nuvia; su versión sólo fue la base inicial.
+
+### Fórmulas por fila del libro base (2026-10-12)
+
+El mismo mantenimiento de las hojas de solo fórmulas se aplica ahora al libro base (`SPREADSHEET_ID`), después de revisar cada pestaña (lecturas de solo lectura, una por pestaña) y quedarse sólo con las que de verdad se quedaban cortas:
+
+- `RESERVAS CP&LP!A` (GRUPO): fórmula por fila a la izquierda del bloque B:AN que el sync reescribe cada día. Terminaba en la fila 1705 y ya había reservaciones hasta la 1707 (más huecos después), así que esas filas salían sin GRUPO. `BLOQUES_FORMULAS_BASE` la mantiene con la columna B como guía y 40 filas de holgura; corre en el sync completo, después de `actualizar_sheet`.
+- `Proyección de Mantenimientos!G` (promedio por periodo): F es un derrame de `UNIQUE(B:B)` y en la quincena en curso cada día es su propia fila, así que F gana unas 15 filas al empezar la quincena. G terminaba en la fila 33 con F ya en la 34. `BLOQUE_FORMULAS_PROYECCION_MTTO` la mantiene (guía F, holgura 20) al final de `actualizar_proyeccion_mantenimientos`, ya con PERIODO al día.
+- Sin cambios: `ONHIRE` (las fórmulas llegan a la fila 1673 con datos hasta la 797), `UBICACIONES!J` (totales hasta la 1056 para 31 ubicaciones) y `GRAFICO` (tablas anuales fijas).
+- Fuera de alcance, sin fuente automatizable conocida: los datos de `UBICACIONES!A:G` (reporte de GPS que se pega a mano) y el registro de `ENVIOS SEMINUEVOS` (1200 filas, llenas hasta el límite de la hoja, con MES y AÑO en AC:AD).
+
+Las dos llamadas son secundarias: una falla (rango protegido, cuota) se registra como aviso y no detiene el sync. Como en el resto, nunca se borra ni se sobrescribe contenido.
