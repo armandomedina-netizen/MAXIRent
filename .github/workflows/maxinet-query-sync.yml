@@ -8,11 +8,6 @@ on:
     # workflow_dispatch (ver explicación en la conversación / docs).
     - cron: "7 * * * *"
   workflow_dispatch:
-    inputs:
-      espejo_solo_log:
-        description: "Probar el espejo de reglas del original sin escribir (solo log)"
-        type: boolean
-        default: false
 
 concurrency:
   group: maxinet-query-sync
@@ -48,6 +43,4 @@ jobs:
           GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-query-sync/google-creds.json
           SPREADSHEET_ID_QUERY: ${{ secrets.SPREADSHEET_ID_QUERY }}
           WORKSHEET_QUERY_NAME: ${{ secrets.WORKSHEET_QUERY_NAME }}
-          SPREADSHEET_ID_ORIGINAL: ${{ secrets.SPREADSHEET_ID_ORIGINAL }}
-          ESPEJO_SOLO_LOG: ${{ inputs.espejo_solo_log && '1' || '0' }}
         run: python maxinet_query_sync.py

@@ -115,6 +115,25 @@ El mismo mantenimiento de las hojas de solo fórmulas se aplica ahora al libro b
 
 Las dos llamadas son secundarias: una falla (rango protegido, cuota) se registra como aviso y no detiene el sync. Como en el resto, nunca se borra ni se sobrescribe contenido.
 
+### Query Sync: el Sheet destino pasa a "REPORTE TARIFA" (2026-10-12)
+
+- Del 10-oct (~16:30 CDMX) al 12-oct (~12:45) la cuenta de servicio no tuvo acceso al Sheet destino (403 al abrirlo); fallaron Query Sync y BALANCE, que lee de ahí la flota. Antes de eso, desde el 8-oct, Query Sync ya fallaba por un filtro de usuario en `TARIFA (QUERY)` (`copyPaste` no admite filas filtradas).
+- Al volver el acceso, el Sheet estaba rediseñado como "REPORTE TARIFA". `TARIFA (QUERY)`, `RESUMEN RENTA ACTIVAS` y `QUERY!P:R` son ahora fórmulas matriciales (`ARRAYFORMULA`/`LET`) que se calculan solas sobre `QUERY!A:O`. Se retiraron `TABLA RESUMEN`, `KAM`, `PROYECCION POR CLIENTE` y `TABLA TARIFA`.
+- El script ya sólo escribe `QUERY!A2:O` y limpia las filas sobrantes de `A:O`. Se retiraron el espejo de reglas del archivo de Nuvia (además de fallar, su escritura en `QUERY!P2:T2` bloqueaba los derrames de `P1:R1` con `#REF!`), la extensión de fórmulas por fila y el ajuste de filas de TARIFA. Ya no se usa `SPREADSHEET_ID_ORIGINAL`. "Hoy" se calcula con la hora de CDMX.
+- El acceso de la cuenta de servicio a este Sheet depende de que esté compartido con ella (ver la nota del 18-sep sobre la Unidad compartida). Si se cambia el modo de compartir, hay que volver a darle acceso de editor.
+
+### Independencia del archivo de Nuvia: pestaña `TARIFA DETALLE` (2026-10-12)
+
+Principio: ningún proceso ni tablero nuestro lee fórmulas o datos del archivo de Nuvia; su versión sólo sirve para comparar. La auditoría de los libros mostró una sola dependencia viva: la pestaña `Rentas activas detalle` del Tablero LP importaba (`IMPORTRANGE`) la `TARIFA (QUERY)` de su archivo, con 27 columnas y la estructura anterior al rediseño. De ella cuelgan unas 6,700 fórmulas del tablero (`Duración rentas`, `RESUMEN DE RENTAS ACTIVAS`, `PROXIMOS RETORNOS`) y el código del sync completo.
+
+- **Pestaña propia.** `REPORTE TARIFA` tiene ahora `TARIFA DETALLE`, con las mismas 27 columnas y encabezados que la TARIFA vieja, calculadas con fórmulas matriciales sobre las pestañas del propio libro (`QUERY`, `ESTADOS`, `ROA`, `EJECUTIVOS`, `CONTRATOS`). Se ajusta sola al número de placas: no necesita script que extienda filas. Las columnas se alinean por la misma condición (línea `RENT` de `QUERY`).
+- **Periodo.** La fecha de corte de "Duración avg (meses)" es `EOMONTH(TODAY(),0)`, el fin del mes en curso (antes se tecleaba a mano cada mes). Todo lo que depende de "hoy" se recalcula en cada apertura, así que sirve igual para corte diario, semanal o mensual.
+- **PROX RETORNOS.** La regla de Nuvia (todo es "PROX. RETORNO" salvo los clientes que se extienden) quedó como lista editable en `TARIFA DETALLE!AE` en lugar de `IF` anidados; no se importa (sólo A:AB).
+- **Contratos.** Se liga por nombre limpio (sin razón social), como en el rediseño de Nuvia.
+- **Cliente no registrado.** Si un cliente aún no está en `EJECUTIVOS`, se agrupa con su propio nombre y no se calcula su duración (la TARIFA vieja mostraba `#N/A` y, con el default vacío, el resumen mostraba un renglón sin razón social con 1,544 meses).
+- **Tablero LP.** `Rentas activas detalle!A2` importa ahora `TARIFA DETALLE!A:AB` de nuestro libro. Se concedió el acceso de `IMPORTRANGE` entre ambos y se probó antes en una pestaña temporal para que el tablero no pasara por `#REF!`. Respaldos en Drive previos al cambio.
+- **Verificación.** Contra la TARIFA vieja de Nuvia, sobre las 780 placas comunes: `PRECIO SIN IVA`, `MENSUAL`, `ESTADO`, `GIRO`, `EJECUTIVO`, `MODELO`, `GRUPO`, `AGRUPACION`, `TIPO DE CUENTA`, `Duración avg`, `PROX RETORNOS` e `AGRUPADO` coinciden celda por celda. Lo que difiere es dato: 37 contratos con fecha de retorno posterior (se extendieron; su `QUERY` aún no lo refleja), 15 placas que entran o salen, 14 filas donde su TARIFA no tiene fórmula de `CODIGO` y la liga de contratos. El tablero queda sin errores; `PROXIMOS RETORNOS` de octubre baja de 28 a 12 por esas extensiones.
+
 ### UBICACIONES de la base mantenida por el sync (2026-10-12)
 
 La pestaña `UBICACIONES` de la base (que importa la copia del Query en `ESTADOS` para el ESTADO de cada renta) ya no se pega a mano: el sync completo la actualiza con el reporte de flota y un glosario propio sembrado una vez con la tabla de Nuvia. Detalle y pendientes en `0006-ubicaciones-glosario-hibrido-e-independencia-rentas-activas.md`.
