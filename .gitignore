@@ -54,3 +54,8 @@ automations/TableroSAC/private/
 automations/TableroSAC/*.venv/
 automations/TableroSAC/logs/
 .pytest_cache/
+
+# Entregas CP automation: local secrets and runtime artifacts
+automations/maxinet-entregas-cp/google-creds.json
+automations/maxinet-entregas-cp/*.venv/
+automations/maxinet-entregas-cp/logs/
