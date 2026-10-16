@@ -59,3 +59,8 @@ automations/TableroSAC/logs/
 automations/maxinet-entregas-cp/google-creds.json
 automations/maxinet-entregas-cp/*.venv/
 automations/maxinet-entregas-cp/logs/
+
+# Clientes Frecuentes Activos 35 automation: local secrets and runtime artifacts
+automations/maxinet-frecuentes-activos-cp/google-creds.json
+automations/maxinet-frecuentes-activos-cp/*.venv/
+automations/maxinet-frecuentes-activos-cp/logs/
