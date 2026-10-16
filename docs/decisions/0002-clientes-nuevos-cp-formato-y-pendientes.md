@@ -32,3 +32,9 @@ Automatización en `automations/maxinet-clientes-potenciales-cp`. Pendientes par
 6. **Cliente faltante histórico (enero).** Maxinet lista un cliente en el periodo 01/2026 que no está en el Sheet. No se agregó (el reporte diario solo consulta el mes en curso y, la primera semana del mes, el anterior). Confirmar si se omitió a propósito.
 7. **Registros ya pegados no se actualizan.** Maxinet cambia el No. Rentas y la Fecha Última Renta de un cliente con el tiempo; el Sheet conserva el valor del momento en que se pegó, igual que el proceso manual.
 8. **Fórmulas pre-arrastradas incompletas.** Las fórmulas de A y J:M llegan hasta la fila ~2511 con huecos después; el script copia las que falten en las filas que escribe, pero conviene revisar el resto del rango.
+
+## Cambio de formato en el reporte de Maxinet (2026-10-08)
+
+El endpoint `json/clientes-nuevos-data.php` empezó a devolver 17 columnas: una columna de acciones al inicio (enlace "Editar" en algunos clientes creados por la web, vacía en el resto) seguida de las 16 de siempre, en el mismo orden. Las corridas del 8 al 12 de octubre fallaron con `16 columns passed, passed data had 17 columns`. Es el mismo tipo de cambio que sufrió el reporte de flota LP el 9 de octubre.
+
+Decisión: la primera columna se descarta cuando llega; cualquier otro ancho, anchos mezclados o columnas que no cuadren (ClientNo con HTML o CreationDate sin forma de fecha) detienen la corrida sin escribir en el Sheet, con un mensaje que lo explica. Las descargas reintentan con espera creciente si Maxinet corta la conexión. La recuperación del 7 al 11 de octubre se validó contra el archivo de Nuvia (mismo conteo por día) y las filas nuevas se escriben ordenadas por fecha de creación y ClientNo.
