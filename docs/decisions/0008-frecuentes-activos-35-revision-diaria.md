@@ -23,8 +23,19 @@ La pestaña "Clientes Frecuentes Activos 35" de la Base se alimenta del reporte 
 - Si el reporte trae menos de la mitad de las filas actuales, la corrida se detiene (probable respuesta incompleta).
 - Los No. Cliente con `$` se escriben como texto; los numéricos sin prefijo, como número, igual que en ENTREGAS. Con esto el XLOOKUP de NOMINA compara texto con texto en los IDs `$`.
 
+## Validación de la lógica contra el archivo de Nuvia (2026-10-16)
+
+El armado se validó reconstruyendo con este mismo código la semana que tenía Nuvia y comparándola celda por celda:
+
+- **Semana 189 (archivo actual de Nuvia):** mismas 780 filas, mismo orden y 26,504 de 26,520 celdas idénticas (99.94%). Todas las columnas `Sem 1..24`, No. Semanas Renta y Tipo CF coinciden. Las 16 celdas distintas (9 clientes) son Asesor y Tipo Persona vacíos en Nuvia y llenos hoy en Maxinet, y 2 Sucursal que cambiaron.
+- **Semana 183 (la copia antes de actualizarla):** mismos 781 clientes y 756 de 781 filas idénticas; las 52 celdas distintas son del mismo tipo (Asesor 19, Tipo Persona 19, Sucursal 9, Cumpleaños 5).
+- Esos datos de cliente cambian retroactivamente en Maxinet: las semanas 188, 190 y 192 muestran los mismos valores actuales, por lo que se corrigieron después del corte de Nuvia.
+- Estructura: encabezados A1:AL1, fórmula TIPO, formatos de número, dimensiones, tipo de dato de cada celda (fecha, número, texto), ID `$` como texto y los 4 comentarios manuales coinciden. La única diferencia estructural es que la fórmula TIPO en Nuvia termina en la fila 758 y la copia la tiene en todas las filas.
+- Cadencia de Nuvia: su pestaña pasó de la semana 183 (15-ago) a la 189 (12-sep), es decir, la refresca de forma irregular, aproximadamente una vez al mes y con la semana más reciente de ese momento. Eso respalda usar siempre la más reciente.
+- La copia automatizada contiene exactamente la semana 192: una segunda corrida reporta "sin cambios". Por lo tanto, toda diferencia contra el archivo de Nuvia es la diferencia entre las semanas 189 y 192 de Maxinet.
+
 ## Pendientes
 
-1. **Confirmar con Nuvia que la pestaña debe reflejar la semana más reciente.** Hoy su archivo tiene la semana 189; la copia automatizada tendrá la 192 y avanzará sola. La columna NOMINA de ENTREGAS cambiará respecto a su archivo (más clientes cambian de CO a CF o al revés).
+1. **Confirmar con Nuvia que la pestaña debe reflejar la semana más reciente.** Ella la actualiza aproximadamente una vez al mes; la copia automatizada se actualiza a diario. La columna NOMINA de ENTREGAS cambiará respecto a su archivo (más clientes cambian de CO a CF o al revés).
 2. **Comentarios de clientes que salen del reporte** se retiran con ellos (se registra cuántos). Decidir si deben archivarse.
-3. **"Sem 1" es la semana actual:** al cambiar de semana, todas las columnas Sem se recorren; es el comportamiento del reporte, no un error.
+3. **Significado de las columnas Sem.** Maxinet indica que "Sem 1 es la semana actual", pero los datos de semanas consecutivas no se explican con un simple recorrido de columnas (se probó y no se sostuvo). Para el armado no importa, porque se copia lo que entrega Maxinet; sí importa si algún día se quiere interpretar la columna.
