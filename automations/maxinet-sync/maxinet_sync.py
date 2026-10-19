@@ -922,44 +922,70 @@ def actualizar_periodo_resumen(worksheet) -> None:
     )
 
 
-# Cada bloque: (columna de fechas que se autoextiende sola vía
-# TRANSPOSE(UNIQUE(...)), columna donde empiezan las fórmulas por fila que
-# NO se autoextienden, columna donde terminan). Hay DOS bloques idénticos en
-# "RESUMEN", uno por cada tabla de "UTILIZACION POR GRUPO": Y:AP alimenta
-# "UTILIZACION COMERCIAL" (año + periodo + los 15 grupos de 'UTI. GRUPO DE
-# AUTOS V1' filas 84-99) y AS:BJ alimenta "UTILIZACION OPERATIVA" (mismas
-# 15 columnas de grupo pero filas 100-115) -- confirmado que ambos sufren el
-# mismo problema de arrastre manual. OJO: el rango debe cubrir las 15
-# columnas de grupo completas (Z:AP, no solo Z:AD) -- un primer intento se
-# quedó corto ahí y dejó sin fórmula las columnas E-P de "UTILIZACION POR
-# GRUPO" (PANEL en adelante) en las filas de la quincena en curso.
-BLOQUES_PIVOTE_RESUMEN = [
-    ("Y", "Z", "AP"),
-    ("AS", "AT", "BJ"),
-]
+# Bloques pivote de "RESUMEN": cada uno tiene una columna GUÍA de fechas que se
+# autoextiende sola (=TRANSPOSE(UNIQUE('UTI. GRUPO DE AUTOS V1'!2:2)) en la
+# fila 1) y, a su derecha, las fórmulas por fila (año, periodo y promedio por
+# grupo) que NO se autoextienden. Había dos bloques, uno por cada tabla de
+# "UTILIZACION POR GRUPO" (comercial: filas 84-99 de 'UTI. GRUPO DE AUTOS V1';
+# operativa: filas 100-115). Antes las letras estaban fijas (Y:AP y AS:BJ,
+# las del archivo de Nuvia); el 17-oct-2026 el RESUMEN del tablero se movió 3
+# columnas a la izquierda y el sync copió la fila 1 sobre ~650 filas,
+# pisando fórmulas de 14 modelos y creando copias de la guía. Ahora los
+# bloques se buscan por su fórmula guía y, además, nunca se escribe sobre
+# celdas con contenido ni se copia una fila de encabezados o una fórmula de
+# derrame.
+GUIA_PIVOTE_RESUMEN = "=TRANSPOSE(UNIQUE('UTI. GRUPO DE AUTOS V1'!2:2"
 
 
-def extender_formulas_resumen(worksheet) -> None:
+def _bloques_pivote_resumen(worksheet) -> list:
+    """[(col_guia, col_ini, col_fin), ...] de los bloques pivote de RESUMEN:
+    la guía es la celda de la fila 1 con GUIA_PIVOTE_RESUMEN y el bloque
+    cubre las columnas contiguas con algo en la fila 2 a su derecha."""
+    fila1 = worksheet.row_values(1, value_render_option="FORMULA")
+    fila2 = worksheet.row_values(2, value_render_option="FORMULA")
+    bloques = []
+    for g, x in enumerate(fila1):
+        if not str(x).startswith(GUIA_PIVOTE_RESUMEN):
+            continue
+        fin = g
+        while fin + 1 < len(fila2) and str(fila2[fin + 1]) != "":
+            fin += 1
+        if fin > g:
+            bloques.append((_indice_a_col_letra(g), _indice_a_col_letra(g + 1), _indice_a_col_letra(fin)))
+    return bloques
+
+
+def extender_formulas_resumen(worksheet, aplicar: bool = True) -> list:
     """Las columnas de fecha de los bloques pivote de 'RESUMEN' crecen solas
     cada día porque 'UTI. GRUPO DE AUTOS V1' avanza su calendario, pero las
     fórmulas de año/periodo/promedio por grupo que las acompañan NO se
     extienden solas -- confirmado: en el archivo original alguien las
-    arrastra hacia abajo a mano cada vez, en cada uno de los dos bloques. Se
-    automatiza copiando la fórmula de la última fila que ya la tiene hacia
-    las filas nuevas."""
+    arrastra hacia abajo a mano cada vez. Se automatiza copiando la fórmula
+    de la última fila que ya la tiene hacia las filas nuevas.
+
+    Seguridades (todas ellas se avisan en el log y no detienen el sync):
+    - los bloques se buscan por su fórmula guía, no por letras fijas;
+    - no se copia la fila 1 (encabezados) ni una fila con fórmulas de
+      derrame (TRANSPOSE/UNIQUE);
+    - sólo se pega en columnas cuyo destino está VACÍO: nunca se sobrescribe.
+    Devuelve las peticiones de copia (con aplicar=False no escribe)."""
     sheet_id = worksheet.id
     spreadsheet = worksheet.spreadsheet
     requests_body = []
 
-    for col_fecha, col_ini, col_fin in BLOQUES_PIVOTE_RESUMEN:
+    bloques = _bloques_pivote_resumen(worksheet)
+    if not bloques:
+        log.warning("RESUMEN: no encontré ninguna columna guía de fechas en la fila 1; no se extienden fórmulas")
+        return []
+
+    for col_fecha, col_ini, col_fin in bloques:
         idx_fecha = _col_letra_a_indice(col_fecha)
         col_fecha_vals = worksheet.col_values(idx_fecha + 1, value_render_option="UNFORMATTED_VALUE")
         ultima_fila_fecha = len(col_fecha_vals)
 
         # Se revisa la ÚLTIMA columna del bloque (col_fin), no la primera --
-        # si alguna vez el rango se copia incompleto (como pasó antes con
-        # Z:AD en vez de Z:AP), revisar solo la primera columna haría creer
-        # que el bloque completo ya está al día cuando no es cierto.
+        # si alguna vez el rango se copia incompleto, revisar solo la primera
+        # columna haría creer que el bloque completo ya está al día.
         col_formula = worksheet.get(f"{col_fin}1:{col_fin}{ultima_fila_fecha}", value_render_option="FORMULA")
         ultima_fila_formula = 0
         for i, fila in enumerate(col_formula, start=1):
@@ -969,31 +995,65 @@ def extender_formulas_resumen(worksheet) -> None:
         if ultima_fila_fecha <= ultima_fila_formula:
             log.info("RESUMEN: fórmulas %s:%s ya al día (fila %d)", col_ini, col_fin, ultima_fila_formula)
             continue
+        if ultima_fila_formula < 2:
+            log.warning(
+                "RESUMEN: bloque %s:%s sin filas con fórmula debajo de los encabezados; no se extiende "
+                "(copiaría la fila 1)", col_ini, col_fin,
+            )
+            continue
 
+        origen = worksheet.get(
+            f"{col_ini}{ultima_fila_formula}:{col_fin}{ultima_fila_formula}", value_render_option="FORMULA")
+        if any("TRANSPOSE(" in str(c) or "UNIQUE(" in str(c) for c in (origen[0] if origen else [])):
+            log.warning("RESUMEN: la fila %d del bloque %s:%s tiene fórmulas de derrame; no se extiende",
+                        ultima_fila_formula, col_ini, col_fin)
+            continue
+
+        # Sólo columnas cuyo destino está vacío (nunca se pisa contenido)
+        destino = worksheet.get(
+            f"{col_ini}{ultima_fila_formula + 1}:{col_fin}{ultima_fila_fecha}", value_render_option="FORMULA")
         idx_ini = _col_letra_a_indice(col_ini)
         idx_fin = _col_letra_a_indice(col_fin)
-        requests_body.append({
-            "copyPaste": {
-                "source": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
-                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
-                },
-                "destination": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila_fecha,
-                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
-                },
-                "pasteType": "PASTE_FORMULA",
-            }
-        })
+        libres = []
+        for c in range(idx_fin - idx_ini + 1):
+            vacia = all(str(fila[c]) == "" for fila in destino if c < len(fila))
+            libres.append(vacia)
+        omitidas = libres.count(False)
+        if omitidas:
+            log.info("RESUMEN: %d columnas del bloque %s:%s ya tienen contenido en las filas nuevas y no se tocan",
+                     omitidas, col_ini, col_fin)
+        c = 0
+        while c < len(libres):
+            if not libres[c]:
+                c += 1
+                continue
+            c_fin = c
+            while c_fin + 1 < len(libres) and libres[c_fin + 1]:
+                c_fin += 1
+            requests_body.append({
+                "copyPaste": {
+                    "source": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
+                        "startColumnIndex": idx_ini + c, "endColumnIndex": idx_ini + c_fin + 1,
+                    },
+                    "destination": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila_fecha,
+                        "startColumnIndex": idx_ini + c, "endColumnIndex": idx_ini + c_fin + 1,
+                    },
+                    "pasteType": "PASTE_FORMULA",
+                }
+            })
+            c = c_fin + 1
         log.info(
             "RESUMEN: fórmulas %s:%s extendidas de fila %d a %d",
             col_ini, col_fin, ultima_fila_formula, ultima_fila_fecha,
         )
 
-    if requests_body:
+    if requests_body and aplicar:
         spreadsheet.batch_update({"requests": requests_body})
+    return requests_body
 
 
 # "TABLAS": fuente de las gráficas de la presentación
