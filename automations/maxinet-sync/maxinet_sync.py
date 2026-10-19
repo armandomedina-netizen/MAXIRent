@@ -1195,6 +1195,45 @@ def actualizar_tablas(worksheet) -> None:
 FILA_INICIO_DETALLE_RENTAS = 14
 
 
+def formula_on_hire_desde_tarifa_detalle(id_query: str) -> str:
+    """Fórmula matricial de la lista ON HIRE de 'Duración rentas' (la misma
+    idea que usa Nuvia): una sola fórmula en la columna A que lee 'TARIFA
+    DETALLE' de la copia del Query y derrama las 14 columnas del detalle
+    (UNIFICADO, placa, PU, retorno, DIA, MES, status, cliente, ejecutivo,
+    grupo, modelo, periodo, tarifa diaria y mensual). Sin pestañas
+    intermedias en el tablero. Columnas de TARIFA DETALLE que usa: A placa,
+    E ejecutivo, F PU Date, G Return Date, K modelo, L grupo, O precio sin
+    IVA, P mensual, T cliente, U agrupado."""
+    url = f"https://docs.google.com/spreadsheets/d/{id_query}/edit"
+    return (
+        '=ARRAYFORMULA(LET('
+        f't,IMPORTRANGE("{url}","\'{HOJA_TARIFA_DETALLE}\'!A2:AA"),'
+        'r,FILTER(t,CHOOSECOLS(t,1)<>""),hoy,TODAY(),pu,CHOOSECOLS(r,6),dias,hoy-pu,'
+        '{CHOOSECOLS(r,21),CHOOSECOLS(r,1),pu,CHOOSECOLS(r,7),dias,dias/30,IF(pu<>"","ON HIRE",""),'
+        'CHOOSECOLS(r,20),CHOOSECOLS(r,5),CHOOSECOLS(r,12),CHOOSECOLS(r,11),'
+        'IF(pu<>"",EOMONTH(hoy,-1)+1,""),CHOOSECOLS(r,15),CHOOSECOLS(r,16)}))'
+    )
+
+
+def _localizar_on_hire(worksheet) -> tuple:
+    """(fila, modo) de la primera fila de la lista ON HIRE de 'Duración
+    rentas', o (None, None). Dos formas posibles:
+    - "matricial": una fórmula =ARRAYFORMULA(...) en la columna A que
+      derrama todas las columnas (diseño actual, lee TARIFA DETALLE);
+    - "por_fila": un =UNIQUE(...) en la columna B y una fórmula por fila en
+      las demás (diseño anterior). Con la matricial el sync NO escribe
+      debajo del ancla: pisaría el derrame."""
+    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:B", value_render_option="FORMULA")
+    for i, fila in enumerate(filas):
+        a = str(fila[0]) if fila else ""
+        b = str(fila[1]) if len(fila) > 1 else ""
+        if a.startswith("=ARRAYFORMULA(") and "ON HIRE" in a:
+            return FILA_PRIMER_DETALLE + i, "matricial"
+        if b.startswith("=UNIQUE("):
+            return FILA_PRIMER_DETALLE + i, "por_fila"
+    return None, None
+
+
 def avanzar_formula_dia_duracion_rentas(worksheet) -> None:
     """Ajusta la fórmula de la columna E ('DIA') de la tabla detalle según
     el Status de cada fila -- confirmado 1 a 1 contra las 3010 filas del
@@ -1212,6 +1251,10 @@ def avanzar_formula_dia_duracion_rentas(worksheet) -> None:
     valores_g = worksheet.get(f"G{FILA_INICIO_DETALLE_RENTAS}:G", value_render_option="UNFORMATTED_VALUE")
     valores_b = worksheet.get(f"B{FILA_INICIO_DETALLE_RENTAS}:B", value_render_option="UNFORMATTED_VALUE")
     total_filas = max(len(formulas_e), len(valores_g), len(valores_b))
+    fila_on_hire, modo_on_hire = _localizar_on_hire(worksheet)
+    if modo_on_hire == "matricial":
+        # DIA de las filas ON HIRE ya lo calcula la fórmula matricial (hoy - PU)
+        total_filas = min(total_filas, fila_on_hire - FILA_INICIO_DETALLE_RENTAS)
 
     nuevas_e = []
     cambios = 0
@@ -1261,6 +1304,9 @@ def _avanzar_periodo_on_hire(worksheet, hoy: date) -> None:
     mes en curso no encuentra ninguna fila y da error de división por
     cero. Se corre TODOS los días (no solo al cambiar de mes) para que las
     rentas nuevas que Nuvia agrega a mitad de mes también cuenten."""
+    if _localizar_on_hire(worksheet)[1] == "matricial":
+        log.info("Duración rentas: PERIODO de filas ON HIRE lo calcula la fórmula matricial")
+        return
     ancla_mes_actual = date(hoy.year, hoy.month, 1)
     serial_mes_actual = (ancla_mes_actual - EPOCH_SHEETS).days
 
@@ -1536,15 +1582,12 @@ def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy
     libro = worksheet.spreadsheet
     historial = _actualizar_historial_activas(libro, hoy)
 
-    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:N", value_render_option="FORMULA")
-    fila_on_hire = None
-    for i, fila in enumerate(filas):
-        if len(fila) > 1 and str(fila[1]).startswith("=UNIQUE("):
-            fila_on_hire = i
-            break
-    if fila_on_hire is None:
-        log.warning("Duración rentas: no encontré la fila ON HIRE (=UNIQUE) -- no se agregan devoluciones")
+    fila_ancla, _ = _localizar_on_hire(worksheet)
+    if fila_ancla is None:
+        log.warning("Duración rentas: no encontré la fila ON HIRE (fórmula matricial en A o =UNIQUE en B) -- no se agregan devoluciones")
         return []
+    fila_on_hire = fila_ancla - FILA_PRIMER_DETALLE
+    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:N{fila_ancla - 1}", value_render_option="FORMULA")
 
     existentes = [list(f) + [""] * (14 - len(f)) for f in filas[:fila_on_hire]]
     claves = set()
@@ -1626,13 +1669,17 @@ def asegurar_formulas_on_hire_duracion_rentas(worksheet) -> None:
     """Las filas ON HIRE salen de un UNIQUE que se derrama desde la columna B
     y las demás columnas llevan una fórmula por fila que Nuvia arrastra a
     mano. Extiende esas fórmulas hasta el final de la lista + holgura."""
-    columna_b = worksheet.get(f"B{FILA_PRIMER_DETALLE}:B", value_render_option="FORMULA")
-    fila_on_hire = None
-    for i, fila in enumerate(columna_b):
-        if fila and str(fila[0]).startswith("=UNIQUE("):
-            fila_on_hire = FILA_PRIMER_DETALLE + i
-            break
+    fila_on_hire, modo = _localizar_on_hire(worksheet)
     if fila_on_hire is None:
+        log.warning("Duración rentas: no encontré la lista ON HIRE (fórmula matricial en A o =UNIQUE en B)")
+        return
+    if modo == "matricial":
+        ancla = worksheet.get(f"A{fila_on_hire}", value_render_option="UNFORMATTED_VALUE")
+        valor = ancla[0][0] if ancla and ancla[0] else ""
+        if isinstance(valor, str) and valor in ERRORES_SHEETS:
+            log.warning("Duración rentas: la fórmula matricial de la lista ON HIRE da error (%s)", valor)
+        else:
+            log.info("Duración rentas: lista ON HIRE como fórmula matricial; no hay nada que extender")
         return
     valores_b = worksheet.get(f"B{fila_on_hire}:B", value_render_option="UNFORMATTED_VALUE")
     activas = 0
