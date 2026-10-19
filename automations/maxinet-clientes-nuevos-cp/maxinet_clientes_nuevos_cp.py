@@ -16,9 +16,14 @@ Endpoint confirmado a partir del JS real de Maxinet
             SUB_TOTAL llega numérico en texto ("1409.48"); el "$ " del
             navegador lo agrega el render de DataTables, no el servidor.
 
-Regla de fechas ("día vencido", decidida por el usuario): se consulta
-Desde = ayer, Hasta = hoy (hora Ciudad de México). Ej.: el 29 se consulta del
-28 al 29 y el servidor devuelve los clientes creados el 28.
+Regla de fechas (decidida por el usuario): el filtro es el mes corriente, igual
+que el que trae el formulario por defecto: Desde = primer día del mes, Hasta =
+hoy (hora Ciudad de México). Cada corrida lee todo el mes y agrega sólo lo que
+todavía no está en el Sheet, así que también recoge a los clientes que Maxinet
+registra con días de retraso. Los primeros 3 días del mes se incluye además el
+mes anterior (un cliente creado el último día del mes se importa al día
+siguiente). Los clientes de hoy se agregan con lo que haya a esa hora y los que
+falten se completan en la corrida siguiente.
 
 Estructura de la pestaña destino (confirmada contra el Sheet real):
     - Columna A (PERIODO) y columnas R:V (TIPO DE CLIENTE, RECLASIFICADO, año,
@@ -51,7 +56,7 @@ import sys
 import re
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import requests
@@ -80,6 +85,7 @@ COL_CLAVE = 2        # B: ClientNo, define la "última fila con datos"
 COL_BOOKING = 6      # F: BookingNo, para no duplicar
 FILA_INICIO_DATOS = 2
 ZONA = ZoneInfo("America/Mexico_City")
+DIAS_MES_ANTERIOR = 3   # los primeros días del mes se incluye también el mes anterior (ver rango_fechas)
 TIMEOUT_SEG = 90
 REINTENTOS = 5
 FECHA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -125,10 +131,18 @@ def login_maxinet() -> requests.Session:
 
 
 def rango_fechas() -> tuple[str, str]:
-    """Día vencido: ayer -> hoy en hora CDMX (o el override de entorno)."""
+    """Mes corriente: del primer día del mes a hoy (hora CDMX), o el override de entorno.
+
+    Los primeros DIAS_MES_ANTERIOR días del mes se arranca desde el primer día del mes
+    anterior: un cliente creado el último día de un mes se importa a Maxinet al día
+    siguiente y, sin esto, quedaría fuera de la ventana para siempre."""
     hoy = datetime.now(ZONA).date()
-    desde = os.environ.get("FECHA_DESDE") or (hoy - timedelta(days=1)).strftime("%Y-%m-%d")
-    hasta = os.environ.get("FECHA_HASTA") or hoy.strftime("%Y-%m-%d")
+    hasta = os.environ.get("FECHA_HASTA") or hoy.isoformat()
+    h = date.fromisoformat(hasta)
+    inicio = h.replace(day=1)
+    if h.day <= DIAS_MES_ANTERIOR:
+        inicio = (inicio - timedelta(days=1)).replace(day=1)
+    desde = os.environ.get("FECHA_DESDE") or inicio.isoformat()
     return desde, hasta
 
 
@@ -194,7 +208,8 @@ def conectar_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
-    nombre = os.environ.get("WORKSHEET_CLIENTES_NUEVOS_NAME") or "Reporte Generales Clientes Nuevo"
+    # Un secret pegado con comillas o espacios no debe romper el nombre de la pestaña
+    nombre = (os.environ.get("WORKSHEET_CLIENTES_NUEVOS_NAME") or "").strip().strip("\"'").strip() or "Reporte Generales Clientes Nuevo"
     return sh.worksheet(nombre)
 
 
@@ -277,6 +292,15 @@ def agregar_filas_nuevas(worksheet, df: pd.DataFrame) -> int:
     if df_nuevos.empty:
         log.info("No hay filas nuevas que agregar.")
         return 0
+
+    # Clientes con fecha de creación anterior al último registro: llegaron tarde a
+    # Maxinet. Se agregan igual (no se pierden), debajo del último registro.
+    ult = worksheet.get(f"C{ultima_fila}", value_render_option="UNFORMATTED_VALUE")
+    if ult and ult[0] and isinstance(ult[0][0], (int, float)):
+        ult_fecha = (date(1899, 12, 30) + timedelta(days=int(ult[0][0]))).isoformat()
+        tarde = int((df_nuevos["CreationDate"] < ult_fecha).sum())
+        if tarde:
+            log.warning("Clientes que llegaron tarde a Maxinet (creados antes de %s): %d; se agregan al final.", ult_fecha, tarde)
 
     # Mismo orden que ya tiene el Sheet: fecha de creación y luego ClientNo
     # (Maxinet entrega por ClientNo, que no sigue la fecha de creación).
