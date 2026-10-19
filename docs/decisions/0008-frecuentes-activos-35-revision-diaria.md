@@ -17,7 +17,8 @@ La pestaña "Clientes Frecuentes Activos 35" de la Base se alimenta del reporte 
 
 ## Decisión
 
-- Cada corrida consulta la semana más reciente del selector, la compara con la pestaña y, si hay cualquier cambio (altas, bajas, asesor, tipo, semanas), reemplaza el bloque A:AH con la información actual de Maxinet. Sin cambios no escribe. El log resume altas, bajas y celdas distintas por columna. Corre a las 9:45 AM CDMX.
+- **La copia muestra lo mismo que el archivo original (modo espejo, por defecto).** Cada corrida lee la pestaña del archivo original (sólo lectura), identifica qué semana de Maxinet contiene (mismos clientes y mismas columnas de semanas; el asesor, la sucursal y demás datos del cliente se ignoran para identificarla porque Maxinet los corrige después en todas las semanas) y carga esa misma semana. Primero revisa la semana anotada en la corrida anterior (una consulta de ~100 s); si el original se actualizó y ya no coincide, revisa en paralelo las 8 semanas más recientes y, si ninguna coincide, no escribe. La semana cargada se anota en una celda bajo el enlace del encabezado ("Semana cargada: 189 (2026-09-12)"). `MODO_SEMANA=ultima` carga la semana más reciente (para cuando la automatización sustituya al proceso manual) y `PERIODO=<id>` fija una semana.
+- Cada corrida compara esa semana con la pestaña y, si hay cualquier cambio (altas, bajas, asesor, tipo, semanas), reemplaza el bloque A:AH con la información actual de Maxinet. Sin cambios no escribe. El log resume altas, bajas y celdas distintas por columna. Corre a las 9:45 AM CDMX.
 - Las columnas se leen de la tabla de la página. Si aparece "Sem 25" (y siguientes) se inserta la columna antes de "Comentario" y se escribe su encabezado; las columnas manuales se recorren a la derecha (probado y revertido sobre la copia). Si Maxinet quita o renombra columnas, la corrida se detiene sin escribir.
 - Se conservan los comentarios manuales por No. Cliente, la fórmula TIPO (se completa en todas las filas con datos) y el enlace del encabezado.
 - Si el reporte trae menos de la mitad de las filas actuales, la corrida se detiene (probable respuesta incompleta).
@@ -36,6 +37,8 @@ El armado se validó reconstruyendo con este mismo código la semana que tenía 
 
 ## Pendientes
 
-1. **Confirmar con Nuvia que la pestaña debe reflejar la semana más reciente.** Ella la actualiza aproximadamente una vez al mes; la copia automatizada se actualiza a diario. La columna NOMINA de ENTREGAS cambiará respecto a su archivo (más clientes cambian de CO a CF o al revés).
-2. **Comentarios de clientes que salen del reporte** se retiran con ellos (se registra cuántos). Decidir si deben archivarse.
-3. **Significado de las columnas Sem.** Maxinet indica que "Sem 1 es la semana actual", pero los datos de semanas consecutivas no se explican con un simple recorrido de columnas (se probó y no se sostuvo). Para el armado no importa, porque se copia lo que entrega Maxinet; sí importa si algún día se quiere interpretar la columna.
+1. **Cambiar a `MODO_SEMANA=ultima`** cuando la automatización sustituya al proceso manual de Nuvia (ella actualiza la pestaña aproximadamente una vez al mes). Con ese modo la columna NOMINA de ENTREGAS cambiaría respecto a su archivo.
+2. **Diferencias que quedan frente al archivo de Nuvia (semana 189):** 16 celdas (Asesor y Tipo Persona vacíos en su archivo y llenos en Maxinet, y 2 Sucursal corregidas) y la fórmula TIPO, que en su archivo falta en 24 filas. Se conservan los valores actuales de Maxinet; confirmar con Nuvia.
+3. **Primera búsqueda lenta.** Cuando el original se actualiza, la búsqueda en paralelo de 8 semanas tardó ~8 minutos (cada consulta de Maxinet es pesada).
+4. **Comentarios de clientes que salen del reporte** se retiran con ellos (se registra cuántos). Decidir si deben archivarse.
+5. **Significado de las columnas Sem.** Maxinet indica que "Sem 1 es la semana actual", pero los datos de semanas consecutivas no se explican con un simple recorrido de columnas (se probó y no se sostuvo). Para el armado no importa, porque se copia lo que entrega Maxinet; sí importa si algún día se quiere interpretar la columna.
