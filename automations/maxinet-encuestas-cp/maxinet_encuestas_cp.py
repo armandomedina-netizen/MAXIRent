@@ -44,6 +44,10 @@ del momento: por ejemplo "Enc. Respondidas" cambia después en Maxinet).
 IDs: los que empiezan con "$" se escriben como texto (ver ADR 0007); los numéricos
 sin prefijo se escriben como número, igual que en el resto del Sheet.
 
+Texto: los saltos de línea de los comentarios se convierten en espacios (como en el archivo
+de Nuvia, que pega desde la página web): un salto dentro de una celda agranda la fila y
+estorba filtros, búsquedas y exportaciones.
+
 NUNCA se usa append_rows(): la fila destino se calcula (última fila con Fecha + 1)
 y se escribe con update(). Si hace falta se agregan filas a la hoja.
 
@@ -151,10 +155,13 @@ def encabezados_pagina(html: str) -> list[str]:
 
 
 def _limpiar(v):
+    """Quita el HTML y convierte los saltos de línea en espacios (como queda en el archivo de Nuvia, que
+    pega desde la página): un salto dentro de una celda agranda la fila y estorba filtros, búsquedas y
+    exportaciones."""
     if v is None:
         return ""
     if isinstance(v, str):
-        return re.sub(r"<[^>]+>", "", v).strip()
+        return re.sub(r"\r\n|\r|\n", " ", re.sub(r"<[^>]+>", "", v)).strip()
     return v
 
 

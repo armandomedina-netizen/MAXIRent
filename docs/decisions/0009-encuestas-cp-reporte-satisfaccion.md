@@ -23,14 +23,13 @@ La pestaña ENCUESTAS de la Base (copia de "h encuestas") se alimenta del report
 - Sólo se agrega lo que falta, en el orden descrito. Las encuestas ya pegadas no se modifican. Las que llegan con fecha anterior al último registro se agregan al final y se avisa en el log.
 - Para las reservas con `$` se usa además (Fecha resp., Placa, Cliente) para reconocer registros ya presentes con el ID dañado; no se usa para las demás.
 - Los IDs con `$` se escriben como texto. Se agregan filas a la hoja si hacen falta y se copian las fórmulas de A:B y el formato de C:Z.
-- El texto se conserva como lo entrega Maxinet, incluidos los saltos de línea; en el archivo de Nuvia (que pega desde la página web) los saltos de línea se vuelven espacios.
+- Los saltos de línea de los comentarios se convierten en espacios, como queda en el archivo de Nuvia (que pega desde la página web). Un salto dentro de una celda agranda la fila y estorba filtros, búsquedas, exportaciones y fórmulas de texto; el original sigue intacto en Maxinet. Decidido el 2026-10-19.
 
 ## Resultado de la recuperación (2026-10-19)
 
-Se agregaron 160 encuestas del 29-sep al 19-oct (`C923:Z1082`). El mes corriente tiene 142 encuestas, la misma cifra que muestra Maxinet. Frente al archivo de Nuvia: mismas encuestas por día (salvo las 5 de hoy, que ella aún no pega), mismo orden y mismos tipos de dato. Las diferencias son 7 comentarios con salto de línea, 5 valores de "Enc. Respondidas" de filas anteriores al 29-sep que Nuvia actualizó después, y 1 ID con `$` dañado en su archivo.
+Se agregaron 160 encuestas del 29-sep al 19-oct (`C923:Z1082`). El mes corriente tiene 142 encuestas, la misma cifra que muestra Maxinet. Frente al archivo de Nuvia: mismas encuestas por día (salvo las 5 de hoy, que ella aún no pega), mismo orden y mismos tipos de dato. Las diferencias son 5 valores de "Enc. Respondidas" de filas anteriores al 29-sep que Nuvia actualizó después, y 1 ID con `$` dañado en su archivo.
 
 ## Pendientes
 
-1. Decidir si los saltos de línea de los comentarios deben convertirse en espacios, como queda en el archivo de Nuvia.
-2. Decidir si el Tablero copia debe leer esta pestaña en lugar de los archivos originales de Nuvia.
-3. El Sheet guarda la foto del momento: columnas como "Enc. Respondidas" (acumulado por cliente) se actualizan después en Maxinet y Nuvia las refresca de forma manual en filas anteriores.
+1. El Tablero copia lee ahora esta pestaña (ver ADR 0010).
+2. El Sheet guarda la foto del momento: columnas como "Enc. Respondidas" (acumulado por cliente) se actualizan después en Maxinet y Nuvia las refresca de forma manual en filas anteriores.
