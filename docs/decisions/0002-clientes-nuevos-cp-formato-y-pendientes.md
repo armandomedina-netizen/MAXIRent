@@ -15,7 +15,7 @@ Se conserva el formato de Nuvia tal cual, incluso donde tiene defectos conocidos
 
 1. **IDs con `$` dañados por formato de moneda.** Algunos ClientNo/BookingNo de Maxinet empiezan con `$` (ej. `$123456A`). Al pegarlos, Sheets los interpretó como moneda: se pierde el prefijo y las letras finales, y quedan como número con formato `#,##0.00"$"` (ej. `123,456.00$`). Hay 4 filas afectadas (6 celdas) en B y F. Se dejaron como las tenía Nuvia. Riesgo: pérdida de información y posibles colisiones de ID. Mejora propuesta: guardar esas columnas como texto y corregir los históricos con el valor de Maxinet.
 2. **Script y IDs con `$`.** Para filas nuevas el script escribe los IDs que empiezan con `$` como texto (no como moneda). Es intencional para no perder datos, pero difiere del formato histórico. Confirmar con Nuvia.
-3. **Clientes que entran tarde a Maxinet.** El reporte consulta ayer → hoy y omite clientes registrados con días de retraso (caso real: un cliente de fin de julio con DateImport del 4-ago que nunca se pegó). Mejora propuesta: ventana móvil de ~7 días (el control de repetidos evita duplicar) o auditoría semanal que avise de faltantes.
+3. **Clientes que entran tarde a Maxinet.** (Resuelto el 2026-10-19: el filtro pasó a ser el mes corriente; ver abajo.) El reporte consultaba ayer → hoy y omite clientes registrados con días de retraso (caso real: un cliente de fin de julio con DateImport del 4-ago que nunca se pegó). Mejora propuesta: ventana móvil de ~7 días (el control de repetidos evita duplicar) o auditoría semanal que avise de faltantes.
 4. **Registro faltante histórico.** Un cliente de julio existe en Maxinet y no en el Sheet original; decidir con Nuvia si se agrega y dónde (al final o en su fecha).
 5. **Orden de filas fuera de fecha.** Definir si los rezagados van al final o se insertan en su fecha.
 
@@ -32,3 +32,13 @@ Automatización en `automations/maxinet-clientes-potenciales-cp`. Pendientes par
 6. **Cliente faltante histórico (enero).** Maxinet lista un cliente en el periodo 01/2026 que no está en el Sheet. No se agregó (el reporte diario solo consulta el mes en curso y, la primera semana del mes, el anterior). Confirmar si se omitió a propósito.
 7. **Registros ya pegados no se actualizan.** Maxinet cambia el No. Rentas y la Fecha Última Renta de un cliente con el tiempo; el Sheet conserva el valor del momento en que se pegó, igual que el proceso manual.
 8. **Fórmulas pre-arrastradas incompletas.** Las fórmulas de A y J:M llegan hasta la fila ~2511 con huecos después; el script copia las que falten en las filas que escribe, pero conviene revisar el resto del rango.
+
+## Cambio de formato en el reporte de Maxinet (2026-10-08)
+
+El endpoint `json/clientes-nuevos-data.php` empezó a devolver 17 columnas: una columna de acciones al inicio (enlace "Editar" en algunos clientes creados por la web, vacía en el resto) seguida de las 16 de siempre, en el mismo orden. Las corridas del 8 al 12 de octubre fallaron con `16 columns passed, passed data had 17 columns`. Es el mismo tipo de cambio que sufrió el reporte de flota LP el 9 de octubre.
+
+Decisión: la primera columna se descarta cuando llega; cualquier otro ancho, anchos mezclados o columnas que no cuadren (ClientNo con HTML o CreationDate sin forma de fecha) detienen la corrida sin escribir en el Sheet, con un mensaje que lo explica. Las descargas reintentan con espera creciente si Maxinet corta la conexión. La recuperación del 7 al 11 de octubre se validó contra el archivo de Nuvia (mismo conteo por día) y las filas nuevas se escriben ordenadas por fecha de creación y ClientNo.
+
+## Filtro: mes corriente (2026-10-19)
+
+El filtro de la consulta es el mismo que trae el formulario de Maxinet por defecto: del primer día del mes a hoy (hora CDMX). Cada corrida lee todo el mes y agrega, debajo del último registro y ordenados por fecha de creación y ClientNo, sólo los clientes que todavía no están en el Sheet (por ClientNo, BookingNo o Nombre + fecha + placa). Con esto se recogen también los clientes que Maxinet registra con días de retraso, que con la ventana de un día se perdían. Los primeros 3 días del mes se incluye además el mes anterior, porque un cliente creado el último día del mes se importa al día siguiente. Los clientes de hoy se agregan con lo que haya a esa hora y los que falten se completan en la corrida siguiente. Los clientes que llegan tarde (creados antes del último registro) se agregan al final y se avisa cuántos en el log. Los registros ya pegados no se modifican.
