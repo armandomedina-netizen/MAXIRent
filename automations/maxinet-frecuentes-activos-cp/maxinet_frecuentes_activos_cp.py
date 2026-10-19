@@ -12,7 +12,7 @@ Endpoint confirmado a partir del HTML/JS reales de Maxinet
             ("Editar") al inicio, las columnas de datos y "Comentario" al final.
     Encabezados: salen de la tabla de la página (se ignoran los comentarios
     HTML, p. ej. "Facturación 2 meses", que no se muestra).
-    Semana: por defecto la MISMA que tiene el archivo original (modo espejo, ver abajo).
+    Semana: la de fecha más reciente del selector "Semana" (Periodo).
 
 Qué es esta pestaña: una foto COMPLETA del reporte de UNA semana, no un historial.
 Cada corrida compara esa semana contra el Sheet y, si hay cualquier cambio,
@@ -20,19 +20,11 @@ REEMPLAZA el bloque de datos con la información actual de Maxinet (alta y baja 
 clientes, cambios de asesor/tipo y las semanas). Si no hay cambios no escribe
 nada. El log resume qué cambió.
 
-Qué semana (la copia debe mostrar lo mismo que el archivo original):
-    - Modo espejo (por defecto): se lee la pestaña del archivo original (sólo
-      lectura, SPREADSHEET_ID_ORIGEN) y se identifica qué semana de Maxinet
-      contiene (mismos clientes y mismas columnas de semanas; el asesor, la
-      sucursal y demás datos del cliente se ignoran porque Maxinet los corrige
-      después en todas las semanas). Primero se revisa la semana cargada la vez
-      anterior (una consulta) y, si el original se actualizó, se revisan en
-      paralelo las 8 semanas más recientes. Si ninguna coincide, no se escribe.
-    - MODO_SEMANA=ultima: la semana más reciente del selector (para cuando la
-      automatización sustituya al proceso manual).
-    - PERIODO=<id>: semana fija (pruebas).
-    La semana cargada queda anotada en una celda bajo el enlace del encabezado
-    ("Semana cargada: 189 (2026-09-12)"); es la memoria del modo espejo.
+Qué semana: siempre la MÁS RECIENTE del selector "Semana". La copia es un archivo
+independiente del original (el de Nuvia, que ella pega a mano más o menos una vez al
+mes): puede ir más adelantada que él y eso es correcto. La semana cargada queda anotada
+en una celda bajo el enlace del encabezado ("Semana cargada: 193 (2026-10-10)") para saber
+a qué corte corresponde la hoja. PERIODO=<id> fija una semana (pruebas).
 
 Columnas: A:AH hoy (Sucursal ... Sem 24). El reporte crece por semanas: si
 Maxinet agrega "Sem 25", se inserta la columna antes de "Comentario" (las
@@ -57,8 +49,7 @@ corrida se detiene (probable respuesta incompleta); FORZAR=1 la omite.
 Variables de entorno (ver .env.example):
     MAXINET_BASE_URL, MAXINET_USER, MAXINET_PASS, GOOGLE_CREDS_PATH,
     SPREADSHEET_ID_CLIENTES_NUEVOS (mismo Sheet "Base"),
-    SPREADSHEET_ID_ORIGEN (modo espejo), WORKSHEET_FRECUENTES_NAME,
-    WORKSHEET_FRECUENTES_ORIGEN_NAME, MODO_SEMANA, PERIODO, DRY_RUN, FORZAR (opcionales)
+    WORKSHEET_FRECUENTES_NAME, PERIODO, DRY_RUN, FORZAR (opcionales)
 """
 
 import os
@@ -67,7 +58,6 @@ import sys
 import json
 import logging
 import datetime as dt
-import concurrent.futures as cf
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -95,9 +85,6 @@ REINTENTOS = 3
 BASE_SERIAL = dt.date(1899, 12, 30)
 CHUNK = 500
 NOTA_RE = re.compile(r"^Semana cargada:\s*(\d+)\s*\((\d{4}-\d{2}-\d{2})\)")
-SEMANAS_BUSQUEDA = 8           # cuántas semanas recientes se revisan para ubicar la del original
-UMBRAL_CLIENTES = 0.98         # coincidencia mínima de clientes para dar por buena una semana
-UMBRAL_SEMANAS = 0.99          # coincidencia mínima de las columnas de semanas
 
 
 # ---------------------------------------------------------------- Maxinet
@@ -218,51 +205,6 @@ def descargar_semana(periodo: str, n_datos: int) -> list[list]:
     return unicas
 
 
-def parecido_con_referencia(ref: list[list], filas: list[list]) -> tuple[float, float]:
-    """(coincidencia de clientes, coincidencia de las columnas de semanas) entre la pestaña del
-    archivo original y una semana de Maxinet. Los datos del cliente (asesor, sucursal...) se
-    ignoran a propósito: Maxinet los corrige con el tiempo en todas las semanas."""
-    r = {_norm_id(x[IDX_CLIENTE]): x for x in ref}
-    w = {_norm_id(x[IDX_CLIENTE]): x for x in filas}
-    comunes = set(r) & set(w)
-    clientes = len(comunes) / max(len(r), len(w), 1)
-    celdas = [r[k][j] == w[k][j] for k in comunes for j in range(IDX_NUMERICAS_DESDE, min(len(r[k]), len(w[k])))]
-    return clientes, (sum(celdas) / len(celdas) if celdas else 0.0)
-
-
-def _es_buena(puntaje: tuple[float, float]) -> bool:
-    return puntaje[0] >= UMBRAL_CLIENTES and puntaje[1] >= UMBRAL_SEMANAS
-
-
-def semana_del_original(semanas: list[tuple[str, str]], n_datos: int, ref: list[list], previa: tuple[str, str] | None,
-                        descargar=descargar_semana):
-    """Ubica qué semana de Maxinet contiene hoy la pestaña del archivo original.
-    Primero revisa la semana cargada la vez anterior (una sola consulta); si ya no coincide
-    porque el original se actualizó, revisa en paralelo las semanas más recientes."""
-    etiquetas = dict(semanas)
-    ids_por_fecha = [i for i, f in sorted(semanas, key=lambda x: x[1], reverse=True)]
-    if previa and previa[0] in etiquetas:
-        filas = descargar(previa[0], n_datos)
-        p = parecido_con_referencia(ref, filas)
-        log.info("Semana cargada la vez anterior (%s): clientes %.1f%%, semanas %.1f%%", previa[0], 100 * p[0], 100 * p[1])
-        if _es_buena(p):
-            return previa[0], etiquetas[previa[0]], filas
-    candidatas = [i for i in ids_por_fecha if not previa or i != previa[0]][:SEMANAS_BUSQUEDA]
-    log.info("Se busca la semana del original entre las %d más recientes: %s", len(candidatas), candidatas)
-    with cf.ThreadPoolExecutor(min(8, len(candidatas) or 1)) as ex:
-        resultados = list(zip(candidatas, ex.map(lambda i: descargar(i, n_datos), candidatas)))
-    puntos = [(parecido_con_referencia(ref, filas), i, filas) for i, filas in resultados]
-    for p, i, _ in sorted(puntos, key=lambda x: x[1], reverse=True):
-        log.info("  semana %s (%s): clientes %.1f%%, semanas %.1f%%", i, etiquetas[i], 100 * p[0], 100 * p[1])
-    buenas = [x for x in puntos if _es_buena(x[0])]
-    if not buenas:
-        raise RuntimeError("No se identificó qué semana de Maxinet tiene el archivo original entre las "
-                           f"{len(candidatas)} más recientes (el original podría ser más antiguo). No se escribió nada. "
-                           "Use PERIODO=<id> para fijar la semana.")
-    p, i, filas = max(buenas, key=lambda x: (x[0][1], x[0][0]))
-    return i, etiquetas[i], filas
-
-
 # ------------------------------------------------------------------ Sheet
 def _norm_id(v) -> str:
     if isinstance(v, float) and v == int(v):
@@ -306,22 +248,6 @@ def _nombre_pestana(var: str) -> str:
 
 def conectar_sheet():
     return _cliente().open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"]).worksheet(_nombre_pestana("WORKSHEET_FRECUENTES_NAME"))
-
-
-def conectar_original():
-    """Pestaña del archivo original (el de Nuvia). Sólo se LEE."""
-    id_origen = os.environ.get("SPREADSHEET_ID_ORIGEN")
-    if not id_origen:
-        raise RuntimeError("Falta SPREADSHEET_ID_ORIGEN (ID del archivo original) para el modo espejo. "
-                           "Defínalo, o use MODO_SEMANA=ultima / PERIODO=<id> para no depender del original.")
-    return _cliente().open_by_key(id_origen).worksheet(_nombre_pestana("WORKSHEET_FRECUENTES_ORIGEN_NAME"))
-
-
-def leer_original(ws_origen) -> list[list]:
-    """Filas de datos del original, en la misma forma normalizada que Maxinet."""
-    est = estructura_hoja(ws_origen)
-    filas, _, _ = leer_hoja(ws_origen, est)
-    return [f[:est["n_datos"]] for f in filas]
 
 
 # Registro de la semana cargada: una celda de texto bajo el enlace del encabezado (columna "http...").
@@ -532,33 +458,24 @@ def sincronizar(ws, datos_mx: list[str], filas_mx: list[list], periodo: str, eti
     return True
 
 
-def elegir_semana(ws):
-    """(datos, filas, periodo, etiqueta) según el modo:
-       - PERIODO=<id>:           semana fija (pruebas).
-       - MODO_SEMANA=ultima:     la semana más reciente del selector.
-       - por defecto (espejo):   la semana que tiene hoy el archivo original."""
+def elegir_semana():
+    """(datos, filas, periodo, etiqueta): la semana más reciente del selector, o la fija PERIODO=<id> (pruebas)."""
     datos, semanas = info_maxinet()
     etiquetas = dict(semanas)
-    fija = os.environ.get("PERIODO")
-    if fija:
-        log.info("Modo semana fija: Periodo=%s", fija)
-        return datos, descargar_semana(fija, len(datos)), fija, etiquetas.get(fija, "?")
-    if (os.environ.get("MODO_SEMANA") or "espejo").lower() == "ultima":
+    periodo = os.environ.get("PERIODO")
+    if periodo:
+        etiqueta = etiquetas.get(periodo, "?")
+        log.info("Semana fija: Periodo=%s (%s)", periodo, etiqueta)
+    else:
         periodo, etiqueta = semana_mas_reciente(semanas)
-        log.info("Modo última semana: Periodo=%s (%s)", periodo, etiqueta)
-        return datos, descargar_semana(periodo, len(datos)), periodo, etiqueta
-    log.info("Modo espejo: se carga la misma semana que tiene el archivo original.")
-    ref = leer_original(conectar_original())
-    log.info("Archivo original: %d clientes.", len(ref))
-    periodo, etiqueta, filas = semana_del_original(semanas, len(datos), ref, leer_estado(ws))
-    log.info("Semana del original: Periodo=%s (%s)", periodo, etiqueta)
-    return datos, filas, periodo, etiqueta
+        log.info("Semana más reciente: Periodo=%s (%s)", periodo, etiqueta)
+    return datos, descargar_semana(periodo, len(datos)), periodo, etiqueta
 
 
 def main():
     try:
         ws = conectar_sheet()
-        datos, filas, periodo, etiqueta = elegir_semana(ws)
+        datos, filas, periodo, etiqueta = elegir_semana()
         cambio = sincronizar(ws, datos, filas, periodo, etiqueta)
         if cambio:
             validar_sin_repetidos(ws)

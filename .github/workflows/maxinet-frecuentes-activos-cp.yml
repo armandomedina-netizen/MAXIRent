@@ -36,5 +36,4 @@ jobs:
           GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-frecuentes-activos-cp/google-creds.json
           SPREADSHEET_ID_CLIENTES_NUEVOS: ${{ secrets.SPREADSHEET_ID_CLIENTES_NUEVOS }}
           WORKSHEET_FRECUENTES_NAME: ${{ secrets.WORKSHEET_FRECUENTES_NAME }}
-          SPREADSHEET_ID_ORIGEN: ${{ secrets.SPREADSHEET_ID_ORIGEN_BASE }}
         run: python maxinet_frecuentes_activos_cp.py
