@@ -192,19 +192,42 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     return df
 
 
-def _obtener_clientes_rentas_lp() -> set:
-    """Lee la columna T ('CLIENTES') de la pestaña 'Rentas activas detalle'
-    (segundo archivo de Sheets) para diferenciar EN RENTA CLIENTE LP vs CP
-    al reclasificar filas con Segmento 'OTROS' (confirmado con el equipo)."""
+def _leer_tarifa_detalle(rango: str = "A:U") -> list:
+    """Filas de datos (sin el encabezado) de 'TARIFA DETALLE' en la copia del
+    Query (REPORTE TARIFA), que es de donde sale hoy la lista de rentas
+    activas (antes se leía de la pestaña 'Rentas activas detalle' del
+    tablero, una importación de esa misma pestaña). Se valida que las
+    columnas que usa el sync sigan en su lugar: si alguien las mueve, el
+    sync se detiene con un mensaje claro en vez de leer datos corridos."""
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"],
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     gc = gspread.authorize(creds)
-    sh = gc.open_by_key(os.environ["SPREADSHEET_ID_SECUNDARIO"])
-    ws = sh.worksheet("Rentas activas detalle")
-    col_t = ws.col_values(20)  # columna T
-    return {v.strip().upper() for v in col_t if v.strip()}
+    sh = gc.open_by_key(os.environ["SPREADSHEET_ID_QUERY"])
+    filas = sh.worksheet(HOJA_TARIFA_DETALLE).get(rango, value_render_option="UNFORMATTED_VALUE")
+    encabezado = list(filas[0]) if filas else []
+    for idx, esperado in ENCABEZADOS_TARIFA_DETALLE.items():
+        encontrado = str(encabezado[idx]).strip() if idx < len(encabezado) else ""
+        if encontrado.lower() != esperado.lower():
+            raise RuntimeError(
+                f"'{HOJA_TARIFA_DETALLE}': la columna {_indice_a_col_letra(idx)} debería ser "
+                f"'{esperado}' y es '{encontrado}'. Se detiene sin escribir nada: revisar si se movieron columnas."
+            )
+    return filas[1:]
+
+
+def _obtener_clientes_rentas_lp() -> set:
+    """Lee la columna T ('CLIENTES') de 'TARIFA DETALLE' (copia del Query)
+    para diferenciar EN RENTA CLIENTE LP vs CP al reclasificar filas con
+    Segmento 'OTROS' (confirmado con el equipo)."""
+    clientes = set()
+    for fila in _leer_tarifa_detalle():
+        if len(fila) > IDX_RAD_CLIENTE:
+            nombre = str(fila[IDX_RAD_CLIENTE]).strip().upper()
+            if nombre:
+                clientes.add(nombre)
+    return clientes
 
 
 def leer_datos(df: pd.DataFrame) -> pd.DataFrame:
@@ -228,7 +251,7 @@ def leer_datos(df: pd.DataFrame) -> pd.DataFrame:
 
     # Regla del equipo: Segmento "OTROS" con un cliente real asignado debe
     # reclasificarse a EN RENTA CLIENTE LP o CP, según si ese cliente aparece
-    # en "Rentas activas detalle" (columna T = LP). Maxinet reutiliza este
+    # en "TARIFA DETALLE" (columna T = LP). Maxinet reutiliza este
     # mismo campo "Cliente Actual" para varios estatus internos de flota
     # (traslados, taller, baja, uso interno, etc.) que NO son clientes reales
     # -> se excluyen explícitamente para no reclasificarlos por error (caso
@@ -1333,7 +1356,7 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
 
 
 HOJA_DURACION_RENTAS = "Duración rentas"
-HOJA_RENTAS_ACTIVAS = "Rentas activas detalle"
+HOJA_TARIFA_DETALLE = "TARIFA DETALLE"
 HOJA_HISTORIAL_ACTIVAS = "HISTORIAL ACTIVAS"
 ENCABEZADO_HISTORIAL_ACTIVAS = ["PLACA", "PU Date", "UNIFICADO", "CLIENTE", "EJECUTIVO", "TARIFA", "ULTIMA VEZ ACTIVA"]
 FILA_PRIMER_DETALLE = 15
@@ -1352,13 +1375,18 @@ IDX_RER_PLACA = 12
 IDX_RER_GRUPO = 13
 IDX_RER_MODELO = 14
 
-# Columnas de "Rentas activas detalle" (copia de CLIENTES ACTIVOS (QUERY)).
+# Columnas de "TARIFA DETALLE" (copia del Query) que usa el sync, con el
+# encabezado que se espera en la fila 1 de cada una.
 IDX_RAD_PLACA = 0
 IDX_RAD_EJECUTIVO = 4
 IDX_RAD_PU = 5
 IDX_RAD_PRECIO = 14
 IDX_RAD_CLIENTE = 19
 IDX_RAD_AGRUPADO = 20
+ENCABEZADOS_TARIFA_DETALLE = {
+    IDX_RAD_PLACA: "PLACA", IDX_RAD_EJECUTIVO: "EJECUTIVO", IDX_RAD_PU: "PU Date",
+    IDX_RAD_PRECIO: "PRECIO SIN IVA", IDX_RAD_CLIENTE: "CLIENTES", IDX_RAD_AGRUPADO: "AGRUPADO",
+}
 
 
 def _a_serial(valor):
@@ -1433,7 +1461,7 @@ def _obtener_historial_activas(libro):
 def _actualizar_historial_activas(libro, hoy: date) -> dict:
     """Guarda, por (placa, fecha de recogida), los datos de cada renta mientras
     sigue activa: UNIFICADO, cliente, ejecutivo y tarifa solo existen en
-    'Rentas activas detalle' y desaparecen cuando la unidad se devuelve.
+    'TARIFA DETALLE' (copia del Query) y desaparecen cuando la unidad se devuelve.
     Nunca borra filas; devuelve el historial completo."""
     hoja = _obtener_historial_activas(libro)
     guardado = hoja.get(f"A2:G", value_render_option="UNFORMATTED_VALUE")
@@ -1443,7 +1471,7 @@ def _actualizar_historial_activas(libro, hoy: date) -> dict:
         if str(fila[0]).strip() and fila[1] != "":
             historial[(str(fila[0]).strip(), int(fila[1]))] = fila[:len(ENCABEZADO_HISTORIAL_ACTIVAS)]
 
-    activas = libro.worksheet(HOJA_RENTAS_ACTIVAS).get("A3:U", value_render_option="UNFORMATTED_VALUE")
+    activas = _leer_tarifa_detalle()
     serial_hoy = (hoy - EPOCH_SHEETS).days
     cambios = 0
     for fila in activas:

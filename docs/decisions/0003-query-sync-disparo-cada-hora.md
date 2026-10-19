@@ -137,3 +137,12 @@ Principio: ningún proceso ni tablero nuestro lee fórmulas o datos del archivo 
 ### UBICACIONES de la base mantenida por el sync (2026-10-12)
 
 La pestaña `UBICACIONES` de la base (que importa la copia del Query en `ESTADOS` para el ESTADO de cada renta) ya no se pega a mano: el sync completo la actualiza con el reporte de flota y un glosario propio sembrado una vez con la tabla de Nuvia. Detalle y pendientes en `0006-ubicaciones-glosario-hibrido-e-independencia-rentas-activas.md`.
+
+### Lista de rentas activas desde TARIFA DETALLE (2026-10-19)
+
+El tablero LP se reestructuró entre el 17 y el 18-oct y desapareció la pestaña `Rentas activas detalle`, que era un espejo por `IMPORTRANGE` de `TARIFA DETALLE` de la copia del Query. El sync completo la leía antes de escribir nada (la lista de clientes LP para reclasificar el segmento `OTROS` y el historial de rentas activas), así que desde el 18-oct 9:01 cada intento terminó con `WorksheetNotFound: Rentas activas detalle` y no se avanzaron las columnas diarias de `UTILIZACION V3` ni de `UTI. GRUPO DE AUTOS V1` del 17 y 18-oct.
+
+- Decisión: el sync lee `TARIFA DETALLE` directamente del archivo de la copia del Query (secret `SPREADSHEET_ID_QUERY`, el mismo del Query Sync) y ya no depende de ninguna pestaña intermedia del tablero. `_leer_tarifa_detalle()` valida el encabezado de las seis columnas que usa (`PLACA`, `EJECUTIVO`, `PU Date`, `PRECIO SIN IVA`, `CLIENTES`, `AGRUPADO`); si cambian de lugar, el sync se detiene sin escribir y dice qué columna esperaba. La fila 1 es el encabezado y los datos empiezan en la 2 (en el espejo empezaban en la 3).
+- Verificación: las 803 placas y los 101 clientes de `TARIFA DETALLE` coinciden con los del `Rentas activas detalle` del original de Nuvia, sin un solo cliente distinto. Los días 17 y 18-oct se recuperaron en orden con la foto de flota de cada fecha (misma técnica que el 9 al 11-oct).
+- Fuera de este cambio: las fórmulas que seguían apuntando a la pestaña borrada (la lista ON HIRE de `Duración rentas`, desde la fila 2293) y las celdas de `RESUMEN` que transponen filas de `UTI. GRUPO DE AUTOS V1` quedan por resolver en el propio tablero.
+
