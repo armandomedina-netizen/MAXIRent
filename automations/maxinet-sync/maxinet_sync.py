@@ -192,19 +192,42 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     return df
 
 
-def _obtener_clientes_rentas_lp() -> set:
-    """Lee la columna T ('CLIENTES') de la pestaña 'Rentas activas detalle'
-    (segundo archivo de Sheets) para diferenciar EN RENTA CLIENTE LP vs CP
-    al reclasificar filas con Segmento 'OTROS' (confirmado con el equipo)."""
+def _leer_tarifa_detalle(rango: str = "A:U") -> list:
+    """Filas de datos (sin el encabezado) de 'TARIFA DETALLE' en la copia del
+    Query (REPORTE TARIFA), que es de donde sale hoy la lista de rentas
+    activas (antes se leía de la pestaña 'Rentas activas detalle' del
+    tablero, una importación de esa misma pestaña). Se valida que las
+    columnas que usa el sync sigan en su lugar: si alguien las mueve, el
+    sync se detiene con un mensaje claro en vez de leer datos corridos."""
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"],
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
     gc = gspread.authorize(creds)
-    sh = gc.open_by_key(os.environ["SPREADSHEET_ID_SECUNDARIO"])
-    ws = sh.worksheet("Rentas activas detalle")
-    col_t = ws.col_values(20)  # columna T
-    return {v.strip().upper() for v in col_t if v.strip()}
+    sh = gc.open_by_key(os.environ["SPREADSHEET_ID_QUERY"])
+    filas = sh.worksheet(HOJA_TARIFA_DETALLE).get(rango, value_render_option="UNFORMATTED_VALUE")
+    encabezado = list(filas[0]) if filas else []
+    for idx, esperado in ENCABEZADOS_TARIFA_DETALLE.items():
+        encontrado = str(encabezado[idx]).strip() if idx < len(encabezado) else ""
+        if encontrado.lower() != esperado.lower():
+            raise RuntimeError(
+                f"'{HOJA_TARIFA_DETALLE}': la columna {_indice_a_col_letra(idx)} debería ser "
+                f"'{esperado}' y es '{encontrado}'. Se detiene sin escribir nada: revisar si se movieron columnas."
+            )
+    return filas[1:]
+
+
+def _obtener_clientes_rentas_lp() -> set:
+    """Lee la columna T ('CLIENTES') de 'TARIFA DETALLE' (copia del Query)
+    para diferenciar EN RENTA CLIENTE LP vs CP al reclasificar filas con
+    Segmento 'OTROS' (confirmado con el equipo)."""
+    clientes = set()
+    for fila in _leer_tarifa_detalle():
+        if len(fila) > IDX_RAD_CLIENTE:
+            nombre = str(fila[IDX_RAD_CLIENTE]).strip().upper()
+            if nombre:
+                clientes.add(nombre)
+    return clientes
 
 
 def leer_datos(df: pd.DataFrame) -> pd.DataFrame:
@@ -228,7 +251,7 @@ def leer_datos(df: pd.DataFrame) -> pd.DataFrame:
 
     # Regla del equipo: Segmento "OTROS" con un cliente real asignado debe
     # reclasificarse a EN RENTA CLIENTE LP o CP, según si ese cliente aparece
-    # en "Rentas activas detalle" (columna T = LP). Maxinet reutiliza este
+    # en "TARIFA DETALLE" (columna T = LP). Maxinet reutiliza este
     # mismo campo "Cliente Actual" para varios estatus internos de flota
     # (traslados, taller, baja, uso interno, etc.) que NO son clientes reales
     # -> se excluyen explícitamente para no reclasificarlos por error (caso
@@ -899,44 +922,70 @@ def actualizar_periodo_resumen(worksheet) -> None:
     )
 
 
-# Cada bloque: (columna de fechas que se autoextiende sola vía
-# TRANSPOSE(UNIQUE(...)), columna donde empiezan las fórmulas por fila que
-# NO se autoextienden, columna donde terminan). Hay DOS bloques idénticos en
-# "RESUMEN", uno por cada tabla de "UTILIZACION POR GRUPO": Y:AP alimenta
-# "UTILIZACION COMERCIAL" (año + periodo + los 15 grupos de 'UTI. GRUPO DE
-# AUTOS V1' filas 84-99) y AS:BJ alimenta "UTILIZACION OPERATIVA" (mismas
-# 15 columnas de grupo pero filas 100-115) -- confirmado que ambos sufren el
-# mismo problema de arrastre manual. OJO: el rango debe cubrir las 15
-# columnas de grupo completas (Z:AP, no solo Z:AD) -- un primer intento se
-# quedó corto ahí y dejó sin fórmula las columnas E-P de "UTILIZACION POR
-# GRUPO" (PANEL en adelante) en las filas de la quincena en curso.
-BLOQUES_PIVOTE_RESUMEN = [
-    ("Y", "Z", "AP"),
-    ("AS", "AT", "BJ"),
-]
+# Bloques pivote de "RESUMEN": cada uno tiene una columna GUÍA de fechas que se
+# autoextiende sola (=TRANSPOSE(UNIQUE('UTI. GRUPO DE AUTOS V1'!2:2)) en la
+# fila 1) y, a su derecha, las fórmulas por fila (año, periodo y promedio por
+# grupo) que NO se autoextienden. Había dos bloques, uno por cada tabla de
+# "UTILIZACION POR GRUPO" (comercial: filas 84-99 de 'UTI. GRUPO DE AUTOS V1';
+# operativa: filas 100-115). Antes las letras estaban fijas (Y:AP y AS:BJ,
+# las del archivo de Nuvia); el 17-oct-2026 el RESUMEN del tablero se movió 3
+# columnas a la izquierda y el sync copió la fila 1 sobre ~650 filas,
+# pisando fórmulas de 14 modelos y creando copias de la guía. Ahora los
+# bloques se buscan por su fórmula guía y, además, nunca se escribe sobre
+# celdas con contenido ni se copia una fila de encabezados o una fórmula de
+# derrame.
+GUIA_PIVOTE_RESUMEN = "=TRANSPOSE(UNIQUE('UTI. GRUPO DE AUTOS V1'!2:2"
 
 
-def extender_formulas_resumen(worksheet) -> None:
+def _bloques_pivote_resumen(worksheet) -> list:
+    """[(col_guia, col_ini, col_fin), ...] de los bloques pivote de RESUMEN:
+    la guía es la celda de la fila 1 con GUIA_PIVOTE_RESUMEN y el bloque
+    cubre las columnas contiguas con algo en la fila 2 a su derecha."""
+    fila1 = worksheet.row_values(1, value_render_option="FORMULA")
+    fila2 = worksheet.row_values(2, value_render_option="FORMULA")
+    bloques = []
+    for g, x in enumerate(fila1):
+        if not str(x).startswith(GUIA_PIVOTE_RESUMEN):
+            continue
+        fin = g
+        while fin + 1 < len(fila2) and str(fila2[fin + 1]) != "":
+            fin += 1
+        if fin > g:
+            bloques.append((_indice_a_col_letra(g), _indice_a_col_letra(g + 1), _indice_a_col_letra(fin)))
+    return bloques
+
+
+def extender_formulas_resumen(worksheet, aplicar: bool = True) -> list:
     """Las columnas de fecha de los bloques pivote de 'RESUMEN' crecen solas
     cada día porque 'UTI. GRUPO DE AUTOS V1' avanza su calendario, pero las
     fórmulas de año/periodo/promedio por grupo que las acompañan NO se
     extienden solas -- confirmado: en el archivo original alguien las
-    arrastra hacia abajo a mano cada vez, en cada uno de los dos bloques. Se
-    automatiza copiando la fórmula de la última fila que ya la tiene hacia
-    las filas nuevas."""
+    arrastra hacia abajo a mano cada vez. Se automatiza copiando la fórmula
+    de la última fila que ya la tiene hacia las filas nuevas.
+
+    Seguridades (todas ellas se avisan en el log y no detienen el sync):
+    - los bloques se buscan por su fórmula guía, no por letras fijas;
+    - no se copia la fila 1 (encabezados) ni una fila con fórmulas de
+      derrame (TRANSPOSE/UNIQUE);
+    - sólo se pega en columnas cuyo destino está VACÍO: nunca se sobrescribe.
+    Devuelve las peticiones de copia (con aplicar=False no escribe)."""
     sheet_id = worksheet.id
     spreadsheet = worksheet.spreadsheet
     requests_body = []
 
-    for col_fecha, col_ini, col_fin in BLOQUES_PIVOTE_RESUMEN:
+    bloques = _bloques_pivote_resumen(worksheet)
+    if not bloques:
+        log.warning("RESUMEN: no encontré ninguna columna guía de fechas en la fila 1; no se extienden fórmulas")
+        return []
+
+    for col_fecha, col_ini, col_fin in bloques:
         idx_fecha = _col_letra_a_indice(col_fecha)
         col_fecha_vals = worksheet.col_values(idx_fecha + 1, value_render_option="UNFORMATTED_VALUE")
         ultima_fila_fecha = len(col_fecha_vals)
 
         # Se revisa la ÚLTIMA columna del bloque (col_fin), no la primera --
-        # si alguna vez el rango se copia incompleto (como pasó antes con
-        # Z:AD en vez de Z:AP), revisar solo la primera columna haría creer
-        # que el bloque completo ya está al día cuando no es cierto.
+        # si alguna vez el rango se copia incompleto, revisar solo la primera
+        # columna haría creer que el bloque completo ya está al día.
         col_formula = worksheet.get(f"{col_fin}1:{col_fin}{ultima_fila_fecha}", value_render_option="FORMULA")
         ultima_fila_formula = 0
         for i, fila in enumerate(col_formula, start=1):
@@ -946,31 +995,65 @@ def extender_formulas_resumen(worksheet) -> None:
         if ultima_fila_fecha <= ultima_fila_formula:
             log.info("RESUMEN: fórmulas %s:%s ya al día (fila %d)", col_ini, col_fin, ultima_fila_formula)
             continue
+        if ultima_fila_formula < 2:
+            log.warning(
+                "RESUMEN: bloque %s:%s sin filas con fórmula debajo de los encabezados; no se extiende "
+                "(copiaría la fila 1)", col_ini, col_fin,
+            )
+            continue
 
+        origen = worksheet.get(
+            f"{col_ini}{ultima_fila_formula}:{col_fin}{ultima_fila_formula}", value_render_option="FORMULA")
+        if any("TRANSPOSE(" in str(c) or "UNIQUE(" in str(c) for c in (origen[0] if origen else [])):
+            log.warning("RESUMEN: la fila %d del bloque %s:%s tiene fórmulas de derrame; no se extiende",
+                        ultima_fila_formula, col_ini, col_fin)
+            continue
+
+        # Sólo columnas cuyo destino está vacío (nunca se pisa contenido)
+        destino = worksheet.get(
+            f"{col_ini}{ultima_fila_formula + 1}:{col_fin}{ultima_fila_fecha}", value_render_option="FORMULA")
         idx_ini = _col_letra_a_indice(col_ini)
         idx_fin = _col_letra_a_indice(col_fin)
-        requests_body.append({
-            "copyPaste": {
-                "source": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
-                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
-                },
-                "destination": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila_fecha,
-                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
-                },
-                "pasteType": "PASTE_FORMULA",
-            }
-        })
+        libres = []
+        for c in range(idx_fin - idx_ini + 1):
+            vacia = all(str(fila[c]) == "" for fila in destino if c < len(fila))
+            libres.append(vacia)
+        omitidas = libres.count(False)
+        if omitidas:
+            log.info("RESUMEN: %d columnas del bloque %s:%s ya tienen contenido en las filas nuevas y no se tocan",
+                     omitidas, col_ini, col_fin)
+        c = 0
+        while c < len(libres):
+            if not libres[c]:
+                c += 1
+                continue
+            c_fin = c
+            while c_fin + 1 < len(libres) and libres[c_fin + 1]:
+                c_fin += 1
+            requests_body.append({
+                "copyPaste": {
+                    "source": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
+                        "startColumnIndex": idx_ini + c, "endColumnIndex": idx_ini + c_fin + 1,
+                    },
+                    "destination": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila_fecha,
+                        "startColumnIndex": idx_ini + c, "endColumnIndex": idx_ini + c_fin + 1,
+                    },
+                    "pasteType": "PASTE_FORMULA",
+                }
+            })
+            c = c_fin + 1
         log.info(
             "RESUMEN: fórmulas %s:%s extendidas de fila %d a %d",
             col_ini, col_fin, ultima_fila_formula, ultima_fila_fecha,
         )
 
-    if requests_body:
+    if requests_body and aplicar:
         spreadsheet.batch_update({"requests": requests_body})
+    return requests_body
 
 
 # "TABLAS": fuente de las gráficas de la presentación
@@ -1172,6 +1255,45 @@ def actualizar_tablas(worksheet) -> None:
 FILA_INICIO_DETALLE_RENTAS = 14
 
 
+def formula_on_hire_desde_tarifa_detalle(id_query: str) -> str:
+    """Fórmula matricial de la lista ON HIRE de 'Duración rentas' (la misma
+    idea que usa Nuvia): una sola fórmula en la columna A que lee 'TARIFA
+    DETALLE' de la copia del Query y derrama las 14 columnas del detalle
+    (UNIFICADO, placa, PU, retorno, DIA, MES, status, cliente, ejecutivo,
+    grupo, modelo, periodo, tarifa diaria y mensual). Sin pestañas
+    intermedias en el tablero. Columnas de TARIFA DETALLE que usa: A placa,
+    E ejecutivo, F PU Date, G Return Date, K modelo, L grupo, O precio sin
+    IVA, P mensual, T cliente, U agrupado."""
+    url = f"https://docs.google.com/spreadsheets/d/{id_query}/edit"
+    return (
+        '=ARRAYFORMULA(LET('
+        f't,IMPORTRANGE("{url}","\'{HOJA_TARIFA_DETALLE}\'!A2:AA"),'
+        'r,FILTER(t,CHOOSECOLS(t,1)<>""),hoy,TODAY(),pu,CHOOSECOLS(r,6),dias,hoy-pu,'
+        '{CHOOSECOLS(r,21),CHOOSECOLS(r,1),pu,CHOOSECOLS(r,7),dias,dias/30,IF(pu<>"","ON HIRE",""),'
+        'CHOOSECOLS(r,20),CHOOSECOLS(r,5),CHOOSECOLS(r,12),CHOOSECOLS(r,11),'
+        'IF(pu<>"",EOMONTH(hoy,-1)+1,""),CHOOSECOLS(r,15),CHOOSECOLS(r,16)}))'
+    )
+
+
+def _localizar_on_hire(worksheet) -> tuple:
+    """(fila, modo) de la primera fila de la lista ON HIRE de 'Duración
+    rentas', o (None, None). Dos formas posibles:
+    - "matricial": una fórmula =ARRAYFORMULA(...) en la columna A que
+      derrama todas las columnas (diseño actual, lee TARIFA DETALLE);
+    - "por_fila": un =UNIQUE(...) en la columna B y una fórmula por fila en
+      las demás (diseño anterior). Con la matricial el sync NO escribe
+      debajo del ancla: pisaría el derrame."""
+    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:B", value_render_option="FORMULA")
+    for i, fila in enumerate(filas):
+        a = str(fila[0]) if fila else ""
+        b = str(fila[1]) if len(fila) > 1 else ""
+        if a.startswith("=ARRAYFORMULA(") and "ON HIRE" in a:
+            return FILA_PRIMER_DETALLE + i, "matricial"
+        if b.startswith("=UNIQUE("):
+            return FILA_PRIMER_DETALLE + i, "por_fila"
+    return None, None
+
+
 def avanzar_formula_dia_duracion_rentas(worksheet) -> None:
     """Ajusta la fórmula de la columna E ('DIA') de la tabla detalle según
     el Status de cada fila -- confirmado 1 a 1 contra las 3010 filas del
@@ -1189,6 +1311,10 @@ def avanzar_formula_dia_duracion_rentas(worksheet) -> None:
     valores_g = worksheet.get(f"G{FILA_INICIO_DETALLE_RENTAS}:G", value_render_option="UNFORMATTED_VALUE")
     valores_b = worksheet.get(f"B{FILA_INICIO_DETALLE_RENTAS}:B", value_render_option="UNFORMATTED_VALUE")
     total_filas = max(len(formulas_e), len(valores_g), len(valores_b))
+    fila_on_hire, modo_on_hire = _localizar_on_hire(worksheet)
+    if modo_on_hire == "matricial":
+        # DIA de las filas ON HIRE ya lo calcula la fórmula matricial (hoy - PU)
+        total_filas = min(total_filas, fila_on_hire - FILA_INICIO_DETALLE_RENTAS)
 
     nuevas_e = []
     cambios = 0
@@ -1238,6 +1364,9 @@ def _avanzar_periodo_on_hire(worksheet, hoy: date) -> None:
     mes en curso no encuentra ninguna fila y da error de división por
     cero. Se corre TODOS los días (no solo al cambiar de mes) para que las
     rentas nuevas que Nuvia agrega a mitad de mes también cuenten."""
+    if _localizar_on_hire(worksheet)[1] == "matricial":
+        log.info("Duración rentas: PERIODO de filas ON HIRE lo calcula la fórmula matricial")
+        return
     ancla_mes_actual = date(hoy.year, hoy.month, 1)
     serial_mes_actual = (ancla_mes_actual - EPOCH_SHEETS).days
 
@@ -1333,7 +1462,7 @@ def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=
 
 
 HOJA_DURACION_RENTAS = "Duración rentas"
-HOJA_RENTAS_ACTIVAS = "Rentas activas detalle"
+HOJA_TARIFA_DETALLE = "TARIFA DETALLE"
 HOJA_HISTORIAL_ACTIVAS = "HISTORIAL ACTIVAS"
 ENCABEZADO_HISTORIAL_ACTIVAS = ["PLACA", "PU Date", "UNIFICADO", "CLIENTE", "EJECUTIVO", "TARIFA", "ULTIMA VEZ ACTIVA"]
 FILA_PRIMER_DETALLE = 15
@@ -1352,13 +1481,18 @@ IDX_RER_PLACA = 12
 IDX_RER_GRUPO = 13
 IDX_RER_MODELO = 14
 
-# Columnas de "Rentas activas detalle" (copia de CLIENTES ACTIVOS (QUERY)).
+# Columnas de "TARIFA DETALLE" (copia del Query) que usa el sync, con el
+# encabezado que se espera en la fila 1 de cada una.
 IDX_RAD_PLACA = 0
 IDX_RAD_EJECUTIVO = 4
 IDX_RAD_PU = 5
 IDX_RAD_PRECIO = 14
 IDX_RAD_CLIENTE = 19
 IDX_RAD_AGRUPADO = 20
+ENCABEZADOS_TARIFA_DETALLE = {
+    IDX_RAD_PLACA: "PLACA", IDX_RAD_EJECUTIVO: "EJECUTIVO", IDX_RAD_PU: "PU Date",
+    IDX_RAD_PRECIO: "PRECIO SIN IVA", IDX_RAD_CLIENTE: "CLIENTES", IDX_RAD_AGRUPADO: "AGRUPADO",
+}
 
 
 def _a_serial(valor):
@@ -1433,7 +1567,7 @@ def _obtener_historial_activas(libro):
 def _actualizar_historial_activas(libro, hoy: date) -> dict:
     """Guarda, por (placa, fecha de recogida), los datos de cada renta mientras
     sigue activa: UNIFICADO, cliente, ejecutivo y tarifa solo existen en
-    'Rentas activas detalle' y desaparecen cuando la unidad se devuelve.
+    'TARIFA DETALLE' (copia del Query) y desaparecen cuando la unidad se devuelve.
     Nunca borra filas; devuelve el historial completo."""
     hoja = _obtener_historial_activas(libro)
     guardado = hoja.get(f"A2:G", value_render_option="UNFORMATTED_VALUE")
@@ -1443,7 +1577,7 @@ def _actualizar_historial_activas(libro, hoy: date) -> dict:
         if str(fila[0]).strip() and fila[1] != "":
             historial[(str(fila[0]).strip(), int(fila[1]))] = fila[:len(ENCABEZADO_HISTORIAL_ACTIVAS)]
 
-    activas = libro.worksheet(HOJA_RENTAS_ACTIVAS).get("A3:U", value_render_option="UNFORMATTED_VALUE")
+    activas = _leer_tarifa_detalle()
     serial_hoy = (hoy - EPOCH_SHEETS).days
     cambios = 0
     for fila in activas:
@@ -1508,15 +1642,12 @@ def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy
     libro = worksheet.spreadsheet
     historial = _actualizar_historial_activas(libro, hoy)
 
-    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:N", value_render_option="FORMULA")
-    fila_on_hire = None
-    for i, fila in enumerate(filas):
-        if len(fila) > 1 and str(fila[1]).startswith("=UNIQUE("):
-            fila_on_hire = i
-            break
-    if fila_on_hire is None:
-        log.warning("Duración rentas: no encontré la fila ON HIRE (=UNIQUE) -- no se agregan devoluciones")
+    fila_ancla, _ = _localizar_on_hire(worksheet)
+    if fila_ancla is None:
+        log.warning("Duración rentas: no encontré la fila ON HIRE (fórmula matricial en A o =UNIQUE en B) -- no se agregan devoluciones")
         return []
+    fila_on_hire = fila_ancla - FILA_PRIMER_DETALLE
+    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:N{fila_ancla - 1}", value_render_option="FORMULA")
 
     existentes = [list(f) + [""] * (14 - len(f)) for f in filas[:fila_on_hire]]
     claves = set()
@@ -1598,13 +1729,17 @@ def asegurar_formulas_on_hire_duracion_rentas(worksheet) -> None:
     """Las filas ON HIRE salen de un UNIQUE que se derrama desde la columna B
     y las demás columnas llevan una fórmula por fila que Nuvia arrastra a
     mano. Extiende esas fórmulas hasta el final de la lista + holgura."""
-    columna_b = worksheet.get(f"B{FILA_PRIMER_DETALLE}:B", value_render_option="FORMULA")
-    fila_on_hire = None
-    for i, fila in enumerate(columna_b):
-        if fila and str(fila[0]).startswith("=UNIQUE("):
-            fila_on_hire = FILA_PRIMER_DETALLE + i
-            break
+    fila_on_hire, modo = _localizar_on_hire(worksheet)
     if fila_on_hire is None:
+        log.warning("Duración rentas: no encontré la lista ON HIRE (fórmula matricial en A o =UNIQUE en B)")
+        return
+    if modo == "matricial":
+        ancla = worksheet.get(f"A{fila_on_hire}", value_render_option="UNFORMATTED_VALUE")
+        valor = ancla[0][0] if ancla and ancla[0] else ""
+        if isinstance(valor, str) and valor in ERRORES_SHEETS:
+            log.warning("Duración rentas: la fórmula matricial de la lista ON HIRE da error (%s)", valor)
+        else:
+            log.info("Duración rentas: lista ON HIRE como fórmula matricial; no hay nada que extender")
         return
     valores_b = worksheet.get(f"B{fila_on_hire}:B", value_render_option="UNFORMATTED_VALUE")
     activas = 0
