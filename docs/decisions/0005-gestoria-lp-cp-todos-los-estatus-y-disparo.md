@@ -52,3 +52,9 @@ Al copiar una pestaña a otro libro, las fórmulas que apuntan a hojas hermanas 
 ### Diferencias de datos entre las dos `BDATOS`
 
 Sobre 1,585 folios comunes: 69 con otra Sucursal (en 59 Maxinet la tiene vacía y Nuvia la completó a mano; en otros 8 Maxinet cambió después de que la fila entró a nuestra hoja), 17 con otro estatus (Maxinet coincide con la copia en los 17) y 2 con otra fecha de evento (folios 1385 y 1435, donde Maxinet coincide con el original y nuestra fila quedó con la fecha anterior). Como el script no actualiza filas existentes (decisión 1 de este ADR), esos valores no se refrescan solos.
+
+### Cierre de la alineación (2026-10-20)
+
+- `SINIESTROS` del `TABLERO LP` (`D18` y `A19`) leía por IMPORTRANGE la hoja `RESUMEN` de `GESTORIA CP&LP` de Nuvia (`I1:P37` y `R1:S47`); si ella la cambiaba o la borraba, la pestaña y su gráfico se rompían. Ahora leen las mismas celdas de nuestra `RESUMEN`, que se alimenta cada hora de Maxinet. La tabla mensual quedó idéntica (0 diferencias en `D18:K54`) y el ranking de clientes sólo cambió por los datos, que ahora siguen a Maxinet (por ejemplo, el folio 1343 pasó de LP a CP). La conexión entre ambos libros ya estaba autorizada. El sync de `maxinet_sync.py` sólo estira el gráfico de esa pestaña y no toca sus fórmulas.
+- Se borró la pestaña oculta `DATA (anterior)` (la `DATA` previa, ya sin sus IMPORTRANGE); la copia queda con las mismas 6 pestañas y el mismo orden que el original. El respaldo de las fórmulas anteriores de `DATA` y de `SINIESTROS` quedó en archivos locales fuera del repositorio.
+- El log avisa en cada corrida del folio 1503 (Maxinet trae la fecha `6/2/0026`); es esperado mientras Maxinet no la corrija, y la hoja conserva `6/2/2026`.
