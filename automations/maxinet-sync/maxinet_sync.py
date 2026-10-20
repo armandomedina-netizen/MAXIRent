@@ -207,7 +207,8 @@ def _leer_tarifa_detalle(rango: str = "A:U") -> list:
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_QUERY"])
-    filas = sh.worksheet(HOJA_TARIFA_DETALLE).get(rango, value_render_option="UNFORMATTED_VALUE")
+    pestana = _resolver_pestana(sh, os.environ.get("WORKSHEET_TARIFA_DETALLE") or HOJA_TARIFA_DETALLE)
+    filas = pestana.get(rango, value_render_option="UNFORMATTED_VALUE")
     encabezado = list(filas[0]) if filas else []
     for idx, esperado in ENCABEZADOS_TARIFA_DETALLE.items():
         encontrado = str(encabezado[idx]).strip() if idx < len(encabezado) else ""
@@ -359,26 +360,31 @@ def _libro_secundario():
     return gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_SECUNDARIO"])
 
 
-def conectar_sheet_secundario(nombre_pestana: str):
-    """Conecta al segundo archivo de Sheets (distinto del primero) y devuelve
-    la pestaña solicitada, por gid (si es un número), por nombre o por su
-    alias conocido. Si no existe, el error lista las pestañas del libro."""
-    sh = _libro_secundario()
-    nombre = str(nombre_pestana).strip()
+def _resolver_pestana(libro, referencia: str):
+    """La pestaña `referencia` del libro: por gid (si es un número), por
+    nombre o por su alias conocido. Si no existe, el error lista las
+    pestañas del libro."""
+    nombre = str(referencia).strip()
     if nombre.isdigit():
-        return sh.get_worksheet_by_id(int(nombre))
+        return libro.get_worksheet_by_id(int(nombre))
     try:
-        return sh.worksheet(nombre_pestana)
+        return libro.worksheet(nombre)
     except gspread.exceptions.WorksheetNotFound:
-        for alias in ALIAS_PESTANAS.get(nombre_pestana, ()):
+        for alias in ALIAS_PESTANAS.get(nombre, ()):
             try:
-                hoja = sh.worksheet(alias)
+                hoja = libro.worksheet(alias)
             except gspread.exceptions.WorksheetNotFound:
                 continue
-            log.warning("La pestaña '%s' no existe; se usa '%s'", nombre_pestana, alias)
+            log.warning("La pestaña '%s' no existe; se usa '%s'", nombre, alias)
             return hoja
-        existentes = ", ".join(w.title for w in sh.worksheets())
-        raise gspread.exceptions.WorksheetNotFound(f"{nombre_pestana} (pestañas del libro: {existentes})")
+        existentes = ", ".join(w.title for w in libro.worksheets())
+        raise gspread.exceptions.WorksheetNotFound(f"{nombre} (pestañas del libro: {existentes})")
+
+
+def conectar_sheet_secundario(nombre_pestana: str):
+    """Conecta al segundo archivo de Sheets (distinto del primero) y devuelve
+    la pestaña solicitada (nombre, alias o gid, ver _resolver_pestana)."""
+    return _resolver_pestana(_libro_secundario(), nombre_pestana)
 
 
 def conectar_sheet_por_nombre(nombre_pestana: str):
