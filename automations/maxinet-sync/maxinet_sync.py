@@ -56,6 +56,7 @@ Estructura del primer Sheet (confirmada por el usuario):
 
 import os
 import re
+import difflib
 import sys
 import copy
 import time
@@ -362,8 +363,8 @@ def _libro_secundario():
 
 def _resolver_pestana(libro, referencia: str):
     """La pestaña `referencia` del libro: por gid (si es un número), por
-    nombre o por su alias conocido. Si no existe, el error lista las
-    pestañas del libro."""
+    nombre o por su alias conocido. Si no existe, el error dice cuántas
+    pestañas tiene el libro y cuáles se parecen al nombre pedido."""
     nombre = str(referencia).strip()
     if nombre.isdigit():
         return libro.get_worksheet_by_id(int(nombre))
@@ -377,8 +378,12 @@ def _resolver_pestana(libro, referencia: str):
                 continue
             log.warning("La pestaña '%s' no existe; se usa '%s'", nombre, alias)
             return hoja
-        existentes = ", ".join(w.title for w in libro.worksheets())
-        raise gspread.exceptions.WorksheetNotFound(f"{nombre} (pestañas del libro: {existentes})")
+        # El repositorio y sus logs son públicos: no se vuelca el inventario de
+        # pestañas, sólo cuántas hay y hasta tres nombres parecidos.
+        titulos = [w.title for w in libro.worksheets()]
+        parecidos = difflib.get_close_matches(nombre, titulos, n=3, cutoff=0.4)
+        raise gspread.exceptions.WorksheetNotFound(
+            f"{nombre} (el libro tiene {len(titulos)} pestañas; nombres parecidos: {', '.join(parecidos) or 'ninguno'})")
 
 
 def conectar_sheet_secundario(nombre_pestana: str):
