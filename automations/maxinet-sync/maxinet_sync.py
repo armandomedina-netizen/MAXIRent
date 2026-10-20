@@ -2303,6 +2303,10 @@ def mantener_graficos(hoy: date = None) -> None:
 HOJA_PROYECCION_MTTO = "Proyección de Mantenimientos"
 IDX_ESTATUS_VENCIMIENTO_MTTO = 12  # "VENCIDO" / "MAYOR A 1 MES" / "KMS EN 0" / fecha
 VENTANA_FORZAR_DIAS = 45  # con forzar=True sólo se reescriben los últimos N días
+# Cada corrida contrasta los últimos N días ya escritos contra la serie de Maxinet: Maxinet publica a veces
+# un valor provisional (el 6, 9 y 15-oct-2026 quedó a la mitad) y lo corrige después.
+VENTANA_REVISION_DIAS = 10
+TOLERANCIA_REVISION = 0.00005  # el Sheet guarda la fracción con 4 decimales
 
 
 def _post_con_reintentos(session: requests.Session, url: str, data: dict, intentos: int = 3):
@@ -2472,15 +2476,18 @@ def actualizar_proyeccion_mantenimientos(
     para que la tabla quincenal (F:G, UNIQUE/AVERAGEIFS) quede al día,
     y extiende las fórmulas de G hasta el final de la lista de F. También actualiza J1:J2 (unidades y vencidos de hoy).
 
-    No toca valores ya escritos (respeta ediciones de Nuvia) ni la fila de
-    hoy, que Maxinet publica hasta mañana. forzar=True (--forzar-mtto)
-    reescribe los últimos VENTANA_FORZAR_DIAS días con la serie de Maxinet."""
+    Los últimos VENTANA_REVISION_DIAS días ya escritos se contrastan contra la
+    serie de Maxinet y se corrigen si difieren (Maxinet corrige después un valor
+    provisional); los más antiguos no se tocan, ni la fila de hoy, que Maxinet
+    publica hasta mañana. forzar=True (--forzar-mtto) reescribe los últimos
+    VENTANA_FORZAR_DIAS días con la serie de Maxinet."""
     hoy = hoy or _hoy_cdmx()
     ayer = hoy - timedelta(days=1)
     _extender_calendario_proyeccion_mtto(worksheet, hoy)
 
     filas_hoja = worksheet.get("C2:D2000", value_render_option="UNFORMATTED_VALUE")
     pendientes = {}  # fecha -> número de fila
+    revisables = {}  # fecha -> (número de fila, valor actual) de los últimos días ya escritos
     for i, fila in enumerate(filas_hoja):
         if not fila or not isinstance(fila[0], (int, float)):
             continue
@@ -2490,19 +2497,41 @@ def actualizar_proyeccion_mantenimientos(
         valor_d = fila[1] if len(fila) > 1 else ""
         if valor_d in ("", None) or (forzar and (ayer - fecha).days < VENTANA_FORZAR_DIAS):
             pendientes[fecha] = i + 2
+        elif (ayer - fecha).days < VENTANA_REVISION_DIAS and isinstance(valor_d, (int, float)):
+            revisables[fecha] = (i + 2, valor_d)
 
-    if pendientes:
-        serie = descargar_serie_vencimiento(session, min(pendientes), max(pendientes))
+    if pendientes or revisables:
+        fechas = list(pendientes) + list(revisables)
+        serie = descargar_serie_vencimiento(session, min(fechas), max(fechas))
         cambios = [
             {"range": f"D{fila}", "values": [[round(serie[fecha] / 100, 4)]]}
             for fecha, fila in sorted(pendientes.items()) if fecha in serie
         ]
+        n_nuevos = len(cambios)
+        corregidos = {
+            fecha: (valor, round(serie[fecha] / 100, 4))
+            for fecha, (fila, valor) in sorted(revisables.items())
+            if fecha in serie and abs(round(serie[fecha] / 100, 4) - valor) > TOLERANCIA_REVISION
+        }
+        cambios += [
+            {"range": f"D{revisables[fecha][0]}", "values": [[nuevo]]}
+            for fecha, (_, nuevo) in corregidos.items()
+        ]
         if cambios:
             worksheet.batch_update(cambios, value_input_option="USER_ENTERED")
-        log.info(
-            "Proyección de Mantenimientos: %d días escritos desde el histórico de Maxinet "
-            "(%d pendientes sin publicar)", len(cambios), len(pendientes) - len(cambios),
-        )
+        if pendientes:
+            log.info(
+                "Proyección de Mantenimientos: %d días escritos desde el histórico de Maxinet "
+                "(%d pendientes sin publicar)", n_nuevos, len(pendientes) - n_nuevos,
+            )
+        if corregidos:
+            log.warning(
+                "Proyección de Mantenimientos: %d días corregidos al revisar los últimos %d contra Maxinet: %s",
+                len(corregidos), VENTANA_REVISION_DIAS,
+                ", ".join(f"{f.isoformat()} {v:.2%} -> {n:.2%}" for f, (v, n) in corregidos.items()),
+            )
+        elif revisables:
+            log.info("Proyección de Mantenimientos: los últimos %d días coinciden con Maxinet", len(revisables))
     else:
         log.info("Proyección de Mantenimientos: no hay días pendientes en D")
 
