@@ -26,3 +26,27 @@ Fecha: 2026-10-12
 - La primera corrida llena de una sola vez la fecha de cierre de las filas ya cerradas (534 en la auditoría).
 - Si el token de GitHub del Apps Script vence, el correo avisa y el cron de respaldo mantiene tres corridas al día.
 - Si se vuelve a ejecutar `crearDisparadores` del Vigilante, debe llevar `everyHours(1).nearMinute(57)` para `ejecutarGestoria`; con `everyHours(6)` el disparo horario se revertiría sin avisar.
+
+## Alineación con el formato del original (2026-10-20)
+
+Nuvia reorganizó `GESTORIA CP&LP`: la hoja `DATA` pasó a llamarse `RESUMEN` (mismo `sheetId`), `DATA GESTORIA` es la hoja de datos (la nuestra, `GESTORIA CP - LP`, tiene el mismo `sheetId`), apareció el tablero `GESTORIA`, el índice `ÍNDICE SINIESTRALIDAD` (antes `% SINIESTRALIDAD`) y `BDATOS`, y se eliminó `DESCARTAR`. La comparación previa mostró que las hojas de datos y `2026` ya eran idénticas en encabezados, formatos de número y las 7 reglas condicionales (sólo diferían el ancho de la columna AF y, por decisión propia, el contenido de `2026`).
+
+### Decisiones
+
+1. La copia queda con la misma estructura y orden que el original: `GESTORIA`, `ÍNDICE SINIESTRALIDAD`, `BDATOS`, `RESUMEN`, `GESTORIA CP - LP`, `2026`. Las tres pestañas nuevas y `RESUMEN` se trajeron con `copyTo` (formato, colores de pestaña, filas fijas, reglas, listas desplegables) y sus propiedades coinciden con las del original. La hoja de datos conserva su nombre `GESTORIA CP - LP` (la copia es CP y LP), por lo que las fórmulas apuntan a ese nombre en lugar de `DATA GESTORIA`.
+2. Independencia: nada del libro lee archivos de Nuvia. `RESUMEN` importaba los promedios de rentas de `LP - TABLERO` y `CP - TABLERO` (los suyos); ahora lee `TABLAS!BC2:BF14` de nuestro `TABLERO LP` (misma tabla, 13 filas sin diferencias) y `DETALLE!CE1:CG13` de nuestra copia automatizada de `CP - TABLERO`. `ÍNDICE SINIESTRALIDAD` ya importaba de esos dos archivos nuestros. Un barrido de todas las fórmulas del libro no encontró ninguna liga a archivos de ella.
+3. `BDATOS` deja de ser una pegada manual: `C1` es `=FILTER('GESTORIA CP - LP'!A1:AI,'GESTORIA CP - LP'!A1:A<>"")` y las columnas `A` (PERIODO) y `B` (CLIENTE, SI/NO según la lista de `ÍNDICE SINIESTRALIDAD!A:A`) conservan sus fórmulas. Todas las fórmulas de las pestañas nuevas sólo usan las columnas A, B, E, I, R y V, que coinciden con las del original aunque nuestra hoja no tenga la columna "Alerta Siniestro". La hoja tiene 5,000 filas (con unas 1,600 filas de datos y ~2 tickets diarios alcanza para años).
+4. Se conserva en `RESUMEN!U:V` nuestro bloque de siniestros de corto plazo por cliente; el bloque de largo plazo es el del original (un `QUERY` en `R1`). `2026` no cambia (lista CP y LP de 2025 y 2026 con Site y BSite).
+
+### Trampa del Sheet que no debe repetirse
+
+Al copiar una pestaña a otro libro, las fórmulas que apuntan a hojas hermanas conservan el texto, pero la referencia queda sin enlazar y calcula 0 (`GESTORIA!B7` daba 0 con `BDATOS` llena). Hay que volver a escribir cada fórmula (basta con reescribir su mismo texto con `USER_ENTERED`) y sólo las celdas que son fórmulas: las celdas derramadas son valores y escribirlas bloquea el derrame. La cuenta de servicio no puede duplicar el libro completo para respaldarlo (cuota de Drive llena); el respaldo de la `DATA` anterior se guardó en un JSON local y la pestaña quedó oculta como `DATA (anterior)`, sin las dos fórmulas IMPORTRANGE.
+
+### Verificación
+
+- `RESUMEN!R1:T50` y `ÍNDICE SINIESTRALIDAD!A1:M60` coinciden celda por celda con el original; `GESTORIA` difiere en 11 celdas por datos distintos en ambas `BDATOS`, no por el formato (ver abajo).
+- `RESUMEN!C49:C66` y el bloque `E17:G29` esperan el permiso "Permitir acceso" de la liga a la copia de `CP - TABLERO` (requiere navegador de escritorio).
+
+### Diferencias de datos entre las dos `BDATOS`
+
+Sobre 1,585 folios comunes: 69 con otra Sucursal (en 59 Maxinet la tiene vacía y Nuvia la completó a mano; en otros 8 Maxinet cambió después de que la fila entró a nuestra hoja), 17 con otro estatus (Maxinet coincide con la copia en los 17) y 2 con otra fecha de evento (folios 1385 y 1435, donde Maxinet coincide con el original y nuestra fila quedó con la fecha anterior). Como el script no actualiza filas existentes (decisión 1 de este ADR), esos valores no se refrescan solos.
