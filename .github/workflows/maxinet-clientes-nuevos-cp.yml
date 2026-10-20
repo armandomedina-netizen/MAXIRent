@@ -6,9 +6,17 @@ on:
     - cron: "0 16 * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+concurrency:
+  group: maxinet-clientes-nuevos-cp
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: automations/maxinet-clientes-nuevos-cp

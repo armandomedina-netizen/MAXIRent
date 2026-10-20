@@ -6,6 +6,13 @@ on:
     - cron: "45 15 * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+concurrency:
+  group: maxinet-frecuentes-activos-cp
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest

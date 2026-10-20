@@ -1,0 +1,51 @@
+# Automatizaciones de Maxinet y Google Sheets
+
+Mapa de los procesos que corren en GitHub Actions, de dónde sacan los datos, a dónde los escriben y qué hacer cuando algo cambia. El repositorio es público: aquí no van IDs de archivos, enlaces a Sheets, correos ni credenciales. Los nombres de los secrets sí, porque no revelan nada.
+
+## Procesos
+
+Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo externo" es el proyecto de Apps Script `Vigilante_Maxinet`, que lanza el workflow a su hora y avisa por correo si pasa mucho tiempo sin una corrida exitosa. No está en el repositorio porque lleva el correo del equipo. El reloj de GitHub (`schedule`) llega entre 2 y 7 horas tarde, así que lo que depende solo de él no es puntual.
+
+| Workflow | Qué hace | Horario | Disparo externo | Detalle |
+|---|---|---|---|---|
+| `maxinet-sync.yml` | Sync completo del tablero LP y de la base (flota, columnas diarias, `Duración rentas`, ubicaciones) y captura de la proyección de mantenimiento | 9:00 y 9:10 | Sí (ventanas de 9:00 y 9:10, hasta 3 reintentos) | ADR 0003 y 0006 |
+| `maxinet-query-sync.yml` | Baja de Maxinet el cargo de reservas a la copia del Query | Cada hora | Sí | ADR 0003 |
+| `maxinet-balance.yml` | Entregas, retornos y solicitudes del BALANCE | Cada hora de 8:17 a 18:17 | Sí | ADR 0004 |
+| `gestoria-lp-cp-sync.yml` | Tickets de gestoría (todos los estatus) | 8:45, 12:45 y 16:45 | Sí (cada hora, lunes a sábado de 8:30 a 19:00) | ADR 0005 |
+| `tablero-sac.yml` | Solicitudes de monday (SAC) a Sheets | Cada hora, lunes a viernes de 7:20 a 17:20 y sábado hasta las 14:20 | Sí | `automations/TableroSAC/README.md` |
+| `maxinet-clientes-nuevos-cp.yml` | Clientes nuevos del Tablero CP | 10:00 | No | ADR 0002 |
+| `maxinet-clientes-potenciales-cp.yml` | Clientes potenciales del Tablero CP | 10:15 | No | ADR 0002 |
+| `maxinet-entregas-cp.yml` | Entregas del Tablero CP | 9:30 | No | ADR 0007 |
+| `maxinet-encuestas-cp.yml` | Encuestas de satisfacción del Tablero CP | 9:30 | No | ADR 0009 |
+| `maxinet-frecuentes-activos-cp.yml` | Clientes frecuentes activos (semana más reciente) | 9:45 | No | ADR 0008 |
+| `pruebas.yml` | Pruebas automáticas en cada PR y en cada integración a `main` | Al abrir un PR | No aplica | ADR 0011 |
+
+## Secrets
+
+Todos viven en Settings → Secrets and variables → Actions. Nada de esto se imprime en los logs.
+
+- **Maxinet y Google:** `MAXINET_BASE_URL`, `MAXINET_USER`, `MAXINET_PASS`, `GOOGLE_CREDS_JSON` (cuenta de servicio; debe ser editora de los archivos que se escriben y de las pestañas protegidas).
+- **Archivos de Sheets:** `SPREADSHEET_ID` (base LP), `SPREADSHEET_ID_SECUNDARIO` (tablero LP), `SPREADSHEET_ID_QUERY` (copia del Query), `SPREADSHEET_ID_BALANCE`, `SPREADSHEET_ID_GESTORIA`, `SPREADSHEET_ID_CLIENTES_NUEVOS` (base del Tablero CP) y `SPREADSHEET_ID_SAC`.
+- **Pestañas con secret:** `WORKSHEET_NAME` (base), `WORKSHEET_FLOTA_LP`, `WORKSHEET_QUERY_NAME`, `WORKSHEET_CLIENTES_NUEVOS_NAME` y `WORKSHEET_CLIENTES_POTENCIALES_NAME`.
+- **Pestañas opcionales** (si el secret no existe se usa el nombre por defecto del código; aceptan nombre o gid): `WORKSHEET_UTILIZACION`, `WORKSHEET_GRUPO_AUTOS`, `WORKSHEET_TARIFA_DETALLE`, `WORKSHEET_ENTREGAS_NAME`, `WORKSHEET_ENCUESTAS_NAME`, `WORKSHEET_FRECUENTES_NAME` y `WORKSHEET_GESTORIA_NAME`.
+- **monday:** `MONDAY_TOKEN` y `MONDAY_SAC_SCHEMA_JSON` (solo Tablero SAC).
+- `SPREADSHEET_ID_ORIGINAL` ya no lo lee ningún workflow y puede borrarse.
+
+## Qué hacer cuando algo cambia
+
+**Renombraron una pestaña.** Las pestañas que el sync busca por secret (`WORKSHEET_UTILIZACION`, `WORKSHEET_GRUPO_AUTOS`, `WORKSHEET_TARIFA_DETALLE`) aceptan el nombre o el gid, que es el número después de `#gid=` en la URL de la pestaña y no cambia al renombrarla. Con el gid en el secret un cambio de nombre ya no afecta. Si el nombre no existe, el error dice cuántas pestañas tiene el libro y los nombres más parecidos, sin volcar el inventario completo (los logs son públicos). Una fórmula que lleva el nombre de una pestaña dentro de un `IMPORTRANGE` sí se rompe al renombrarla y hay que corregirla en el Sheet.
+
+**Movieron o borraron columnas.** Los lectores validan los encabezados que usan; si no coinciden se detienen sin escribir y el mensaje dice qué columna esperaban. Las extensiones de fórmulas hacia abajo (`RESUMEN`, `TABLAS`) nunca copian una fila de encabezados o con fórmulas de derrame (`UNIQUE`, `TRANSPOSE`, `FILTER`...) y solo pegan en columnas con el destino vacío. Letras de columna escritas a mano en el código son un riesgo cuando el tablero se reestructura: toda letra nueva debe pasar por esas protecciones.
+
+**Un paso auxiliar falla.** Lo crítico del sync completo (descarga, avance de las columnas diarias y escritura de la base) va primero. `RESUMEN`, `TABLAS`, `Duración rentas` y los gráficos son pasos auxiliares: si fallan, el log y el resumen de la corrida llevan un aviso (`::warning`) y el sync sigue. Un aviso repetido hay que atenderlo; no se arregla solo.
+
+**Un día se quedó sin procesar.** Maxinet devuelve la foto de flota de cualquier fecha pasada. El avance diario de las columnas debe recuperarse en orden, un día a la vez, y esperar a que la hoja de flota muestre la fecha antes de pasar al siguiente día (si no, se congela la columna con datos de otro día). Hoy el procedimiento se hace con un script local; está pendiente versionarlo.
+
+**Sospechas de que algo no corre.** `gh run list --workflow <archivo>.yml --limit 10` muestra las últimas corridas, su evento (`schedule` o `workflow_dispatch`) y su resultado. Una corrida completa de `maxinet-sync.yml` que falla antes de escribir deja el tablero un día atrás.
+
+## Trabajar en el repositorio
+
+- Cada cambio va en una rama y un PR con las secciones Problema, Cambios, Verificación y Notas, sin firmas de herramientas. Antes de integrar se corre el workflow desde la rama y se pide la aprobación explícita.
+- Pruebas locales: `cd automations/maxinet-sync && pip install -r requirements-dev.txt && python -m pytest tests -q`. Trabajan con hojas simuladas: no necesitan credenciales ni red.
+- Las versiones de las dependencias están fijadas en cada `requirements.txt`. Para subirlas, se cambia la versión en un PR y se corren las pruebas y el workflow.
+- Los procesos no leen archivos de terceros: sus archivos solo sirven para comparar. Una carga única desde un archivo ajeno es aceptable si queda documentada en un ADR.

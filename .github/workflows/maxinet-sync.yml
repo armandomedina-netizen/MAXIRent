@@ -32,6 +32,9 @@ concurrency:
   group: maxinet-sync-${{ (github.event.schedule == '10 15 * * *' || inputs.modo == 'solo_proyeccion_mtto') && 'proyeccion-mtto' || 'completo' }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   sync:
     runs-on: ubuntu-latest

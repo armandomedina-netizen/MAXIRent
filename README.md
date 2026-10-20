@@ -11,6 +11,10 @@ Proyecto para diseñar y desarrollar un centro interno de solicitudes sobre mond
 
 Fase inicial de descubrimiento y arquitectura. No se crean ni modifican recursos productivos de monday desde este repositorio.
 
+## Automatizaciones de Maxinet y Google Sheets
+
+El repositorio también aloja los procesos que bajan datos de Maxinet a Google Sheets (tablero LP, Query, Balance, Gestoría, Tablero CP y Tablero SAC). El mapa de procesos, los secrets y la guía de operación están en [docs/automatizaciones.md](docs/automatizaciones.md); las decisiones técnicas, en [docs/decisions](docs/decisions).
+
 ## Arquitectura inicial
 
 ```text
