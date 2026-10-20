@@ -36,9 +36,17 @@ Lógica de sincronización (decidida por el usuario, no inventada aquí):
     4. Caso inverso (Sheet ya dice CERRADO pero Maxinet lo muestra ABIERTO)
        -> NO se reabre; sólo se avisa en el log con el conteo. El usuario no
        pidió esa regla y no hay que adivinarla.
-    Del resto de las columnas de una fila ya existente no se actualiza nada:
-    el equipo tampoco las refresca a mano (el original de Nuvia tiene la misma
-    "deriva" en estatus de cargo adicional y factura).
+    5. Campos de análisis de una fila ya existente (CAMPOS_REFRESCABLES: fecha del
+       evento, tipo, cliente, sucursal, Site, BSite y PUSite): se corrigen con
+       lo que diga Maxinet hoy, porque Maxinet los reclasifica o corrige después
+       de que la fila entró al Sheet y las pestañas GESTORIA, ÍNDICE SINIESTRALIDAD,
+       RESUMEN y 2026 cuentan con ellos. Sólo se escribe si Maxinet trae un valor
+       (nunca se borra una celda porque Maxinet venga vacío) y, en la fecha, si el
+       año es verosímil (Maxinet llegó a traer 6/2/0026). Si un campo cambiaría en
+       más de la mitad de las filas se omite y se avisa (señal de que Maxinet
+       cambió de formato).
+    El resto de las columnas de una fila ya existente (días, cargo adicional,
+    factura, conductor...) no se actualizan.
     La columna "Alerta Siniestro" (campo `alerta_evento` de Maxinet) existe
     en el reporte pero NO en este Sheet -- se ignora a propósito, tal como
     indicó el usuario, dejándola documentada aquí por si se agrega después.
@@ -115,8 +123,10 @@ Variables de entorno esperadas (ver .env.example):
 import os
 import re
 import sys
+import html
 import json
 import logging
+from datetime import date
 
 import requests
 import pandas as pd
@@ -188,6 +198,22 @@ FILA_INICIO_DATOS = 2
 MIN_FRACCION_MAXINET = 0.5
 # Tope de rangos por llamada a batch_update.
 TAMANO_LOTE = 400
+
+# Campos de filas ya cargadas que se refrescan desde Maxinet en cada corrida:
+# {índice de columna: (letra, campo de Maxinet)}. Sólo los que usan las pestañas
+# de análisis; ver la regla 5 del docstring.
+CAMPOS_REFRESCABLES = {
+    2: ("C", "fecha_evento"),
+    6: ("G", "nombreTipo"),
+    15: ("P", "ClientName"),
+    19: ("T", "FromSite"),
+    20: ("U", "Site"),
+    21: ("V", "BSite"),
+    22: ("W", "PUSite"),
+}
+MAX_FRACCION_REFRESCO = 0.5  # un campo que cambiaría en más de la mitad de las filas se omite...
+MIN_FILAS_GUARDIA = 50       # ...siempre que haya al menos esta cantidad de filas comparadas
+ANIO_MIN_FECHA = 2020
 # Filas de fórmulas por fila que se mantienen de más, debajo del último folio
 # del derrame de la pestaña histórico.
 HOLGURA_FILAS_HISTORICO = 50
@@ -262,6 +288,10 @@ def descargar_gestoria_todos() -> pd.DataFrame:
     for col in df.columns:
         if pd.api.types.is_string_dtype(df[col]) or pd.api.types.is_object_dtype(df[col]):
             df[col] = df[col].str.strip()
+            # Maxinet manda '&amp;' en algunos textos (ej. "JR3 PACK &amp; SHIP"):
+            # el Sheet los tiene como '&', y escribirlos tal cual partiría un
+            # cliente en dos variantes.
+            df[col] = df[col].map(lambda v: html.unescape(v) if isinstance(v, str) else v)
 
     df[FOLIO_COL] = pd.to_numeric(df[FOLIO_COL], errors="coerce").astype("Int64")
     return df
@@ -281,14 +311,16 @@ def conectar_sheet_gestoria():
     return sh.worksheet(nombre_pestana)
 
 
-def leer_filas_existentes(worksheet):
+def leer_bloque(worksheet):
+    """Lee el bloque A:AI del Sheet (valores tal como se ven) en una sola llamada."""
+    return worksheet.get(f"{COL_INICIO}{FILA_INICIO_DATOS}:{COL_FIN}")
+
+
+def leer_filas_existentes(valores):
     """
-    Lee el bloque A:AI del Sheet en una sola llamada y devuelve un dict
-    {folio: (fila, estatus_actual, cerrado_actual)}. No se leen valores de
-    otras columnas: esta automatización sólo agrega filas nuevas, cambia la
-    columna B a CERRADO y llena AI cuando está vacía.
+    Recibe el bloque A:AI (ver leer_bloque) y devuelve un dict
+    {folio: (fila, estatus_actual, cerrado_actual)}.
     """
-    valores = worksheet.get(f"{COL_INICIO}{FILA_INICIO_DATOS}:{COL_FIN}")
     existentes = {}
     for i, fila in enumerate(valores):
         num_fila = FILA_INICIO_DATOS + i
@@ -314,8 +346,72 @@ def _texto(valor) -> str:
     return "" if pd.isna(valor) else str(valor).strip()
 
 
+def _fecha_verosimil(iso: str):
+    """'YYYY-MM-DD...' -> (año, mes, día) si el año es verosímil; None si Maxinet trae basura (ej. 0026)."""
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", iso)
+    if not m:
+        return None
+    anio, mes, dia = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if not (ANIO_MIN_FECHA <= anio <= date.today().year + 1):
+        return None
+    return anio, mes, dia
+
+
+def calcular_refrescos(valores, df_maxinet: pd.DataFrame):
+    """
+    Compara los campos de CAMPOS_REFRESCABLES de las filas existentes contra Maxinet
+    y devuelve (actualizaciones, cambios_por_campo, folios_omitidos_por_fecha).
+    Nunca propone borrar una celda ni escribir una fecha con año imposible.
+    """
+    mx = {int(r[FOLIO_COL]): r for _, r in df_maxinet.dropna(subset=[FOLIO_COL]).iterrows()}
+    candidatos = {idx: [] for idx in CAMPOS_REFRESCABLES}
+    fechas_malas = []
+    filas_comparadas = 0
+    for i, fila in enumerate(valores):
+        num_fila = FILA_INICIO_DATOS + i
+        if not fila or not str(fila[0]).strip():
+            continue
+        try:
+            folio = int(str(fila[0]).strip())
+        except ValueError:
+            continue
+        t = mx.get(folio)
+        if t is None:
+            continue
+        filas_comparadas += 1
+        for idx, (letra, campo) in CAMPOS_REFRESCABLES.items():
+            actual = fila[idx].strip() if len(fila) > idx else ""
+            nuevo = _texto(t[campo])
+            if not nuevo:
+                continue  # Maxinet vacío: no se borra nada
+            if campo == "fecha_evento":
+                f = _fecha_verosimil(nuevo)
+                if f is None:
+                    fechas_malas.append(folio)
+                    continue
+                if actual != f"{f[2]}/{f[1]}/{f[0]}":  # el Sheet las muestra como d/M/yyyy
+                    candidatos[idx].append((num_fila, f"{f[0]:04d}-{f[1]:02d}-{f[2]:02d}"))
+            elif nuevo != actual:
+                candidatos[idx].append((num_fila, nuevo))
+    actualizaciones, conteo = [], {}
+    for idx, (letra, campo) in CAMPOS_REFRESCABLES.items():
+        cambios = candidatos[idx]
+        if not cambios:
+            continue
+        if filas_comparadas >= MIN_FILAS_GUARDIA and len(cambios) > MAX_FRACCION_REFRESCO * filas_comparadas:
+            log.warning(
+                "Refresco omitido para %s (columna %s): cambiaría %d de %d filas; Maxinet pudo cambiar de formato.",
+                campo, letra, len(cambios), filas_comparadas,
+            )
+            continue
+        conteo[campo] = len(cambios)
+        actualizaciones.extend({"range": f"{letra}{fila}", "values": [[valor]]} for fila, valor in cambios)
+    return actualizaciones, conteo, fechas_malas
+
+
 def sincronizar_gestoria(worksheet, df_maxinet: pd.DataFrame, dry_run: bool = False):
-    existentes = leer_filas_existentes(worksheet)
+    valores = leer_bloque(worksheet)
+    existentes = leer_filas_existentes(valores)
     mx = {
         int(r[FOLIO_COL]): (_texto(r[ESTATUS_COL]).upper(), _texto(r[CERRADO_COL]))
         for _, r in df_maxinet.dropna(subset=[FOLIO_COL]).iterrows()
@@ -376,6 +472,11 @@ def sincronizar_gestoria(worksheet, df_maxinet: pd.DataFrame, dry_run: bool = Fa
             actualizaciones.append({"range": f"{COL_CERRADO}{fila}", "values": [[cerrado_mx]]})
             n_cerrado_fecha += 1
 
+    refrescos, conteo_refrescos, fechas_malas = calcular_refrescos(valores, df_maxinet)
+    actualizaciones.extend(refrescos)
+    if fechas_malas:
+        log.warning("Fechas de evento con año imposible en Maxinet (se conserva la del Sheet): folios %s", sorted(fechas_malas))
+
     if n_reabiertos:
         log.warning(
             "%d folios están CERRADO en el Sheet pero ABIERTO en Maxinet; no se reabren "
@@ -385,13 +486,13 @@ def sincronizar_gestoria(worksheet, df_maxinet: pd.DataFrame, dry_run: bool = Fa
         if not dry_run:
             _escribir_en_lotes(worksheet, actualizaciones)
         log.info(
-            "%sFolios marcados como CERRADO: %d | fechas de cierre (AI) llenadas: %d",
-            "[dry-run] " if dry_run else "", n_cerrados, n_cerrado_fecha,
+            "%sFolios marcados como CERRADO: %d | fechas de cierre (AI) llenadas: %d | campos refrescados desde Maxinet: %s",
+            "[dry-run] " if dry_run else "", n_cerrados, n_cerrado_fecha, conteo_refrescos or "ninguno",
         )
     else:
-        log.info("No hay folios para cerrar ni fechas de cierre por llenar.")
+        log.info("No hay folios para cerrar, fechas de cierre por llenar ni campos por refrescar.")
 
-    return len(df_nuevos), n_cerrados, n_cerrado_fecha
+    return len(df_nuevos), n_cerrados, n_cerrado_fecha, sum(conteo_refrescos.values())
 
 
 def conectar_hoja_historico(libro):
@@ -483,7 +584,7 @@ def main():
         df_maxinet = descargar_gestoria_todos()
 
         worksheet = conectar_sheet_gestoria()
-        nuevos, cerrados, fechas = sincronizar_gestoria(worksheet, df_maxinet, dry_run=dry_run)
+        nuevos, cerrados, fechas, refrescados = sincronizar_gestoria(worksheet, df_maxinet, dry_run=dry_run)
 
         # Secundario: si falla (cuota, rango protegido) se avisa pero no se
         # considera fallida la sincronización principal, que ya terminó.
@@ -493,8 +594,8 @@ def main():
             log.exception("No se pudieron mantener las fórmulas de la pestaña histórico")
 
         log.info(
-            "Automatización completada con éxito%s (%d nuevos, %d cerrados, %d fechas de cierre)",
-            " [dry-run: no se escribió nada]" if dry_run else "", nuevos, cerrados, fechas,
+            "Automatización completada con éxito%s (%d nuevos, %d cerrados, %d fechas de cierre, %d campos refrescados)",
+            " [dry-run: no se escribió nada]" if dry_run else "", nuevos, cerrados, fechas, refrescados,
         )
     except Exception:
         log.exception("Error en la automatización de Gestoría LP & CP")
