@@ -46,6 +46,13 @@ Lógica de sincronización (decidida por el usuario, no inventada aquí):
        que Google Sheets; cualquier otro año imposible se ignora). Si un campo cambiaría en
        más de la mitad de las filas se omite y se avisa (señal de que Maxinet
        cambió de formato).
+    6. Correcciones manuales: la pestaña CORRECCIONES (FOLIO, CAMPO, VALOR, MOTIVO) fija el
+       valor de un campo de un folio por encima de lo que diga Maxinet, para los casos en
+       que Maxinet trae un dato equivocado (la sucursal de los folios 1062, 1104, 1359 y
+       1530) y el equipo lo corrigió a mano. Sin esa pestaña el refresco de la regla 5
+       volvería a escribir el valor de Maxinet en cada corrida. CAMPO admite SUCURSAL, TIPO,
+       CLIENTE, SITE, BSITE y PUSITE (CAMPOS_CORREGIBLES); una fila con un campo no admitido
+       o sin valor se ignora y se avisa. Si la pestaña no existe no pasa nada.
     El resto de las columnas de una fila ya existente (días, cargo adicional,
     factura, conductor...) no se actualizan.
     La columna "Alerta Siniestro" (campo `alerta_evento` de Maxinet) existe
@@ -128,6 +135,7 @@ import html
 import json
 import time
 import logging
+import unicodedata
 from datetime import date
 
 import requests
@@ -213,6 +221,10 @@ CAMPOS_REFRESCABLES = {
     21: ("V", "BSite"),
     22: ("W", "PUSite"),
 }
+PESTANA_CORRECCIONES = "CORRECCIONES"
+# Nombre que se escribe en la columna CAMPO de la pestaña CORRECCIONES (sin acentos, en mayúsculas)
+# -> índice de columna en CAMPOS_REFRESCABLES. La fecha del evento no se admite: Maxinet la corrige solo.
+CAMPOS_CORREGIBLES = {"SUCURSAL": 19, "TIPO": 6, "CLIENTE": 15, "SITE": 20, "BSITE": 21, "PUSITE": 22}
 MAX_FRACCION_REFRESCO = 0.5  # un campo que cambiaría en más de la mitad de las filas se omite...
 MIN_FILAS_GUARDIA = 50       # ...siempre que haya al menos esta cantidad de filas comparadas
 ANIO_MIN_FECHA = 2020
@@ -377,12 +389,57 @@ def _fecha_verosimil(iso: str):
     return anio, mes, dia
 
 
-def calcular_refrescos(valores, df_maxinet: pd.DataFrame):
+def _clave_texto(texto: str) -> str:
+    """'Sucursal ' -> 'SUCURSAL' (sin acentos ni espacios sobrantes) para comparar encabezados y nombres de campo."""
+    sin = unicodedata.normalize("NFD", str(texto or "")).encode("ascii", "ignore").decode()
+    return re.sub(r"\s+", " ", sin).strip().upper()
+
+
+def leer_correcciones(libro) -> dict:
+    """{(folio, índice de columna): valor} de la pestaña CORRECCIONES (FOLIO, CAMPO, VALOR, MOTIVO).
+    Si la pestaña no existe devuelve {}. Una fila con folio inválido, campo no admitido o sin valor
+    se ignora y se avisa: una corrección mal escrita no debe detener el sync."""
+    nombre = os.environ.get("WORKSHEET_CORRECCIONES_NAME") or PESTANA_CORRECCIONES
+    try:
+        hoja = libro.worksheet(nombre)
+    except gspread.WorksheetNotFound:
+        return {}
+    filas = hoja.get_all_values()
+    if not filas:
+        return {}
+    cab = [_clave_texto(c) for c in filas[0]]
+    try:
+        i_folio, i_campo, i_valor = cab.index("FOLIO"), cab.index("CAMPO"), cab.index("VALOR")
+    except ValueError:
+        log.warning("La pestaña %s no tiene los encabezados FOLIO, CAMPO y VALOR; se ignora", nombre)
+        return {}
+    correcciones, ignoradas = {}, []
+    for n, fila in enumerate(filas[1:], start=2):
+        if not any(str(c).strip() for c in fila):
+            continue
+        get = lambda i: fila[i].strip() if len(fila) > i else ""
+        try:
+            folio = int(get(i_folio))
+        except ValueError:
+            ignoradas.append(n); continue
+        idx = CAMPOS_CORREGIBLES.get(_clave_texto(get(i_campo)))
+        valor = get(i_valor)
+        if idx is None or not valor:
+            ignoradas.append(n); continue
+        correcciones[(folio, idx)] = valor
+    if ignoradas:
+        log.warning("%s: filas ignoradas por folio, campo o valor no válido: %s", nombre, ignoradas)
+    return correcciones
+
+
+def calcular_refrescos(valores, df_maxinet: pd.DataFrame, correcciones: dict = None):
     """
     Compara los campos de CAMPOS_REFRESCABLES de las filas existentes contra Maxinet
     y devuelve (actualizaciones, cambios_por_campo, folios_omitidos_por_fecha).
-    Nunca propone borrar una celda ni escribir una fecha con año imposible.
+    Nunca propone borrar una celda ni escribir una fecha con año imposible. Un valor de
+    `correcciones` ({(folio, índice de columna): valor}) manda sobre el de Maxinet.
     """
+    correcciones = correcciones or {}
     mx = {int(r[FOLIO_COL]): r for _, r in df_maxinet.dropna(subset=[FOLIO_COL]).iterrows()}
     candidatos = {idx: [] for idx in CAMPOS_REFRESCABLES}
     fechas_malas = []
@@ -401,7 +458,7 @@ def calcular_refrescos(valores, df_maxinet: pd.DataFrame):
         filas_comparadas += 1
         for idx, (letra, campo) in CAMPOS_REFRESCABLES.items():
             actual = fila[idx].strip() if len(fila) > idx else ""
-            nuevo = _texto(t[campo])
+            nuevo = correcciones.get((folio, idx)) or _texto(t[campo])
             if not nuevo:
                 continue  # Maxinet vacío: no se borra nada
             if campo == "fecha_evento":
@@ -492,7 +549,15 @@ def sincronizar_gestoria(worksheet, df_maxinet: pd.DataFrame, dry_run: bool = Fa
             actualizaciones.append({"range": f"{COL_CERRADO}{fila}", "values": [[cerrado_mx]]})
             n_cerrado_fecha += 1
 
-    refrescos, conteo_refrescos, fechas_malas = calcular_refrescos(valores, df_maxinet)
+    try:
+        correcciones = leer_correcciones(worksheet.spreadsheet)
+    except Exception as e:
+        # Secundario: sin correcciones el refresco usa lo de Maxinet; se avisa y se sigue.
+        log.warning("No se pudieron leer las correcciones manuales (%s: %s)", type(e).__name__, str(e)[:120])
+        correcciones = {}
+    if correcciones:
+        log.info("Correcciones manuales cargadas: %d", len(correcciones))
+    refrescos, conteo_refrescos, fechas_malas = calcular_refrescos(valores, df_maxinet, correcciones)
     actualizaciones.extend(refrescos)
     if fechas_malas:
         log.warning("Fechas de evento con año imposible en Maxinet (se conserva la del Sheet): folios %s", sorted(fechas_malas))
