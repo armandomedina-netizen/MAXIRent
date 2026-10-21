@@ -168,3 +168,10 @@ El sync completo del tablero LP pasa de las 9:00 a las 8:00 y la captura de proy
 - Disponibilidad a las 8:37 del 21-oct: foto de flota del 20-oct (1,691 filas, 41 columnas), % de vencimiento del 20-oct publicado y entregas y retornos del 20-oct. La captura de proyección llena solo los días cerrados que están vacíos, así que si a las 8:10 el histórico de un día aún no estuviera publicado, se llena en la corrida del día siguiente.
 - La corrida de prueba del 21-oct se hizo con el código de esta rama.
 
+### Todos los reportes entre las 8:00 y las 8:20 (2026-10-21)
+
+El tablero LP (8:00 y 8:10), el Tablero CP y la Gestoría quedan dentro de la franja de las 8:00 a las 8:20, escalonados cada 5 minutos para no empalmar corridas en Maxinet: Entregas y Encuestas CP a las 8:05, Frecuentes Activos a las 8:10, Clientes Nuevos y Clientes Potenciales a las 8:15 y Gestoría a las 8:20 (después sigue su disparo cada hora). Query Sync y Balance empiezan su horario a las 7:30 (sus primeras corridas caen hacia las 7:40 y las 7:45) para que el tablero de las 8:00 ya tenga datos del día en lo que depende de ellos.
+
+- El Vigilante lanza cada reporte con una sola función de ventanas (`ejecutarMatutino`, cada 5 minutos): a la hora de cada ventana lo dispara si no hay ya una corrida desde esa hora, reintenta hasta 3 veces y avisa si a las 8:45 no hay una exitosa. Los disparadores horarios de Apps Script no caen en el minuto exacto (llegan unos minutos antes o después de lo pedido), por eso la franja no se puede lograr con ellos.
+- El cron de respaldo de GitHub de cada workflow se alineó a su ventana. Excepción: Clientes Nuevos conserva el de las 10:00, porque Maxinet importa ese reporte a las 9:00 y a las 9:40; lo importado hoy después de las 8:15 entra con la corrida de las 10:00 o con la del día siguiente.
+

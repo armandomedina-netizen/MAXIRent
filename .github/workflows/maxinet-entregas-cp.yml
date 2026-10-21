@@ -2,8 +2,8 @@ name: Maxinet Entregas CP Sync
 
 on:
   schedule:
-    # 9:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): el reporte ya cubre el día anterior completo
-    - cron: "30 15 * * *"
+    # 8:05 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): el reporte ya cubre el día anterior completo
+    - cron: "5 14 * * *"
   workflow_dispatch: {}
 
 permissions:
