@@ -185,3 +185,12 @@ El tablero LP (8:00 y 8:10), el Tablero CP y la Gestoría quedan dentro de la fr
 
 - El Vigilante lanza cada reporte con una sola función de ventanas (`ejecutarMatutino`, cada 5 minutos): a la hora de cada ventana lo dispara si no hay ya una corrida desde esa hora, reintenta hasta 3 veces y avisa si a las 8:45 no hay una exitosa. Los disparadores horarios de Apps Script no caen en el minuto exacto (llegan unos minutos antes o después de lo pedido), por eso la franja no se puede lograr con ellos.
 - El cron de respaldo de GitHub de cada workflow se alineó a su ventana. Excepción: Clientes Nuevos conserva el de las 10:00, porque Maxinet importa ese reporte a las 9:00 y a las 9:40; lo importado hoy después de las 8:15 entra con la corrida de las 10:00 o con la del día siguiente.
+
+### Query, Balance y Gestoría con ventana propia por la mañana (2026-10-21)
+
+La primera corrida del día de Query Sync, Balance y Gestoría ya no depende del disparador horario de Apps Script, que no cae en el minuto exacto: Query pasa a las 7:40, Balance a las 7:50 y Gestoría a las 8:20, con una ventana diaria cada uno en la función matutina del Vigilante (cada 5 minutos, activa de 7:35 a 9:30). Los disparadores horarios siguen para el resto del día, con su horario laboral (Query y Balance desde las 8:00, Gestoría desde las 8:30), así que no duplican la corrida de la mañana.
+
+- Orden: Query a las 7:40, antes del tablero LP de las 8:00, porque el sync lee su lista de rentas activas; Balance 10 minutos después, para que Query ya haya terminado. Los dos quedan después del corte de Maxinet (entre 7:00 y 7:30).
+- Avisos: Query avisa a las 7:55 si no tiene una corrida exitosa (antes de que arranque el tablero LP); el resto, a las 8:45.
+- Reintentos: hasta 3 por reporte y día, sin repetir una corrida en curso.
+

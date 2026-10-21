@@ -9,8 +9,8 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 | Workflow | Qué hace | Horario | Disparo externo | Detalle |
 |---|---|---|---|---|
 | `maxinet-sync.yml` | Sync completo del tablero LP y de la base (flota, columnas diarias, `Duración rentas`, ubicaciones) y captura de la proyección de mantenimiento | 8:00 y 8:10 | Sí (ventanas de 8:00 y 8:10, hasta 3 reintentos) | ADR 0003 y 0006 |
-| `maxinet-query-sync.yml` | Baja de Maxinet el cargo de reservas a la copia del Query | Cada hora, desde las 7:30 (la primera cae hacia las 7:40) | Sí | ADR 0003 |
-| `maxinet-balance.yml` | Entregas, retornos y solicitudes del BALANCE | Cada hora, desde las 7:30 (la primera cae hacia las 7:45) | Sí | ADR 0004 |
+| `maxinet-query-sync.yml` | Baja de Maxinet el cargo de reservas a la copia del Query | 7:40 y después cada hora, lunes a sábado desde las 8:00 | Sí (ventana de 7:40 y disparo cada hora) | ADR 0003 |
+| `maxinet-balance.yml` | Entregas, retornos y solicitudes del BALANCE | 7:50 y después cada hora, lunes a sábado desde las 8:00 | Sí (ventana de 7:50 y disparo cada hora) | ADR 0004 |
 | `gestoria-lp-cp-sync.yml` | Tickets de gestoría (todos los estatus) | 8:20 y después cada hora, lunes a sábado de 8:30 a 19:00 | Sí (ventana de 8:20 y disparo cada hora) | ADR 0005 |
 | `tablero-sac.yml` | Solicitudes de monday (SAC) a Sheets | Cada hora, lunes a viernes de 7:20 a 17:20 y sábado hasta las 14:20 | Sí | `automations/TableroSAC/README.md` |
 | `maxinet-clientes-nuevos-cp.yml` | Clientes nuevos del Tablero CP | 8:15 (el reloj de GitHub lo repite hacia las 10:00) | Sí (ventana de 8:15) | ADR 0002 |
