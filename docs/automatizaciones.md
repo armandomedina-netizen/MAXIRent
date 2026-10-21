@@ -4,7 +4,7 @@ Mapa de los procesos que corren en GitHub Actions, de dónde sacan los datos, a 
 
 ## Procesos
 
-Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo externo" es el proyecto de Apps Script `Vigilante_Maxinet`, que lanza el workflow a su hora y avisa por correo si pasa mucho tiempo sin una corrida exitosa. No está en el repositorio porque lleva el correo del equipo. El reloj de GitHub (`schedule`) llega entre 2 y 7 horas tarde, así que lo que depende solo de él no es puntual.
+Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo externo" es el proyecto de Apps Script `Vigilante_Maxinet`, que lanza el workflow a su hora y avisa por correo si pasa mucho tiempo sin una corrida exitosa. Los avisos llegan a las dos personas que vigilan las automatizaciones, y cada día a las 8:45 el Vigilante envía además un resumen con el estado de las ocho corridas de la mañana y del tablero LP (todas en orden o cuáles fallaron). No está en el repositorio porque lleva el correo del equipo. El reloj de GitHub (`schedule`) llega entre 2 y 7 horas tarde, así que lo que depende solo de él no es puntual.
 
 | Workflow | Qué hace | Horario | Disparo externo | Detalle |
 |---|---|---|---|---|

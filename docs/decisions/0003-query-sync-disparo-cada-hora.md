@@ -194,3 +194,10 @@ La primera corrida del día de Query Sync, Balance y Gestoría ya no depende del
 - Avisos: Query avisa a las 7:55 si no tiene una corrida exitosa (antes de que arranque el tablero LP); el resto, a las 8:45.
 - Reintentos: hasta 3 por reporte y día, sin repetir una corrida en curso.
 
+### Avisos a dos personas y resumen diario (2026-10-21)
+
+Los avisos del Vigilante (corrida sin éxito, tres fallos seguidos, error de Apps Script) llegan ahora a dos correos en vez de uno, para que quien mantiene las automatizaciones y quien usa los tableros se enteren a la vez. Los correos viven en el proyecto de Apps Script, no en el repositorio, que es público.
+
+- Resumen diario: a partir de las 8:45 la función matutina envía un correo por día (uno solo, controlado con la clave `resumen_<fecha>`) con una línea por reporte (las dos ventanas del tablero LP, Query, Balance, Tablero CP y Gestoría): `OK` o `FALLÓ` con el número de intentos. El asunto dice si todo está en orden o cuántos tienen problema. Así también se confirma cuando las automatizaciones funcionan, no solo cuando fallan.
+- Para desactivarlo basta con quitar la propiedad `resumen` de la constante `MATUTINO` y la llamada a `resumenMatutino_`.
+
