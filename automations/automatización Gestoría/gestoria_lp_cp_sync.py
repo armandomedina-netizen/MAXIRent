@@ -42,7 +42,8 @@ Lógica de sincronización (decidida por el usuario, no inventada aquí):
        de que la fila entró al Sheet y las pestañas GESTORIA, ÍNDICE SINIESTRALIDAD,
        RESUMEN y 2026 cuentan con ellos. Sólo se escribe si Maxinet trae un valor
        (nunca se borra una celda porque Maxinet venga vacío) y, en la fecha, si el
-       año es verosímil (Maxinet llegó a traer 6/2/0026). Si un campo cambiaría en
+       año es verosímil (un "26" tecleado llega como 0026 y se lee como 2026, igual
+       que Google Sheets; cualquier otro año imposible se ignora). Si un campo cambiaría en
        más de la mitad de las filas se omite y se avisa (señal de que Maxinet
        cambió de formato).
     El resto de las columnas de una fila ya existente (días, cargo adicional,
@@ -368,6 +369,9 @@ def _fecha_verosimil(iso: str):
     if not m:
         return None
     anio, mes, dia = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if anio < 100:
+        # Maxinet guarda un "26" tecleado como año 0026 (folios 1503 y 1683); Google Sheets lo lee como 2026.
+        anio += 2000
     if not (ANIO_MIN_FECHA <= anio <= date.today().year + 1):
         return None
     return anio, mes, dia
