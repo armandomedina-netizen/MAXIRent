@@ -23,8 +23,10 @@ Variables de entorno esperadas (usar un gestor de secretos, nunca hardcodear):
     WORKSHEET_NAME           -> pestaña dentro del primer Sheet
     SPREADSHEET_ID_SECUNDARIO -> ID del segundo archivo de Sheets (FLOTA LP / UTILIZACION V3)
     WORKSHEET_FLOTA_LP       -> nombre de la pestaña "FLOTA LP"
-    WORKSHEET_UTILIZACION    -> nombre de la pestaña "UTILIZACION V3"
-    WORKSHEET_GRUPO_AUTOS    -> nombre de la pestaña "UTI. GRUPO DE AUTOS V1"
+    WORKSHEET_UTILIZACION    -> pestaña de utilización por día (hoy "REPORTE DE FLOTA", antes
+                                "UTILIZACION V3"): nombre o gid; opcional, ver PESTANA_UTILIZACION
+    WORKSHEET_GRUPO_AUTOS    -> pestaña de flota por grupo (hoy "FLOTA POR GRUPO", antes
+                                "UTI. GRUPO DE AUTOS V1"): nombre o gid; opcional, ver PESTANA_GRUPO_AUTOS
 
 Flujo completo de la automatización diaria:
     1. Login en Maxinet + descarga de datos de flota del día anterior.
@@ -54,6 +56,7 @@ Estructura del primer Sheet (confirmada por el usuario):
 
 import os
 import re
+import difflib
 import sys
 import copy
 import time
@@ -205,7 +208,8 @@ def _leer_tarifa_detalle(rango: str = "A:U") -> list:
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_QUERY"])
-    filas = sh.worksheet(HOJA_TARIFA_DETALLE).get(rango, value_render_option="UNFORMATTED_VALUE")
+    pestana = _resolver_pestana(sh, os.environ.get("WORKSHEET_TARIFA_DETALLE") or HOJA_TARIFA_DETALLE)
+    filas = pestana.get(rango, value_render_option="UNFORMATTED_VALUE")
     encabezado = list(filas[0]) if filas else []
     for idx, esperado in ENCABEZADOS_TARIFA_DETALLE.items():
         encontrado = str(encabezado[idx]).strip() if idx < len(encabezado) else ""
@@ -332,16 +336,60 @@ def actualizar_sheet(worksheet, df_nuevo: pd.DataFrame):
 # SEGUNDO ARCHIVO DE GOOGLE SHEETS
 # Contiene las pestañas "FLOTA LP" y "UTILIZACION V3"
 
-def conectar_sheet_secundario(nombre_pestana: str):
-    """Conecta al segundo archivo de Sheets (distinto del primero) y devuelve
-    la pestaña solicitada."""
+# Nombres por defecto de las dos pestañas diarias del tablero. Los secrets
+# WORKSHEET_UTILIZACION y WORKSHEET_GRUPO_AUTOS los sobrescriben y pueden
+# llevar el nombre o el gid (el número tras "#gid=" en la URL, que no cambia
+# aunque renombren la pestaña). Si el nombre no existe se prueba el alias
+# (el nombre de antes o el de ahora) antes de fallar.
+PESTANA_UTILIZACION = "REPORTE DE FLOTA"   # antes "UTILIZACION V3"
+PESTANA_GRUPO_AUTOS = "FLOTA POR GRUPO"    # antes "UTI. GRUPO DE AUTOS V1"
+ALIAS_PESTANAS = {
+    "REPORTE DE FLOTA": ("UTILIZACION V3",),
+    "UTILIZACION V3": ("REPORTE DE FLOTA",),
+    "FLOTA POR GRUPO": ("UTI. GRUPO DE AUTOS V1",),
+    "UTI. GRUPO DE AUTOS V1": ("FLOTA POR GRUPO",),
+}
+
+
+def _libro_secundario():
+    """Libro del tablero (SPREADSHEET_ID_SECUNDARIO), sin depender de que
+    exista una pestaña concreta."""
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"],
         scopes=["https://www.googleapis.com/auth/spreadsheets"],
     )
-    gc = gspread.authorize(creds)
-    sh = gc.open_by_key(os.environ["SPREADSHEET_ID_SECUNDARIO"])
-    return sh.worksheet(nombre_pestana)
+    return gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_SECUNDARIO"])
+
+
+def _resolver_pestana(libro, referencia: str):
+    """La pestaña `referencia` del libro: por gid (si es un número), por
+    nombre o por su alias conocido. Si no existe, el error dice cuántas
+    pestañas tiene el libro y cuáles se parecen al nombre pedido."""
+    nombre = str(referencia).strip()
+    if nombre.isdigit():
+        return libro.get_worksheet_by_id(int(nombre))
+    try:
+        return libro.worksheet(nombre)
+    except gspread.exceptions.WorksheetNotFound:
+        for alias in ALIAS_PESTANAS.get(nombre, ()):
+            try:
+                hoja = libro.worksheet(alias)
+            except gspread.exceptions.WorksheetNotFound:
+                continue
+            log.warning("La pestaña '%s' no existe; se usa '%s'", nombre, alias)
+            return hoja
+        # El repositorio y sus logs son públicos: no se vuelca el inventario de
+        # pestañas, sólo cuántas hay y hasta tres nombres parecidos.
+        titulos = [w.title for w in libro.worksheets()]
+        parecidos = difflib.get_close_matches(nombre, titulos, n=3, cutoff=0.4)
+        raise gspread.exceptions.WorksheetNotFound(
+            f"{nombre} (el libro tiene {len(titulos)} pestañas; nombres parecidos: {', '.join(parecidos) or 'ninguno'})")
+
+
+def conectar_sheet_secundario(nombre_pestana: str):
+    """Conecta al segundo archivo de Sheets (distinto del primero) y devuelve
+    la pestaña solicitada (nombre, alias o gid, ver _resolver_pestana)."""
+    return _resolver_pestana(_libro_secundario(), nombre_pestana)
 
 
 def conectar_sheet_por_nombre(nombre_pestana: str):
@@ -922,6 +970,34 @@ def actualizar_periodo_resumen(worksheet) -> None:
     )
 
 
+# Extensión segura de fórmulas hacia abajo (RESUMEN y TABLAS): las filas de
+# origen con fórmulas de derrame no se copian y nunca se pega sobre celdas
+# que ya tienen contenido.
+FORMULAS_DE_DERRAME = ("TRANSPOSE(", "UNIQUE(", "FILTER(", "SORT(", "ARRAYFORMULA(")
+
+
+def _tiene_derrame(celdas) -> bool:
+    return any(f in str(c) for c in celdas for f in FORMULAS_DE_DERRAME)
+
+
+def _tramos_libres(destino: list, n_cols: int) -> tuple:
+    """(tramos, omitidas): tramos [(c_ini, c_fin)] de columnas (relativas al
+    bloque) cuyo destino está VACÍO y cuántas columnas se omiten por tener
+    contenido."""
+    libres = [all(str(fila[c]) == "" for fila in destino if c < len(fila)) for c in range(n_cols)]
+    tramos, c = [], 0
+    while c < n_cols:
+        if not libres[c]:
+            c += 1
+            continue
+        c_fin = c
+        while c_fin + 1 < n_cols and libres[c_fin + 1]:
+            c_fin += 1
+        tramos.append((c, c_fin))
+        c = c_fin + 1
+    return tramos, libres.count(False)
+
+
 # Bloques pivote de "RESUMEN": cada uno tiene una columna GUÍA de fechas que se
 # autoextiende sola (=TRANSPOSE(UNIQUE('UTI. GRUPO DE AUTOS V1'!2:2)) en la
 # fila 1) y, a su derecha, las fórmulas por fila (año, periodo y promedio por
@@ -934,7 +1010,7 @@ def actualizar_periodo_resumen(worksheet) -> None:
 # bloques se buscan por su fórmula guía y, además, nunca se escribe sobre
 # celdas con contenido ni se copia una fila de encabezados o una fórmula de
 # derrame.
-GUIA_PIVOTE_RESUMEN = "=TRANSPOSE(UNIQUE('UTI. GRUPO DE AUTOS V1'!2:2"
+GUIA_PIVOTE_RESUMEN = re.compile(r"^=TRANSPOSE\(UNIQUE\('[^']+'!2:2\)\)")
 
 
 def _bloques_pivote_resumen(worksheet) -> list:
@@ -945,7 +1021,7 @@ def _bloques_pivote_resumen(worksheet) -> list:
     fila2 = worksheet.row_values(2, value_render_option="FORMULA")
     bloques = []
     for g, x in enumerate(fila1):
-        if not str(x).startswith(GUIA_PIVOTE_RESUMEN):
+        if not GUIA_PIVOTE_RESUMEN.match(str(x)):
             continue
         fin = g
         while fin + 1 < len(fila2) and str(fila2[fin + 1]) != "":
@@ -1004,7 +1080,7 @@ def extender_formulas_resumen(worksheet, aplicar: bool = True) -> list:
 
         origen = worksheet.get(
             f"{col_ini}{ultima_fila_formula}:{col_fin}{ultima_fila_formula}", value_render_option="FORMULA")
-        if any("TRANSPOSE(" in str(c) or "UNIQUE(" in str(c) for c in (origen[0] if origen else [])):
+        if _tiene_derrame(origen[0] if origen else []):
             log.warning("RESUMEN: la fila %d del bloque %s:%s tiene fórmulas de derrame; no se extiende",
                         ultima_fila_formula, col_ini, col_fin)
             continue
@@ -1014,22 +1090,11 @@ def extender_formulas_resumen(worksheet, aplicar: bool = True) -> list:
             f"{col_ini}{ultima_fila_formula + 1}:{col_fin}{ultima_fila_fecha}", value_render_option="FORMULA")
         idx_ini = _col_letra_a_indice(col_ini)
         idx_fin = _col_letra_a_indice(col_fin)
-        libres = []
-        for c in range(idx_fin - idx_ini + 1):
-            vacia = all(str(fila[c]) == "" for fila in destino if c < len(fila))
-            libres.append(vacia)
-        omitidas = libres.count(False)
+        tramos, omitidas = _tramos_libres(destino, idx_fin - idx_ini + 1)
         if omitidas:
             log.info("RESUMEN: %d columnas del bloque %s:%s ya tienen contenido en las filas nuevas y no se tocan",
                      omitidas, col_ini, col_fin)
-        c = 0
-        while c < len(libres):
-            if not libres[c]:
-                c += 1
-                continue
-            c_fin = c
-            while c_fin + 1 < len(libres) and libres[c_fin + 1]:
-                c_fin += 1
+        for c, c_fin in tramos:
             requests_body.append({
                 "copyPaste": {
                     "source": {
@@ -1045,7 +1110,6 @@ def extender_formulas_resumen(worksheet, aplicar: bool = True) -> list:
                     "pasteType": "PASTE_FORMULA",
                 }
             })
-            c = c_fin + 1
         log.info(
             "RESUMEN: fórmulas %s:%s extendidas de fila %d a %d",
             col_ini, col_fin, ultima_fila_formula, ultima_fila_fecha,
@@ -1121,11 +1185,18 @@ def _generar_lista_periodos_acotada(hoy: date) -> list:
 def _extender_bloques_formulas(worksheet, sheet_id, spreadsheet, bloques, ultima_fila) -> list:
     """Arrastra hacia abajo, desde la última fila que ya tiene fórmula hasta
     `ultima_fila`, cada bloque (col_ini, col_fin) de la lista. Devuelve las
-    requests de copyPaste armadas (no las ejecuta)."""
+    requests de copyPaste armadas (no las ejecuta). Las letras son las del
+    diseño de 'TABLAS' y pueden dejar de coincidir si se mueven columnas, así
+    que: un bloque fuera de la hoja se omite, no se copia una fila con
+    fórmulas de derrame y sólo se pega en columnas con el destino vacío."""
     requests_body = []
     for col_ini, col_fin in bloques:
         idx_ini = _col_letra_a_indice(col_ini)
         idx_fin = _col_letra_a_indice(col_fin)
+        if idx_fin >= worksheet.col_count:
+            log.warning("TABLAS: el bloque %s:%s queda fuera de la hoja (%d columnas); no se extiende",
+                        col_ini, col_fin, worksheet.col_count)
+            continue
         col_formula = worksheet.get(f"{col_fin}1:{col_fin}{ultima_fila}", value_render_option="FORMULA")
         ultima_fila_formula = 0
         for i, fila in enumerate(col_formula, start=1):
@@ -1136,25 +1207,39 @@ def _extender_bloques_formulas(worksheet, sheet_id, spreadsheet, bloques, ultima
             log.info("TABLAS: fórmulas %s:%s ya al día (fila %d)", col_ini, col_fin, ultima_fila_formula)
             continue
 
-        requests_body.append({
-            "copyPaste": {
-                "source": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
-                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
-                },
-                "destination": {
-                    "sheetId": sheet_id,
-                    "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila,
-                    "startColumnIndex": idx_ini, "endColumnIndex": idx_fin + 1,
-                },
-                "pasteType": "PASTE_FORMULA",
-            }
-        })
-        log.info(
-            "TABLAS: fórmulas %s:%s extendidas de fila %d a %d",
-            col_ini, col_fin, ultima_fila_formula, ultima_fila,
-        )
+        origen = worksheet.get(
+            f"{col_ini}{ultima_fila_formula}:{col_fin}{ultima_fila_formula}", value_render_option="FORMULA")
+        if _tiene_derrame(origen[0] if origen else []):
+            log.warning("TABLAS: la fila %d del bloque %s:%s tiene fórmulas de derrame; no se extiende",
+                        ultima_fila_formula, col_ini, col_fin)
+            continue
+        destino = worksheet.get(
+            f"{col_ini}{ultima_fila_formula + 1}:{col_fin}{ultima_fila}", value_render_option="FORMULA")
+        tramos, omitidas = _tramos_libres(destino, idx_fin - idx_ini + 1)
+        if omitidas:
+            log.info("TABLAS: %d columnas del bloque %s:%s ya tienen contenido en las filas nuevas y no se tocan",
+                     omitidas, col_ini, col_fin)
+        for c, c_fin in tramos:
+            requests_body.append({
+                "copyPaste": {
+                    "source": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": ultima_fila_formula - 1, "endRowIndex": ultima_fila_formula,
+                        "startColumnIndex": idx_ini + c, "endColumnIndex": idx_ini + c_fin + 1,
+                    },
+                    "destination": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": ultima_fila_formula, "endRowIndex": ultima_fila,
+                        "startColumnIndex": idx_ini + c, "endColumnIndex": idx_ini + c_fin + 1,
+                    },
+                    "pasteType": "PASTE_FORMULA",
+                }
+            })
+        if tramos:
+            log.info(
+                "TABLAS: fórmulas %s:%s extendidas de fila %d a %d",
+                col_ini, col_fin, ultima_fila_formula, ultima_fila,
+            )
     return requests_body
 
 
@@ -1811,20 +1896,13 @@ def completar_retornos_mes_duracion_rentas(worksheet, fila_encabezado=10, fila_r
 #   4. si no se puede escribir (rango protegido, etc.) avisa y sigue con lo
 #      demás: estas hojas son secundarias y no deben detener el sync.
 # Nunca borra ni sobrescribe contenido existente.
-BLOQUES_FORMULAS_TABLERO = {
-    "UTILIZACION POR GRUPO": [
-        {"guia": "A", "desde": 4, "cols": ("B", "P"), "holgura": 3},
-        {"guia": "R", "desde": 4, "cols": ("S", "AG"), "holgura": 3},
-    ],
-    "RESUMEN DE RENTAS ACTIVAS": [
-        {"guia": "A", "desde": 4, "cols": ("B", "F"), "holgura": 10},
-        {"guia": "L", "desde": 4, "cols": ("M", "N"), "holgura": 10},
-        {"guia": "P", "desde": 4, "cols": ("Q", "R"), "holgura": 10},
-    ],
-    "PROXIMOS RETORNOS": [
-        {"guia": "J", "desde": 5, "cols": ("K", "P"), "holgura": 10},
-    ],
-}
+# Vacío desde el 20-oct-2026: "UTILIZACION POR GRUPO" desapareció del tablero y
+# "RESUMEN RENTA ACTIVAS" (antes "RESUMEN DE RENTAS ACTIVAS") y "PROXIMOS
+# RETORNOS" pasaron a fórmulas matriciales / IMPORTRANGE que se autoextienden,
+# así que no hay fórmulas por fila que arrastrar. Si una hoja nueva lista algo
+# con una fórmula de derrame y fórmulas por fila al lado, se agrega aquí con su
+# nombre actual: {"NOMBRE": [{"guia": "A", "desde": 4, "cols": ("B", "F"), "holgura": 10}]}
+BLOQUES_FORMULAS_TABLERO = {}
 ERRORES_SHEETS = {"#REF!", "#VALUE!", "#N/A", "#DIV/0!", "#NAME?", "#NUM!", "#NULL!", "#ERROR!"}
 MESES_MAYUSCULAS = [
     "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
@@ -1932,8 +2010,11 @@ def _mantener_formulas_libro(libro, bloques_por_hoja: dict, etiqueta: str) -> No
 
 def mantener_formulas_tablero() -> None:
     """Hojas de solo fórmulas del libro del tablero (BLOQUES_FORMULAS_TABLERO)."""
+    if not BLOQUES_FORMULAS_TABLERO:
+        log.info("Fórmulas del tablero: no hay hojas por mantener")
+        return
     try:
-        libro = conectar_sheet_secundario(next(iter(BLOQUES_FORMULAS_TABLERO))).spreadsheet
+        libro = _libro_secundario()
     except Exception as e:
         log.warning("Fórmulas del tablero: no se pudo abrir el libro (%s)", type(e).__name__)
         return
@@ -2102,7 +2183,6 @@ def actualizar_mes_resumen_afectaciones(worksheet, hoy: date = None) -> None:
 # (la cuenta de servicio no es editora) avisa y sigue con el siguiente.
 GRAFICOS_CRECIENTES = {
     "tablero": {
-        "GRAFICOS UTILIZACION": {"excluir": ["ENVIOS A SEMINUEVOS LP", "ENVIOS A SEMINUEVOS"]},
         "COMPORTAMIENTO DE CUENTAS": {},
         "FALLAS DE ENTREGAS": {},
         "HISTORICO NUEVA MES": {},
@@ -2264,7 +2344,7 @@ def mantener_graficos(hoy: date = None) -> None:
     falla (hoja protegida, API...) se avisa y no detiene el sync."""
     hoy = hoy or _hoy_cdmx()
     try:
-        libro = conectar_sheet_secundario(next(iter(BLOQUES_FORMULAS_TABLERO))).spreadsheet
+        libro = _libro_secundario()
         config = dict(GRAFICOS_CRECIENTES["tablero"])
         config["RESUMEN AFECTACIONES"] = {"excluir": ["*"]}  # sólo la regla por mes (sección 3)
         _mantener_graficos_libro(libro, config, hoy)
@@ -2558,6 +2638,17 @@ def actualizar_proyeccion_mantenimientos(
         )
 
 
+def _paso_auxiliar(nombre: str, paso) -> None:
+    """Corre un paso auxiliar del sync. Si falla (hoja movida o renombrada,
+    cuota, protección...) lo avisa en el log y como anotación de la corrida y
+    el sync sigue: lo crítico (base y columnas diarias) ya está hecho."""
+    try:
+        paso()
+    except Exception as e:
+        log.warning("%s: no se pudo completar (%s: %s)", nombre, type(e).__name__, str(e)[:160])
+        print(f"::warning title=Maxinet Sync::{nombre} no se pudo completar ({type(e).__name__})", flush=True)
+
+
 def main():
     try:
         session = login_maxinet()
@@ -2572,47 +2663,16 @@ def main():
         # columna que se está por congelar recalcularía contra la fecha
         # equivocada, dando 0 en vez del valor histórico real (confirmado con
         # el equipo). Este orden preserva el histórico correctamente.
-        worksheet_util = conectar_sheet_secundario(os.environ["WORKSHEET_UTILIZACION"])
+        worksheet_util = conectar_sheet_secundario(os.environ.get("WORKSHEET_UTILIZACION") or PESTANA_UTILIZACION)
         avanzar_columna_formulas(worksheet_util)
         actualizar_vor_cliente(worksheet_util, session)
 
-        worksheet_grupo_autos = conectar_sheet_secundario(os.environ["WORKSHEET_GRUPO_AUTOS"])
+        worksheet_grupo_autos = conectar_sheet_secundario(os.environ.get("WORKSHEET_GRUPO_AUTOS") or PESTANA_GRUPO_AUTOS)
         avanzar_columna_grupo_autos(worksheet_grupo_autos)
 
-        worksheet_resumen = conectar_sheet_secundario("RESUMEN")
-        actualizar_periodo_resumen(worksheet_resumen)
-        extender_formulas_resumen(worksheet_resumen)
-
-        worksheet_tablas = conectar_sheet_secundario("TABLAS")
-        actualizar_tablas(worksheet_tablas)
-
-        # Hojas de solo fórmulas: no deben detener el sync si algo falla.
-        mantener_formulas_tablero()
-        mantener_graficos()
-        try:
-            actualizar_mes_resumen_afectaciones(conectar_sheet_secundario("RESUMEN AFECTACIONES"))
-        except Exception as e:
-            log.warning("RESUMEN AFECTACIONES: no se pudo actualizar el mes (%s)", type(e).__name__)
-
-        worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
-        try:
-            actualizar_detalle_duracion_rentas(worksheet_duracion_rentas, session)
-            asegurar_formulas_on_hire_duracion_rentas(worksheet_duracion_rentas)
-            completar_retornos_mes_duracion_rentas(worksheet_duracion_rentas)
-        except Exception as e:
-            log.warning("Duración rentas: no se pudo actualizar el detalle (%s: %s)", type(e).__name__, str(e)[:200])
-        avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
-        avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
-
-        # "Proyección de Mantenimientos" YA NO se actualiza aquí -- corre
-        # aparte a las 9:10 am (10 minutos después de este sync) para que
-        # el % de vencimiento se capture siempre a una hora fija. Nuvia
-        # captura el suyo a mano también cerca de esa hora; si ambos leyeran
-        # Maxinet en momentos distintos del día el % no coincidiría (es un
-        # snapshot en vivo, cambia según cuándo se consulte -- confirmado:
-        # el mismo día dio 6.75% a la hora de Nuvia y 7.12% en otra corrida
-        # nuestra). Ver main_proyeccion_mtto().
-
+        # La base se escribe en cuanto avanzaron las columnas diarias (el orden
+        # de arriba se respeta): es lo que alimenta todo el tablero y no puede
+        # depender de que las hojas auxiliares de abajo estén como se esperaba.
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
 
@@ -2631,6 +2691,42 @@ def main():
         except Exception as e:
             log.warning("UBICACIONES: no se pudo actualizar (%s: %s)", type(e).__name__, str(e)[:120])
 
+        # Todo lo que sigue son hojas auxiliares del tablero (periodos, fórmulas
+        # por fila, gráficos, Duración rentas): si el equipo mueve o renombra
+        # algo, cada paso avisa en el log y en el resumen de la corrida y el
+        # sync sigue, en vez de caerse antes de actualizar la base (así pasó
+        # el 20-oct-2026 con TABLAS).
+        _paso_auxiliar("RESUMEN (periodo)", lambda: actualizar_periodo_resumen(conectar_sheet_secundario("RESUMEN")))
+        _paso_auxiliar("RESUMEN (fórmulas)", lambda: extender_formulas_resumen(conectar_sheet_secundario("RESUMEN")))
+        _paso_auxiliar("TABLAS", lambda: actualizar_tablas(conectar_sheet_secundario("TABLAS")))
+
+        # Hojas de solo fórmulas: no deben detener el sync si algo falla.
+        mantener_formulas_tablero()
+        mantener_graficos()
+        _paso_auxiliar(
+            "RESUMEN AFECTACIONES (mes)",
+            lambda: actualizar_mes_resumen_afectaciones(conectar_sheet_secundario("RESUMEN AFECTACIONES")))
+
+        def _duracion_rentas():
+            worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
+            try:
+                actualizar_detalle_duracion_rentas(worksheet_duracion_rentas, session)
+                asegurar_formulas_on_hire_duracion_rentas(worksheet_duracion_rentas)
+                completar_retornos_mes_duracion_rentas(worksheet_duracion_rentas)
+            except Exception as e:
+                log.warning("Duración rentas: no se pudo actualizar el detalle (%s: %s)", type(e).__name__, str(e)[:200])
+            avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
+            avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
+        _paso_auxiliar("Duración rentas", _duracion_rentas)
+
+        # "Proyección de Mantenimientos" YA NO se actualiza aquí -- corre
+        # aparte a las 8:10 am (10 minutos después de este sync). El % de cada
+        # día sale del histórico que Maxinet publica después de su corte
+        # nocturno (entre las 7:00 y las 7:30), así que la hora exacta no
+        # cambia el valor; si a esa hora aún no estuviera publicado, el día
+        # queda vacío y se llena en la corrida siguiente. Ver
+        # main_proyeccion_mtto().
+
         # FLOTA LP ya NO se escribe desde aquí: esa pestaña se alimenta con
         # un IMPORTRANGE en vivo desde "RESERVAS CP&LP" (decisión del
         # usuario). Escribir aquí choca con el array del IMPORTRANGE y lo
@@ -2644,9 +2740,8 @@ def main():
 
 
 def main_proyeccion_mtto(forzar: bool = False):
-    """Corre sola, a las 9:10 am -- 10 minutos después de main() -- para que
-    el % de vencimiento de 'Proyección de Mantenimientos' se capture siempre
-    a la misma hora fija (ver comentario en main())."""
+    """Corre sola, a las 8:10 am -- 10 minutos después de main() -- ya con el
+    histórico de Maxinet del día anterior publicado (ver comentario en main())."""
     try:
         session = login_maxinet()
         worksheet_proyeccion_mtto = conectar_sheet_por_nombre(HOJA_PROYECCION_MTTO)

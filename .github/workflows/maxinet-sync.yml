@@ -2,21 +2,23 @@ name: Maxinet Sync
 
 # La etiqueta del título (completo | proyeccion-mtto) permite al Apps Script de
 # disparo diario saber qué ventana ya corrió: la API de runs no expone el input.
-run-name: Maxinet Sync - ${{ (github.event.schedule == '10 15 * * *' || inputs.modo == 'solo_proyeccion_mtto') && 'proyeccion-mtto' || 'completo' }}
+run-name: Maxinet Sync - ${{ (github.event.schedule == '10 14 * * *' || inputs.modo == 'solo_proyeccion_mtto') && 'proyeccion-mtto' || 'completo' }}
 
 on:
   schedule:
-    # 9:00 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022)
-    - cron: "0 15 * * *"
-    # 9:10 AM -- solo "Proyección de Mantenimientos", 10 minutos después del
-    # sync completo, para que el % de vencimiento (snapshot en vivo de
-    # Maxinet) se capture siempre a la misma hora y no varíe frente al
-    # valor que Nuvia captura a mano.
-    - cron: "10 15 * * *"
+    # 8:00 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022).
+    # Maxinet cierra la foto de flota del día anterior de madrugada (entre las
+    # 7:00 y las 7:30; el último mensaje de GPS de cada foto cae a las 06:27 del
+    # día siguiente), así que a las 8:00 ya está lista. Ver ADR 0003.
+    - cron: "0 14 * * *"
+    # 8:10 AM -- solo "Proyección de Mantenimientos", 10 minutos después del
+    # sync completo. El % de cada día sale del histórico que Maxinet publica
+    # después de su corte, así que la hora exacta ya no afecta al valor.
+    - cron: "10 14 * * *"
   workflow_dispatch:
     inputs:
       modo:
-        description: "completo = sync de las 9:00; solo_proyeccion_mtto = captura de las 9:10"
+        description: "completo = sync de las 8:00; solo_proyeccion_mtto = captura de las 8:10"
         type: choice
         options:
           - completo
@@ -29,8 +31,11 @@ on:
 # distintos para que una captura de Proyección en cola no desplace a un sync
 # completo en cola (GitHub conserva una sola corrida pendiente por grupo).
 concurrency:
-  group: maxinet-sync-${{ (github.event.schedule == '10 15 * * *' || inputs.modo == 'solo_proyeccion_mtto') && 'proyeccion-mtto' || 'completo' }}
+  group: maxinet-sync-${{ (github.event.schedule == '10 14 * * *' || inputs.modo == 'solo_proyeccion_mtto') && 'proyeccion-mtto' || 'completo' }}
   cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   sync:
@@ -64,17 +69,18 @@ jobs:
           WORKSHEET_NAME: ${{ secrets.WORKSHEET_NAME }}
           SPREADSHEET_ID_SECUNDARIO: ${{ secrets.SPREADSHEET_ID_SECUNDARIO }}
           SPREADSHEET_ID_QUERY: ${{ secrets.SPREADSHEET_ID_QUERY }}
+          WORKSHEET_TARIFA_DETALLE: ${{ secrets.WORKSHEET_TARIFA_DETALLE }}
           WORKSHEET_FLOTA_LP: ${{ secrets.WORKSHEET_FLOTA_LP }}
           WORKSHEET_UTILIZACION: ${{ secrets.WORKSHEET_UTILIZACION }}
           WORKSHEET_GRUPO_AUTOS: ${{ secrets.WORKSHEET_GRUPO_AUTOS }}
           EVENTO_SCHEDULE: ${{ github.event.schedule }}
           MODO: ${{ inputs.modo }}
-        # El cron de las 9:10 am ("10 15 * * *") o un disparo manual con
+        # El cron de las 8:10 am ("10 14 * * *") o un disparo manual con
         # modo = solo_proyeccion_mtto solo actualizan "Proyección de
-        # Mantenimientos"; el de las 9:00 am (y un disparo manual completo)
+        # Mantenimientos"; el de las 8:00 am (y un disparo manual completo)
         # corren el sync completo de siempre.
         run: |
-          if [ "$EVENTO_SCHEDULE" = "10 15 * * *" ] || [ "$MODO" = "solo_proyeccion_mtto" ]; then
+          if [ "$EVENTO_SCHEDULE" = "10 14 * * *" ] || [ "$MODO" = "solo_proyeccion_mtto" ]; then
             python maxinet_sync.py --solo-proyeccion-mtto
           else
             python maxinet_sync.py

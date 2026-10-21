@@ -1,0 +1,41 @@
+name: Pruebas
+
+# Corre las pruebas automáticas de las automatizaciones que las tienen, en cada PR y
+# en cada integración a main. No usa secrets ni toca ningún Sheet: las pruebas trabajan
+# con hojas simuladas.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        proyecto: [maxinet-sync, TableroSAC]
+    defaults:
+      run:
+        working-directory: automations/${{ matrix.proyecto }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+
+      - name: Pruebas
+        run: python -m pytest tests -q

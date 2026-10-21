@@ -2,13 +2,21 @@ name: Maxinet Entregas CP Sync
 
 on:
   schedule:
-    # 9:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): el reporte ya cubre el día anterior completo
-    - cron: "30 15 * * *"
+    # 8:05 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): el reporte ya cubre el día anterior completo
+    - cron: "5 14 * * *"
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maxinet-entregas-cp
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: automations/maxinet-entregas-cp
