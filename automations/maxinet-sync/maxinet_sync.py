@@ -2691,13 +2691,12 @@ def main():
         _paso_auxiliar("Duración rentas", _duracion_rentas)
 
         # "Proyección de Mantenimientos" YA NO se actualiza aquí -- corre
-        # aparte a las 9:10 am (10 minutos después de este sync) para que
-        # el % de vencimiento se capture siempre a una hora fija. Nuvia
-        # captura el suyo a mano también cerca de esa hora; si ambos leyeran
-        # Maxinet en momentos distintos del día el % no coincidiría (es un
-        # snapshot en vivo, cambia según cuándo se consulte -- confirmado:
-        # el mismo día dio 6.75% a la hora de Nuvia y 7.12% en otra corrida
-        # nuestra). Ver main_proyeccion_mtto().
+        # aparte a las 8:10 am (10 minutos después de este sync). El % de cada
+        # día sale del histórico que Maxinet publica después de su corte
+        # nocturno (entre las 7:00 y las 7:30), así que la hora exacta no
+        # cambia el valor; si a esa hora aún no estuviera publicado, el día
+        # queda vacío y se llena en la corrida siguiente. Ver
+        # main_proyeccion_mtto().
 
         # FLOTA LP ya NO se escribe desde aquí: esa pestaña se alimenta con
         # un IMPORTRANGE en vivo desde "RESERVAS CP&LP" (decisión del
@@ -2712,9 +2711,8 @@ def main():
 
 
 def main_proyeccion_mtto(forzar: bool = False):
-    """Corre sola, a las 9:10 am -- 10 minutos después de main() -- para que
-    el % de vencimiento de 'Proyección de Mantenimientos' se capture siempre
-    a la misma hora fija (ver comentario en main())."""
+    """Corre sola, a las 8:10 am -- 10 minutos después de main() -- ya con el
+    histórico de Maxinet del día anterior publicado (ver comentario en main())."""
     try:
         session = login_maxinet()
         worksheet_proyeccion_mtto = conectar_sheet_por_nombre(HOJA_PROYECCION_MTTO)

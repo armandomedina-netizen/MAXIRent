@@ -2,8 +2,8 @@ name: Maxinet Frecuentes Activos CP Sync
 
 on:
   schedule:
-    # 9:45 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): revisión diaria, la consulta tarda ~2 min
-    - cron: "45 15 * * *"
+    # 8:10 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): revisión diaria, la consulta tarda ~2 min
+    - cron: "10 14 * * *"
   workflow_dispatch: {}
 
 permissions:
