@@ -8,7 +8,7 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 
 | Workflow | Qué hace | Horario | Disparo externo | Detalle |
 |---|---|---|---|---|
-| `maxinet-sync.yml` | Sync completo del tablero LP y de la base (flota, columnas diarias, `Duración rentas`, ubicaciones) y captura de la proyección de mantenimiento | 9:00 y 9:10 | Sí (ventanas de 9:00 y 9:10, hasta 3 reintentos) | ADR 0003 y 0006 |
+| `maxinet-sync.yml` | Sync completo del tablero LP y de la base (flota, columnas diarias, `Duración rentas`, ubicaciones) y captura de la proyección de mantenimiento | 8:00 y 8:10 | Sí (ventanas de 8:00 y 8:10, hasta 3 reintentos) | ADR 0003 y 0006 |
 | `maxinet-query-sync.yml` | Baja de Maxinet el cargo de reservas a la copia del Query | Cada hora | Sí | ADR 0003 |
 | `maxinet-balance.yml` | Entregas, retornos y solicitudes del BALANCE | Cada hora de 8:17 a 18:17 | Sí | ADR 0004 |
 | `gestoria-lp-cp-sync.yml` | Tickets de gestoría (todos los estatus) | 8:45, 12:45 y 16:45 | Sí (cada hora, lunes a sábado de 8:30 a 19:00) | ADR 0005 |
@@ -40,6 +40,8 @@ Todos viven en Settings → Secrets and variables → Actions. Nada de esto se i
 **Un paso auxiliar falla.** Lo crítico del sync completo (descarga, avance de las columnas diarias y escritura de la base) va primero. `RESUMEN`, `TABLAS`, `Duración rentas` y los gráficos son pasos auxiliares: si fallan, el log y el resumen de la corrida llevan un aviso (`::warning`) y el sync sigue. Un aviso repetido hay que atenderlo; no se arregla solo.
 
 **Un día se quedó sin procesar.** Maxinet devuelve la foto de flota de cualquier fecha pasada. El avance diario de las columnas debe recuperarse en orden, un día a la vez, y esperar a que la hoja de flota muestre la fecha antes de pasar al siguiente día (si no, se congela la columna con datos de otro día). Hoy el procedimiento se hace con un script local; está pendiente versionarlo.
+
+**A qué hora hay datos nuevos.** Maxinet cierra la foto de flota del día anterior de madrugada (entre las 7:00 y las 7:30 según sistemas; el último mensaje de GPS de cada foto cae a las 06:27 del día siguiente). Por eso el sync completo corre a las 8:00: antes del corte la foto del día anterior todavía no existe y el reporte de "hoy" viene vacío.
 
 **Sospechas de que algo no corre.** `gh run list --workflow <archivo>.yml --limit 10` muestra las últimas corridas, su evento (`schedule` o `workflow_dispatch`) y su resultado. Una corrida completa de `maxinet-sync.yml` que falla antes de escribir deja el tablero un día atrás.
 
