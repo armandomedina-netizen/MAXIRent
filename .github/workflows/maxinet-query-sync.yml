@@ -13,6 +13,9 @@ concurrency:
   group: maxinet-query-sync
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   sync:
     runs-on: ubuntu-latest
