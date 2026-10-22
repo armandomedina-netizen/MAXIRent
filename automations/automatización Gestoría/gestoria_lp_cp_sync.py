@@ -42,7 +42,8 @@ Lógica de sincronización (decidida por el usuario, no inventada aquí):
        de que la fila entró al Sheet y las pestañas GESTORIA, ÍNDICE SINIESTRALIDAD,
        RESUMEN y 2026 cuentan con ellos. Sólo se escribe si Maxinet trae un valor
        (nunca se borra una celda porque Maxinet venga vacío) y, en la fecha, si el
-       año es verosímil (Maxinet llegó a traer 6/2/0026). Si un campo cambiaría en
+       año es verosímil (un "26" tecleado llega como 0026 y se lee como 2026, igual
+       que Google Sheets; cualquier otro año imposible se ignora). Si un campo cambiaría en
        más de la mitad de las filas se omite y se avisa (señal de que Maxinet
        cambió de formato).
     El resto de las columnas de una fila ya existente (días, cargo adicional,
@@ -125,6 +126,7 @@ import re
 import sys
 import html
 import json
+import time
 import logging
 from datetime import date
 
@@ -231,6 +233,19 @@ def _parse_json(resp: requests.Response):
         raise
 
 
+def _post_con_reintentos(session: requests.Session, url: str, data: dict, intentos: int = 3):
+    """Maxinet a veces corta la conexión (ConnectionResetError, visto el 2026-10-21 en una corrida de
+    Gestoría y el 2026-10-02 en el sync del tablero); un reintento corto suele bastar."""
+    for n in range(1, intentos + 1):
+        try:
+            return session.post(url, data=data, timeout=120)
+        except (requests.ConnectionError, requests.Timeout):
+            if n == intentos:
+                raise
+            log.warning("Maxinet cortó la conexión (intento %d de %d); reintentando", n, intentos)
+            time.sleep(5 * n)
+
+
 def login_maxinet() -> requests.Session:
     """Inicia sesión en Maxinet y devuelve una sesión con la cookie válida."""
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
@@ -238,9 +253,10 @@ def login_maxinet() -> requests.Session:
     contrasena = os.environ["MAXINET_PASS"]
 
     session = requests.Session()
-    resp = session.post(
+    resp = _post_con_reintentos(
+        session,
         f"{base_url}/includes/users/AccessValidate.php",
-        data={"email": usuario, "password": contrasena},
+        {"email": usuario, "password": contrasena},
     )
     data = _parse_json(resp)
     if data.get("respuesta") == "error":
@@ -259,9 +275,10 @@ def descargar_gestoria_todos() -> pd.DataFrame:
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
 
     session = login_maxinet()
-    resp = session.post(
+    resp = _post_con_reintentos(
+        session,
         f"{base_url}/api/postventa/gestoria/",
-        data={
+        {
             "Estatus": "",
             "Desde": "",
             "Hasta": "",
@@ -352,6 +369,9 @@ def _fecha_verosimil(iso: str):
     if not m:
         return None
     anio, mes, dia = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if anio < 100:
+        # Maxinet guarda un "26" tecleado como año 0026 (folios 1503 y 1683); Google Sheets lo lee como 2026.
+        anio += 2000
     if not (ANIO_MIN_FECHA <= anio <= date.today().year + 1):
         return None
     return anio, mes, dia
