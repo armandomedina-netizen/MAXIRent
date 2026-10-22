@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        proyecto: [maxinet-sync, TableroSAC]
+        proyecto: [maxinet-sync, TableroSAC, maxinet-entregas-cp]
     defaults:
       run:
         working-directory: automations/${{ matrix.proyecto }}

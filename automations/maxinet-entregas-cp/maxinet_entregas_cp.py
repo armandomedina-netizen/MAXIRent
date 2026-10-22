@@ -14,44 +14,41 @@ Endpoint confirmado a partir del JS real de Maxinet
             pestaña (Fecha ... Gas. Recepción) más "JOB Entrega" y "JOB
             Recepción", que se ignoran a propósito.
 
-Rango de fechas (decidido por el usuario): del primer día del mes hasta AYER
-(hora Ciudad de México). Si hoy es día 1, "ayer" cae en el mes anterior y el
-rango es ese mes completo. IMPORTANTE: el rango NO es sólo una cuestión de
-velocidad. El campo "Cumpleaños" depende de él: Maxinet sólo trae la fecha de
-nacimiento cuando el cumpleaños cae en el periodo consultado (con el rango del
-1 al 14 de octubre devuelve 63 valores, los mismos que pegó Nuvia; con enero a
-octubre devuelve ~13,000). Un rango más ancho que el mes llenaría esa columna
-con datos que el proceso manual nunca tuvo.
+Rango de fechas (decidido por el usuario): del primer día del mes a AYER (hora Ciudad de
+México); si hoy es día 1, "ayer" cae en el mes anterior y el rango es ese mes completo.
+Durante los primeros 3 días del mes se vuelve a escribir también el mes anterior, para que sus
+últimos días cierren con los estatus finales; cada mes se consulta por separado. IMPORTANTE: el
+rango no es sólo cuestión de velocidad. El campo "Cumpleaños" depende de él: Maxinet sólo trae la
+fecha de nacimiento cuando el cumpleaños cae en el periodo consultado (con el rango del 1 al 14
+de octubre devuelve 63 valores, los mismos que pegó Nuvia; con enero a octubre, ~13,000).
 
-Estructura de la pestaña (confirmada contra el Sheet real y el original de
-Nuvia):
-    - A:P (16 columnas, mismos nombres que el reporte) son los datos; van
-      ordenados estrictamente por Fecha y Hr.Entrega (cero quiebres en el
-      archivo de Nuvia).
-    - Q:X (MES, MES, AÑO, ENTREGAS, RECEPCION, reclasificado, ENTREGAS, NOMINA)
-      son FÓRMULAS pre-arrastradas hasta la fila ~65,000: NO se tocan. Tras
-      pegar se verifica que existan en las filas escritas y, si falta alguna,
-      se copia desde la última fila previa. Los formatos de A:P también se
-      copian de la última fila previa.
+Estructura de la pestaña (confirmada contra el Sheet real y el original de Nuvia):
+    - A:P (16 columnas, mismos nombres que el reporte) son los datos; van ordenados estrictamente
+      por Fecha y Hr.Entrega (cero quiebres en el archivo de Nuvia).
+    - Q:X (MES, MES, AÑO, ENTREGAS, RECEPCION, reclasificado, ENTREGAS, NOMINA) son FÓRMULAS
+      pre-arrastradas hasta la fila ~65,000: NO se tocan. Si el bloque crece se verifica que existan
+      en las filas nuevas y, si falta alguna, se copia desde la última fila previa; el formato de A:P
+      también se copia de la última fila previa.
 
-Qué se agrega: sólo lo posterior a lo ya registrado. Una fila es nueva si su
-(Fecha, Hr.Entrega) es MAYOR que la del último registro del Sheet, o IGUAL y
-no está ya en el Sheet. Así el orden cronológico se conserva y las filas ya
-pegadas NUNCA se modifican (igual que el proceso manual, el Sheet guarda la
-foto del momento: No. Rentas, estatus y placa cambian después en Maxinet).
-Las entregas anteriores al último registro que no aparezcan en el Sheet
-("rezagadas") NO se agregan, para no romper el orden; se avisan en el log.
+Qué se escribe: se REFRESCA el bloque del mes. Cada corrida reemplaza, desde la primera fila con
+Fecha >= inicio del bloque hasta el final, las columnas A:P por lo que entrega Maxinet, ordenado
+por (Fecha, Hr.Entrega). Es lo que hace Nuvia al volver a pegar el mes en curso y es necesario:
+una entrega se pega como ON HIRE y días después cambia a CHECKED IN o RETURNED, con su gasolina
+de recepción; si no se refresca, las recepciones y los indicadores quedan subcontados (el 22-oct
+el Sheet tenía 723 entregas del mes en ON HIRE contra 257 en Maxinet, y 1,091 recepciones contra
+1,568). También entran en su lugar las entregas que Maxinet registra con retraso. Los meses
+cerrados (filas anteriores al bloque) quedan congelados, igual que en el archivo de Nuvia.
+Salvaguarda: si Maxinet trae menos del 80% de las filas actuales del bloque (con 30 o más), la
+corrida se detiene sin escribir (FORZAR=1 la omite).
 
-Filas nuevas: se calcula la fila exacta (última fila con Fecha + 1) y se
-escribe con update(); NUNCA con append_rows() (la hoja tiene fórmulas y
-formato muy por debajo del último dato). Al final se valida que no haya
-Reservas repetidas en el Sheet.
+El bloque se escribe de un solo golpe con update(); NUNCA con append_rows() (la hoja tiene fórmulas
+y formato muy por debajo del último dato). Al final se valida que no haya Reservas repetidas.
 
 Variables de entorno (ver .env.example):
     MAXINET_BASE_URL, MAXINET_USER, MAXINET_PASS, GOOGLE_CREDS_PATH,
     SPREADSHEET_ID_CLIENTES_NUEVOS (mismo Sheet "Base"),
     WORKSHEET_ENTREGAS_NAME (por defecto "ENTREGAS"),
-    FECHA_DESDE, FECHA_HASTA, DRY_RUN (opcionales)
+    FECHA_DESDE, FECHA_HASTA, DRY_RUN, FORZAR (opcionales)
 """
 
 import os
@@ -89,6 +86,7 @@ FILA_INICIO_DATOS = 2
 ZONA = ZoneInfo("America/Mexico_City")
 TIMEOUT_SEG = 180                      # el reporte mensual tarda ~20 s
 REINTENTOS = 5
+DIAS_MES_ANTERIOR = 3                  # los primeros días del mes se refresca también el mes anterior
 FECHA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 HORA_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")
 BASE_SERIAL = dt.date(1899, 12, 30)
@@ -130,12 +128,25 @@ def login_maxinet() -> requests.Session:
     return session
 
 
-def rango_fechas() -> tuple[str, str]:
-    """Del primer día del mes de 'ayer' hasta ayer (hora CDMX), o el override de entorno."""
+def bloques_a_refrescar() -> list[tuple[str, str]]:
+    """Bloques de fechas (desde, hasta) que se vuelven a escribir en cada corrida, del más antiguo al más reciente.
+
+    Principal: del primer día del mes de 'ayer' a ayer (hora CDMX). Durante los primeros DIAS_MES_ANTERIOR
+    días del mes se refresca además el mes anterior completo, para que sus últimos días terminen de cerrar
+    con los estatus finales. Cada mes se consulta por separado porque el campo Cumpleaños depende del rango
+    de la consulta. FECHA_DESDE/FECHA_HASTA fijan un solo bloque (pruebas y recuperaciones)."""
     ayer = dt.datetime.now(ZONA).date() - dt.timedelta(days=1)
     hasta = os.environ.get("FECHA_HASTA") or ayer.isoformat()
-    desde = os.environ.get("FECHA_DESDE") or dt.date.fromisoformat(hasta).replace(day=1).isoformat()
-    return desde, hasta
+    h = dt.date.fromisoformat(hasta)
+    if os.environ.get("FECHA_DESDE"):
+        return [(os.environ["FECHA_DESDE"], hasta)]
+    inicio = h.replace(day=1)
+    bloques = []
+    if h.day <= DIAS_MES_ANTERIOR:
+        fin_prev = inicio - dt.timedelta(days=1)
+        bloques.append((fin_prev.replace(day=1).isoformat(), fin_prev.isoformat()))
+    bloques.append((inicio.isoformat(), hasta))
+    return bloques
 
 
 def normalizar_filas(filas: list[list]) -> list[list]:
@@ -222,62 +233,72 @@ def _celda(valor):
     return valor
 
 
-def _llaves(fila: list) -> list[tuple]:
-    f, h = _fecha_hora_hoja(fila)
-    return [("res", _norm_id(fila[IDX_RESERVA])), ("placa", f, h, str(fila[IDX_PLACA]).strip()),
-            ("cli", f, h, _norm_id(fila[IDX_CLIENTE]), str(fila[IDX_NOMBRE]).strip().lower())]
+def _fecha_serie(v) -> str:
+    """Fecha ISO de una celda de la columna A (número de serie o texto)."""
+    if isinstance(v, (int, float)):
+        return (BASE_SERIAL + dt.timedelta(days=int(v))).isoformat()
+    return str(v).strip()
 
 
-def agregar_entregas(worksheet, filas_mx: list[list], desde: str) -> int:
+def refrescar_bloque(worksheet, filas_mx: list[list], desde: str) -> dict:
+    """Reemplaza, de la primera fila con Fecha >= desde hasta el final, el bloque de datos A:P por lo que
+    entrega Maxinet (ordenado por Fecha y Hr.Entrega). Así los estatus, las gasolinas y el número de rentas del
+    mes en curso se mantienen al día y las entregas que Maxinet registra con retraso entran en su lugar; es lo
+    que hace Nuvia al volver a pegar el mes. Las filas anteriores al bloque (meses cerrados) no se tocan y las
+    fórmulas de Q:X tampoco."""
     col_a = worksheet.col_values(1)
-    ultima_fila = max((i for i, v in enumerate(col_a, start=1) if i >= FILA_INICIO_DATOS and str(v).strip()),
-                      default=FILA_INICIO_DATOS - 1)
-    if ultima_fila < FILA_INICIO_DATOS:
-        raise RuntimeError("La pestaña no tiene datos; no se puede determinar el último registro.")
-    ult = worksheet.get(f"{COL_INICIO}{ultima_fila}:{COL_FIN}{ultima_fila}", value_render_option="UNFORMATTED_VALUE")[0]
-    ult_fecha, ult_hora = _fecha_hora_hoja(ult)
-    log.info("Último registro del Sheet: fila %d, %s %s", ultima_fila, ult_fecha, ult_hora)
+    ultima = max((i for i, v in enumerate(col_a, start=1) if i >= FILA_INICIO_DATOS and str(v).strip()),
+                 default=FILA_INICIO_DATOS - 1)
+    if ultima < FILA_INICIO_DATOS:
+        raise RuntimeError("La pestaña no tiene datos; no se puede ubicar el bloque a refrescar.")
+    fechas = worksheet.get(f"A{FILA_INICIO_DATOS}:A{ultima}", value_render_option="UNFORMATTED_VALUE")
+    inicio = ultima + 1
+    for i, f in enumerate(fechas):
+        if f and _fecha_serie(f[0]) >= desde:
+            inicio = FILA_INICIO_DATOS + i
+            break
+    viejas = worksheet.get(f"A{inicio}:P{ultima}", value_render_option="UNFORMATTED_VALUE") if inicio <= ultima else []
+    nuevas = sorted(filas_mx, key=lambda r: (r[IDX_FECHA], _hora(str(r[IDX_HORA]))))     # estable
 
-    # Filas ya registradas del periodo consultado (para empates y rezagadas)
-    existentes = set()
-    primera = max(FILA_INICIO_DATOS, ultima_fila - 5000)
-    bloque = worksheet.get(f"{COL_INICIO}{primera}:{COL_FIN}{ultima_fila}", value_render_option="UNFORMATTED_VALUE")
-    for fila in bloque:
-        fila = list(fila) + [""] * (len(COLUMNAS) - len(fila))
-        if _fecha_hora_hoja(fila)[0] >= desde:
-            existentes.update(_llaves(fila))
+    # Salvaguarda: una respuesta incompleta de Maxinet no debe vaciar el mes
+    if len(viejas) >= 30 and len(nuevas) < 0.8 * len(viejas) and not os.environ.get("FORZAR"):
+        raise RuntimeError(f"Maxinet trae {len(nuevas)} entregas para el bloque y el Sheet tiene {len(viejas)}: menos del 80%. "
+                           f"Probable respuesta incompleta; no se escribió nada (FORZAR=1 para omitir esta revisión).")
 
-    nuevas, rezagadas = [], []
-    for fila in filas_mx:
-        clave = (fila[IDX_FECHA], _hora(str(fila[IDX_HORA])))
-        ya = any(k in existentes for k in _llaves(fila))
-        if clave > (ult_fecha, ult_hora):
-            nuevas.append(fila)
-        elif clave == (ult_fecha, ult_hora) and not ya:
-            nuevas.append(fila)
-        elif clave < (ult_fecha, ult_hora) and not ya:
-            rezagadas.append(fila)
-    if rezagadas:
-        log.warning("Entregas anteriores al último registro que no están en el Sheet y NO se agregan "
-                    "para no romper el orden: %d (ej. %s)", len(rezagadas),
-                    [(r[IDX_FECHA], r[IDX_HORA], r[IDX_RESERVA]) for r in rezagadas[:3]])
+    # Resumen de cambios (por Fecha + Hr.Entrega + Reserva)
+    def clave_hoja(r):
+        r = list(r) + [""] * (len(COLUMNAS) - len(r))
+        f, h = _fecha_hora_hoja(r)
+        return (f, h, _norm_id(r[IDX_RESERVA])), str(r[13]).strip()
+    ant = dict(clave_hoja(r) for r in viejas)
+    act = {(r[IDX_FECHA], _hora(str(r[IDX_HORA])), _norm_id(r[IDX_RESERVA])): str(r[13]).strip() for r in nuevas}
+    altas = [k for k in act if k not in ant]
+    bajas = [k for k in ant if k not in act]
+    cambios_estatus = sum(1 for k in act if k in ant and ant[k] != act[k])
+    log.info("Bloque desde %s: filas %d -> %d | altas %d, bajas %d, estatus cambiados %d | ON HIRE %d -> %d",
+             desde, len(viejas), len(nuevas), len(altas), len(bajas), cambios_estatus,
+             sum(1 for v in ant.values() if v == "ON HIRE"), sum(1 for v in act.values() if v == "ON HIRE"))
+
+    fila_ini, fila_fin = inicio, inicio + len(nuevas) - 1
+    rango = f"A{fila_ini}:P{fila_fin}"
+    resumen = {"altas": len(altas), "bajas": len(bajas), "estatus": cambios_estatus, "antes": len(viejas), "despues": len(nuevas)}
     if not nuevas:
-        log.info("No hay entregas nuevas que agregar.")
-        return 0
-
-    nuevas.sort(key=lambda r: (r[IDX_FECHA], _hora(str(r[IDX_HORA])), str(r[IDX_RESERVA])))
-    valores = [[_celda(v) for v in fila] for fila in nuevas]
-    fila_ini = ultima_fila + 1
-    fila_fin = fila_ini + len(valores) - 1
-    rango = f"{COL_INICIO}{fila_ini}:{COL_FIN}{fila_fin}"
+        log.info("Maxinet no trae entregas para el bloque; no se escribió nada.")
+        return resumen
     if os.environ.get("DRY_RUN"):
-        log.info("DRY_RUN: se agregarían %d entregas en %s (no se escribió nada). Primera: %s | Última: %s",
-                 len(valores), rango, nuevas[0][:3], nuevas[-1][:3])
-        return 0
+        log.info("DRY_RUN: se reescribirían %s (%d filas) (no se escribió nada).", rango, len(nuevas))
+        return resumen
+
+    valores = [[_celda(v) for v in fila] for fila in nuevas]
+    if fila_fin > worksheet.row_count:
+        worksheet.add_rows(fila_fin - worksheet.row_count + 100)
     worksheet.update(range_name=rango, values=valores, value_input_option="USER_ENTERED")
-    log.info("Entregas nuevas agregadas: %d en %s (última fila previa: %d)", len(valores), rango, ultima_fila)
-    asegurar_formulas_y_formato(worksheet, fila_ini, fila_fin, ultima_fila)
-    return len(valores)
+    if ultima > fila_fin:                                   # el bloque quedó más corto: limpiar lo que sobra
+        worksheet.batch_clear([f"A{fila_fin + 1}:P{ultima}"])
+    if fila_fin > ultima:                                   # filas nuevas más allá de las anteriores
+        asegurar_formulas_y_formato(worksheet, ultima + 1, fila_fin, ultima)
+    log.info("Bloque reescrito: %d entregas en %s (última fila anterior: %d)", len(nuevas), rango, ultima)
+    return resumen
 
 
 def asegurar_formulas_y_formato(worksheet, fila_ini, fila_fin, fila_modelo):
@@ -317,12 +338,14 @@ def validar_sin_repetidos(worksheet):
 
 def main():
     try:
-        desde, hasta = rango_fechas()
-        filas = descargar_entregas(desde, hasta)
+        filas, desde = [], None
+        for d, h in bloques_a_refrescar():
+            filas += descargar_entregas(d, h)
+            desde = desde or d
         worksheet = conectar_sheet()
-        n = agregar_entregas(worksheet, filas, desde)
+        r = refrescar_bloque(worksheet, filas, desde)
         validar_sin_repetidos(worksheet)
-        log.info("Automatización completada con éxito (%d entregas nuevas)", n)
+        log.info("Automatización completada con éxito (bloque de %d entregas desde %s)", r["despues"], desde)
     except Exception:
         log.exception("Error en la automatización de Entregas CP")
         sys.exit(1)
