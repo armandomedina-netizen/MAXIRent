@@ -27,6 +27,8 @@ Variables de entorno esperadas (usar un gestor de secretos, nunca hardcodear):
                                 "UTILIZACION V3"): nombre o gid; opcional, ver PESTANA_UTILIZACION
     WORKSHEET_GRUPO_AUTOS    -> pestaña de flota por grupo (hoy "FLOTA POR GRUPO", antes
                                 "UTI. GRUPO DE AUTOS V1"): nombre o gid; opcional, ver PESTANA_GRUPO_AUTOS
+    WORKSHEET_DURACION_ACTIVAS / WORKSHEET_DURACION_RETORNOS -> pestañas "Duracion de rentas" y
+                                "Duración retornos" (nombre o gid); opcionales, ver PESTANA_DURACION_*
 
 Flujo completo de la automatización diaria:
     1. Login en Maxinet + descarga de datos de flota del día anterior.
@@ -58,6 +60,7 @@ import os
 import re
 import difflib
 import sys
+import unicodedata
 import copy
 import time
 import json
@@ -361,6 +364,12 @@ def _libro_secundario():
     return gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_SECUNDARIO"])
 
 
+def _normalizar(texto) -> str:
+    """Minúsculas, sin acentos y con espacios simples: 'Duración  Retornos' == 'duracion retornos'."""
+    sin_acentos = "".join(c for c in unicodedata.normalize("NFD", str(texto)) if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", sin_acentos).strip().casefold()
+
+
 def _resolver_pestana(libro, referencia: str):
     """La pestaña `referencia` del libro: por gid (si es un número), por
     nombre o por su alias conocido. Si no existe, el error dice cuántas
@@ -378,6 +387,11 @@ def _resolver_pestana(libro, referencia: str):
                 continue
             log.warning("La pestaña '%s' no existe; se usa '%s'", nombre, alias)
             return hoja
+        # Mismo nombre salvo mayúsculas, acentos o espacios ("Duracion" / "Duración").
+        for hoja in libro.worksheets():
+            if _normalizar(hoja.title) == _normalizar(nombre):
+                log.warning("La pestaña '%s' no existe; se usa '%s'", nombre, hoja.title)
+                return hoja
         # El repositorio y sus logs son públicos: no se vuelca el inventario de
         # pestañas, sólo cuántas hay y hasta tres nombres parecidos.
         titulos = [w.title for w in libro.worksheets()]
@@ -1328,26 +1342,31 @@ def actualizar_tablas(worksheet) -> None:
         spreadsheet.batch_update({"requests": requests_extender})
 
 
-# "Duración rentas": fila "TIEMPO DE VIDA (ACTIVAS)" del año en curso
-# Esta hoja NO la alimenta esta automatización -- Nuvia pega a mano nuevas
-# rentas en la tabla detalle (fila 14 en adelante). Confirmado comparando
-# contra el archivo original: la fila "TIEMPO DE VIDA (RETORNOS)" de cada
-# año usa un rango fijo ($F$14:$F$2838) que hay que extender a mano cuando
-# la tabla crece (eso se corrigió una sola vez, sincronizando también las
-# filas de detalle que le faltaban al automatizado). La fila "TIEMPO DE
-# VIDA (ACTIVAS)" es distinta: cada mes tiene su propia fórmula
-# AVERAGEIFS(...,"on hire") con rango ABIERTO (ej. "$F14:$F", sin fila
-# final) -- no necesita extenderse nunca -- pero SÍ hay que congelarla a
-# valor fijo en cuanto el mes cierra (no se puede recalcular después: "on
-# hire" es un estado que cambia con el tiempo, así que el valor solo es
-# correcto en el momento exacto en que el mes terminó). Los años ya
-# cerrados (2024, 2025) quedaron fijos para siempre -- solo la fila del año
-# EN CURSO necesita este avance.
-FILA_INICIO_DETALLE_RENTAS = 14
+# Duración de rentas. Hasta el 21-oct-2026 era una sola pestaña ("Duración
+# rentas") con el promedio mensual de ACTIVAS y de RETORNOS arriba y la tabla
+# detalle debajo. El 22-oct el equipo la dividió en dos y el sync pasó a leer
+# el diseño por etiquetas, no por números de fila:
+# - "Duracion de rentas" (ACTIVAS): promedio mensual de las rentas activas por
+#   año ("TIEMPO DE VIDA (ACTIVAS)") y la lista ON HIRE, una sola fórmula
+#   matricial en la columna A, justo debajo de los encabezados, que lee
+#   'TARIFA DETALLE' de la copia del Query. Cada mes lleva un AVERAGEIFS vivo
+#   sobre las filas "on hire" y hay que congelarlo a valor fijo cuando el mes
+#   cierra: "on hire" es un estado que cambia con el tiempo, así que el valor
+#   sólo es correcto en el momento en que el mes terminó.
+# - "Duración retornos" (RETORNOS): promedio mensual de las devoluciones por
+#   año y la tabla detalle (RETURNED) ordenada por fecha de retorno; el sync
+#   agrega ahí las devoluciones nuevas de Maxinet.
+# Los bloques de año se reconocen por la fila con el año en la columna A y la
+# etiqueta debajo; la tabla detalle, por sus encabezados UNIFICADO / Reg No.
+PESTANA_DURACION_ACTIVAS = "Duracion de rentas"
+PESTANA_DURACION_RETORNOS = "Duración retornos"
+ETIQUETA_ACTIVAS = "TIEMPO DE VIDA (ACTIVAS)"
+ETIQUETA_RETORNOS = "TIEMPO DE VIDA (RETORNOS)"
+FILAS_ENCABEZADO_MAX = 40  # los bloques de año y los encabezados están en las primeras filas
 
 
 def formula_on_hire_desde_tarifa_detalle(id_query: str) -> str:
-    """Fórmula matricial de la lista ON HIRE de 'Duración rentas' (la misma
+    """Fórmula matricial de la lista ON HIRE de 'Duracion de rentas' (la misma
     idea que usa Nuvia): una sola fórmula en la columna A que lee 'TARIFA
     DETALLE' de la copia del Query y derrama las 14 columnas del detalle
     (UNIFICADO, placa, PU, retorno, DIA, MES, status, cliente, ejecutivo,
@@ -1366,199 +1385,137 @@ def formula_on_hire_desde_tarifa_detalle(id_query: str) -> str:
     )
 
 
-def _localizar_on_hire(worksheet) -> tuple:
-    """(fila, modo) de la primera fila de la lista ON HIRE de 'Duración
-    rentas', o (None, None). Dos formas posibles:
-    - "matricial": una fórmula =ARRAYFORMULA(...) en la columna A que
-      derrama todas las columnas (diseño actual, lee TARIFA DETALLE);
-    - "por_fila": un =UNIQUE(...) en la columna B y una fórmula por fila en
-      las demás (diseño anterior). Con la matricial el sync NO escribe
-      debajo del ancla: pisaría el derrame."""
-    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:B", value_render_option="FORMULA")
-    for i, fila in enumerate(filas):
-        a = str(fila[0]) if fila else ""
-        b = str(fila[1]) if len(fila) > 1 else ""
-        if a.startswith("=ARRAYFORMULA(") and "ON HIRE" in a:
-            return FILA_PRIMER_DETALLE + i, "matricial"
-        if b.startswith("=UNIQUE("):
-            return FILA_PRIMER_DETALLE + i, "por_fila"
-    return None, None
+def _fila_encabezado_detalle(worksheet) -> int:
+    """Fila (1-based) de los encabezados de la tabla detalle: UNIFICADO | Reg No."""
+    filas = worksheet.get(f"A1:B{FILAS_ENCABEZADO_MAX}", value_render_option="UNFORMATTED_VALUE")
+    for i, fila in enumerate(filas, start=1):
+        if len(fila) > 1 and _normalizar(fila[0]) == "unificado" and _normalizar(fila[1]) == "reg no":
+            return i
+    raise LookupError(
+        f"no encontré los encabezados UNIFICADO / Reg No de la tabla detalle en las primeras {FILAS_ENCABEZADO_MAX} filas")
 
 
-def avanzar_formula_dia_duracion_rentas(worksheet) -> None:
-    """Ajusta la fórmula de la columna E ('DIA') de la tabla detalle según
-    el Status de cada fila -- confirmado 1 a 1 contra las 3010 filas del
-    archivo original, sin ninguna excepción:
-    - Status "ON HIRE"  -> =IF(B=\"\",\"\",TODAY()-C)  (días transcurridos
-      HASTA HOY; la columna D todavía es una fecha placeholder muy a
-      futuro para una renta que sigue activa, no la devolución real).
-    - Cualquier otro status (ej. "RETURNED") -> =IF(B=\"\",\"\",D-C)
-      (duración fija, ya terminada).
-    Nuvia lo señaló como una fórmula que había que corregir. Se revisa
-    todos los días -- cuando una renta se devuelve (Status cambia y D se
-    actualiza a la fecha real), la fórmula debe "fijarse" en D-C en vez de
-    seguir creciendo con TODAY()."""
-    formulas_e = worksheet.get(f"E{FILA_INICIO_DETALLE_RENTAS}:E", value_render_option="FORMULA")
-    valores_g = worksheet.get(f"G{FILA_INICIO_DETALLE_RENTAS}:G", value_render_option="UNFORMATTED_VALUE")
-    valores_b = worksheet.get(f"B{FILA_INICIO_DETALLE_RENTAS}:B", value_render_option="UNFORMATTED_VALUE")
-    total_filas = max(len(formulas_e), len(valores_g), len(valores_b))
-    fila_on_hire, modo_on_hire = _localizar_on_hire(worksheet)
-    if modo_on_hire == "matricial":
-        # DIA de las filas ON HIRE ya lo calcula la fórmula matricial (hoy - PU)
-        total_filas = min(total_filas, fila_on_hire - FILA_INICIO_DETALLE_RENTAS)
+def _bloques_por_anio(worksheet, etiqueta: str) -> dict:
+    """{año: (fila_meses, fila_valores)}. Cada año ocupa una fila con el año en
+    A y el primer día de cada mes en B:M, y debajo la fila `etiqueta` con el
+    valor de cada mes."""
+    filas = worksheet.get(f"A1:A{FILAS_ENCABEZADO_MAX}", value_render_option="UNFORMATTED_VALUE")
+    celdas = [fila[0] if fila else "" for fila in filas]
+    bloques = {}
+    for i in range(len(celdas) - 1):
+        anio = celdas[i]
+        if isinstance(anio, float) and anio.is_integer():
+            anio = int(anio)
+        if _normalizar(celdas[i + 1]) == _normalizar(etiqueta) and str(anio).strip().isdigit():
+            bloques[int(str(anio).strip())] = (i + 1, i + 2)
+    return bloques
 
-    nuevas_e = []
-    cambios = 0
-    for i in range(total_filas):
-        fila = FILA_INICIO_DETALLE_RENTAS + i
-        placa = valores_b[i][0] if i < len(valores_b) and valores_b[i] else ""
-        actual = formulas_e[i][0] if i < len(formulas_e) and formulas_e[i] else ""
 
-        if not placa:
-            nuevas_e.append([actual])
-            continue
+def verificar_lista_on_hire(worksheet) -> int:
+    """La lista ON HIRE es una fórmula matricial en la columna A, debajo de los
+    encabezados. El sync no escribe ahí (pisaría el derrame): sólo avisa si
+    falta o da error. Devuelve cuántas rentas lista."""
+    ancla = _fila_encabezado_detalle(worksheet) + 1
+    formula = worksheet.get(f"A{ancla}", value_render_option="FORMULA")
+    formula = str(formula[0][0]) if formula and formula[0] else ""
+    if not (formula.startswith("=ARRAYFORMULA(") and "ON HIRE" in formula):
+        log.warning("%s: no hay fórmula matricial de la lista ON HIRE en A%d; la lista no se calcula sola",
+                    worksheet.title, ancla)
+        return 0
+    valores = worksheet.get(f"A{ancla}:B", value_render_option="UNFORMATTED_VALUE")
+    primero = valores[0][0] if valores and valores[0] else ""
+    if isinstance(primero, str) and primero in ERRORES_SHEETS:
+        log.warning("%s: la fórmula matricial de la lista ON HIRE da error (%s)", worksheet.title, primero)
+        return 0
+    rentas = sum(1 for fila in valores if len(fila) > 1 and fila[1] != "")
+    log.info("%s: lista ON HIRE con %d rentas (fórmula matricial; el sync no la toca)", worksheet.title, rentas)
+    return rentas
 
-        status = str(valores_g[i][0]).strip().upper() if i < len(valores_g) and valores_g[i] else ""
-        debe_usar_today = status == "ON HIRE"
-        actual_usa_today = isinstance(actual, str) and "TODAY()" in actual
 
-        if actual_usa_today == debe_usar_today:
-            nuevas_e.append([actual])
-            continue
+def _promedio_activas_hoy(worksheet, ancla: int):
+    """Promedio de MES (columna F) de las rentas ON HIRE de la lista, o None si
+    no hay ninguna. Es el mismo cálculo que el AVERAGEIFS del mes en curso,
+    sin el criterio de PERIODO (que la fórmula matricial deja siempre en el
+    mes actual)."""
+    filas = worksheet.get(f"F{ancla}:G", value_render_option="UNFORMATTED_VALUE")
+    valores = [
+        f[0] for f in filas
+        if len(f) > 1 and str(f[1]).strip().upper() == "ON HIRE"
+        and isinstance(f[0], (int, float)) and not isinstance(f[0], bool)
+    ]
+    return sum(valores) / len(valores) if valores else None
 
-        if debe_usar_today:
-            nueva = f'=IF(B{fila}="","",TODAY()-C{fila})'
-        else:
-            nueva = f'=IF(B{fila}="","",D{fila}-C{fila})'
-        nuevas_e.append([nueva])
-        cambios += 1
 
-    if cambios == 0:
-        log.info("Duración rentas: fórmula de DIA ya está al día en todas las filas")
+def _hoja_duracion_retornos():
+    return conectar_sheet_secundario(os.environ.get("WORKSHEET_DURACION_RETORNOS") or PESTANA_DURACION_RETORNOS)
+
+
+def avanzar_activas_duracion_rentas(worksheet, hoy: date = None) -> None:
+    """Fila ACTIVAS de cada año de 'Duracion de rentas':
+    1. Congela a valor fijo el mes que cerró y todavía tiene fórmula viva. La
+       fórmula matricial pone PERIODO = mes actual en todas las rentas ON
+       HIRE, así que desde el día 1 la fórmula del mes anterior ya no
+       encuentra filas y da error: el valor sale del promedio de MES de la
+       lista de hoy (lo mismo que calculaba cuando PERIODO se recorría
+       después de congelar). Sólo se congela el mes inmediato anterior; uno
+       más viejo ya no tiene de dónde salir y se avisa para resolverlo a mano.
+    2. Crea la fórmula viva del mes en curso si su celda está vacía."""
+    hoy = hoy or _hoy_cdmx()
+    fila_encabezado = _fila_encabezado_detalle(worksheet)
+    ancla = fila_encabezado + 1
+    bloques = _bloques_por_anio(worksheet, ETIQUETA_ACTIVAS)
+    mes_actual = hoy.year * 12 + hoy.month - 1
+    celdas_por_anio = {}
+    promedio = None
+    for anio in sorted(bloques):
+        _, fila_valores = bloques[anio]
+        fila = worksheet.get(f"B{fila_valores}:M{fila_valores}", value_render_option="FORMULA")
+        fila = fila[0] if fila else []
+        celdas_por_anio[anio] = fila
+        for idx, valor in enumerate(fila):
+            indice_mes = anio * 12 + idx
+            if indice_mes >= mes_actual or not (isinstance(valor, str) and valor.startswith("=")):
+                continue
+            col = _indice_a_col_letra(_col_letra_a_indice("B") + idx)
+            if indice_mes != mes_actual - 1:
+                log.warning(
+                    "%s: ACTIVAS %s%d es de un mes que cerró hace más de uno y sigue con fórmula; "
+                    "no se congela (ya no hay datos para calcularlo): resolverlo a mano",
+                    worksheet.title, col, fila_valores)
+                continue
+            if promedio is None:
+                promedio = _promedio_activas_hoy(worksheet, ancla)
+            if promedio is None:
+                log.warning("%s: ACTIVAS %s%d no se congela porque la lista ON HIRE no tiene rentas con MES",
+                            worksheet.title, col, fila_valores)
+                continue
+            worksheet.update(values=[[promedio]], range_name=f"{col}{fila_valores}", value_input_option="USER_ENTERED")
+            log.info("%s: ACTIVAS %s%d congelado a %.4f (promedio de la lista ON HIRE del %s)",
+                     worksheet.title, col, fila_valores, promedio, hoy.isoformat())
+
+    if hoy.year not in bloques:
+        log.warning("%s: no hay bloque del año %d (fila de meses y fila %s); no se crea la fórmula del mes en curso",
+                    worksheet.title, hoy.year, ETIQUETA_ACTIVAS)
         return
-
-    ultima_fila = FILA_INICIO_DETALLE_RENTAS + total_filas - 1
-    worksheet.update(
-        values=nuevas_e, range_name=f"E{FILA_INICIO_DETALLE_RENTAS}:E{ultima_fila}",
-        value_input_option="USER_ENTERED",
-    )
-    log.info("Duración rentas: fórmula de DIA corregida en %d filas", cambios)
-
-
-def _avanzar_periodo_on_hire(worksheet, hoy: date) -> None:
-    """Recorre a "mes actual" la columna L (PERIODO) de toda fila cuyo
-    Status sea "ON HIRE". Confirmado contra el archivo original: L en esa
-    tabla NO guarda el mes en que empezó la renta -- guarda el último mes
-    en que se confirmó que la unidad seguía activa, y se actualiza mientras
-    no se devuelva (las 777 filas "ON HIRE" del original, sin excepción,
-    tenían L = mes actual). Sin este paso, AVERAGEIFS(...,"on hire") del
-    mes en curso no encuentra ninguna fila y da error de división por
-    cero. Se corre TODOS los días (no solo al cambiar de mes) para que las
-    rentas nuevas que Nuvia agrega a mitad de mes también cuenten."""
-    if _localizar_on_hire(worksheet)[1] == "matricial":
-        log.info("Duración rentas: PERIODO de filas ON HIRE lo calcula la fórmula matricial")
+    fila_meses, fila_valores = bloques[hoy.year]
+    idx = hoy.month - 1
+    fila = celdas_por_anio[hoy.year]
+    if idx < len(fila) and fila[idx] != "":
+        log.info("%s: ACTIVAS del mes en curso ya tiene fórmula viva (fila %d)", worksheet.title, fila_valores)
         return
-    ancla_mes_actual = date(hoy.year, hoy.month, 1)
-    serial_mes_actual = (ancla_mes_actual - EPOCH_SHEETS).days
-
-    col_g = worksheet.get(f"G{FILA_INICIO_DETALLE_RENTAS}:G", value_render_option="UNFORMATTED_VALUE")
-    col_l = worksheet.get(f"L{FILA_INICIO_DETALLE_RENTAS}:L", value_render_option="UNFORMATTED_VALUE")
-    total_filas = max(len(col_g), len(col_l))
-
-    nuevos_l = []
-    cambios = 0
-    for i in range(total_filas):
-        status = str(col_g[i][0]).strip().upper() if i < len(col_g) and col_g[i] else ""
-        valor_l = col_l[i][0] if i < len(col_l) and col_l[i] else ""
-        if status == "ON HIRE" and valor_l != serial_mes_actual:
-            nuevos_l.append([serial_mes_actual])
-            cambios += 1
-        else:
-            nuevos_l.append([valor_l])
-
-    if cambios == 0:
-        log.info("Duración rentas: PERIODO de filas ON HIRE ya está al día")
-        return
-
-    ultima_fila = FILA_INICIO_DETALLE_RENTAS + total_filas - 1
-    worksheet.update(
-        values=nuevos_l, range_name=f"L{FILA_INICIO_DETALLE_RENTAS}:L{ultima_fila}",
-        value_input_option="USER_ENTERED",
+    col = _indice_a_col_letra(_col_letra_a_indice("B") + idx)
+    formula = (
+        f'=AVERAGEIFS($F{fila_encabezado}:$F,$L{fila_encabezado}:$L,{col}${fila_meses},'
+        f'$G{fila_encabezado}:$G,"on hire")'
     )
-    log.info("Duración rentas: PERIODO actualizado a mes actual en %d filas ON HIRE", cambios)
+    worksheet.update(values=[[formula]], range_name=f"{col}{fila_valores}", value_input_option="USER_ENTERED")
+    log.info("%s: ACTIVAS %s%d creado con fórmula viva", worksheet.title, col, fila_valores)
 
 
-def avanzar_activas_duracion_rentas(worksheet, fila_encabezado=10, fila_activas=12) -> None:
-    """Si el mes en curso todavía no tiene su fórmula viva en la fila
-    ACTIVAS: congela a valor fijo cualquier mes anterior que se haya
-    quedado con fórmula viva (normalmente solo el inmediatamente anterior,
-    pero revisa todos por si la automatización dejó de correr varios
-    meses), USANDO TODAVÍA las filas "on hire" del mes viejo -- recién
-    después de congelar se recorre PERIODO al mes nuevo (_avanzar_periodo_
-    on_hire) y se crea la fórmula viva del mes en curso. El orden importa:
-    si se recorriera PERIODO antes de congelar, el mes que se está
-    cerrando se quedaría sin ninguna fila "on hire" propia y congelaría en
-    0 en vez del valor real."""
-    hoy = _hoy_cdmx()
-    idx_mes_actual = hoy.month - 1  # B=enero=0
-
-    fila_formulas = worksheet.get(f"B{fila_activas}:M{fila_activas}", value_render_option="FORMULA")
-    fila_formulas = fila_formulas[0] if fila_formulas else []
-
-    valor_actual = fila_formulas[idx_mes_actual] if idx_mes_actual < len(fila_formulas) else ""
-    ya_esta_creado = isinstance(valor_actual, str) and valor_actual.startswith("=")
-
-    if not ya_esta_creado:
-        for i in range(idx_mes_actual):
-            valor = fila_formulas[i] if i < len(fila_formulas) else ""
-            if isinstance(valor, str) and valor.startswith("="):
-                col = _indice_a_col_letra(_col_letra_a_indice("B") + i)
-                valor_congelado = worksheet.get(f"{col}{fila_activas}", value_render_option="UNFORMATTED_VALUE")
-                valor_congelado = valor_congelado[0][0] if valor_congelado and valor_congelado[0] else 0
-                # AVERAGEIFS sobre un mes sin ningún registro "on hire" da
-                # error de división por cero -- en ese caso gspread
-                # devuelve el texto descriptivo del error en vez de un
-                # número; escribirlo tal cual dejaría ese texto pegado
-                # como valor literal. Se congela como 0 (mismo criterio
-                # que el IFERROR(...,0) de la fila RETORNOS).
-                if isinstance(valor_congelado, str) and valor_congelado.startswith("#"):
-                    log.warning(
-                        "Duración rentas: ACTIVAS %s%d dio error (%s) -- se congela como 0",
-                        col, fila_activas, valor_congelado,
-                    )
-                    valor_congelado = 0
-                worksheet.update(
-                    values=[[valor_congelado]], range_name=f"{col}{fila_activas}", value_input_option="USER_ENTERED"
-                )
-                log.info("Duración rentas: ACTIVAS %s%d congelado a %s", col, fila_activas, valor_congelado)
-
-    _avanzar_periodo_on_hire(worksheet, hoy)
-
-    if ya_esta_creado:
-        log.info(
-            "Duración rentas: ACTIVAS del mes en curso ya tiene fórmula viva (fila %d)",
-            fila_activas,
-        )
-        return
-
-    col_actual = _indice_a_col_letra(_col_letra_a_indice("B") + idx_mes_actual)
-    formula_nueva = (
-        f'=AVERAGEIFS($F{FILA_INICIO_DETALLE_RENTAS}:$F,$L{FILA_INICIO_DETALLE_RENTAS}:$L,'
-        f'{col_actual}${fila_encabezado},$G{FILA_INICIO_DETALLE_RENTAS}:$G,"on hire")'
-    )
-    worksheet.update(
-        values=[[formula_nueva]], range_name=f"{col_actual}{fila_activas}", value_input_option="USER_ENTERED"
-    )
-    log.info("Duración rentas: ACTIVAS %s%d creado con fórmula viva", col_actual, fila_activas)
-
-
-HOJA_DURACION_RENTAS = "Duración rentas"
 HOJA_TARIFA_DETALLE = "TARIFA DETALLE"
 HOJA_HISTORIAL_ACTIVAS = "HISTORIAL ACTIVAS"
 ENCABEZADO_HISTORIAL_ACTIVAS = ["PLACA", "PU Date", "UNIFICADO", "CLIENTE", "EJECUTIVO", "TARIFA", "ULTIMA VEZ ACTIVA"]
-FILA_PRIMER_DETALLE = 15
 VENTANA_DEVOLUCIONES_DIAS = 10
-HOLGURA_FILAS_ON_HIRE = 10
 
 # Columnas del reporte LP > Entregas / Retornos (includes/reportesLP/
 # reporte-entregas-retornos.php). Es la misma fuente que la pestaña RETORNOS
@@ -1611,7 +1568,7 @@ def descargar_entregas_retornos(session: requests.Session, desde: date, hasta: d
 
 
 def _devoluciones_validas(retornos: list, entregas: list) -> list:
-    """Devoluciones que entran al detalle de 'Duración rentas': estatus
+    """Devoluciones que entran al detalle de 'Duración retornos': estatus
     RETURNED, efecto SI APLICA y que no sean la renovación de un contrato
     del mismo cliente (la misma placa vuelve a abrir contrato con ese
     cliente el día de la devolución, +-1 día). Contra el detalle de Nuvia
@@ -1651,7 +1608,7 @@ def _obtener_historial_activas(libro):
         libro.batch_update({"requests": [{
             "updateSheetProperties": {"properties": {"sheetId": hoja.id, "hidden": True}, "fields": "hidden"},
         }]})
-        log.info("Duración rentas: creada la pestaña oculta %s", HOJA_HISTORIAL_ACTIVAS)
+        log.info("HISTORIAL ACTIVAS: creada la pestaña oculta %s", HOJA_HISTORIAL_ACTIVAS)
         return hoja
 
 
@@ -1688,7 +1645,7 @@ def _actualizar_historial_activas(libro, hoy: date) -> dict:
         if len(filas) + 1 > hoja.row_count:
             hoja.add_rows(len(filas) + 1 - hoja.row_count + 500)
         hoja.update(values=filas, range_name=f"A2:G{len(filas) + 1}", value_input_option="RAW")
-    log.info("Duración rentas: historial de rentas activas con %d rentas (%d actualizadas)", len(historial), cambios)
+    log.info("HISTORIAL ACTIVAS: %d rentas guardadas (%d actualizadas)", len(historial), cambios)
     return historial
 
 
@@ -1719,28 +1676,26 @@ def _fila_detalle_devolucion(devolucion: list, historial: dict, ultimo_por_placa
     return valores, completa
 
 
-def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy: date = None, aplicar: bool = True) -> list:
-    """Agrega al detalle de 'Duración rentas' las devoluciones nuevas de
+def actualizar_detalle_retornos(
+        worksheet, session: requests.Session, historial: dict, hoy: date = None, aplicar: bool = True) -> list:
+    """Agrega al detalle de 'Duración retornos' las devoluciones nuevas de
     Maxinet (reporte Entregas/Retornos, Tipo=RETORNOS), en orden de fecha de
-    retorno y arriba del bloque ON HIRE, con la misma estructura que Nuvia
-    (UNIFICADO, placa, PU, retorno, DIA, MES, status, cliente, ejecutivo,
-    grupo, modelo, periodo, tarifa, mensual). Solo mira desde 10 días antes
-    de la última devolución cargada, no reescribe filas existentes y es
-    idempotente (se reconoce una devolución por placa+retorno o placa+PU).
-    Ejecutivo, tarifa y UNIFICADO salen del historial de rentas activas
-    (pestaña oculta HISTORIAL ACTIVAS) que se alimenta en cada corrida."""
+    retorno, con la misma estructura que Nuvia (UNIFICADO, placa, PU,
+    retorno, DIA, MES, status, cliente, ejecutivo, grupo, modelo, periodo,
+    tarifa, mensual). Solo mira desde 10 días antes de la última devolución
+    cargada, no reescribe filas existentes y es idempotente (se reconoce una
+    devolución por placa+retorno o placa+PU). Ejecutivo, tarifa y UNIFICADO
+    salen del historial de rentas activas (pestaña oculta HISTORIAL ACTIVAS)
+    que se alimenta en cada corrida."""
     hoy = hoy or _hoy_cdmx()
     libro = worksheet.spreadsheet
-    historial = _actualizar_historial_activas(libro, hoy)
+    fila_encabezado = _fila_encabezado_detalle(worksheet)
+    primera = fila_encabezado + 1
+    filas = worksheet.get(f"A{primera}:N", value_render_option="FORMULA")
 
-    fila_ancla, _ = _localizar_on_hire(worksheet)
-    if fila_ancla is None:
-        log.warning("Duración rentas: no encontré la fila ON HIRE (fórmula matricial en A o =UNIQUE en B) -- no se agregan devoluciones")
-        return []
-    fila_on_hire = fila_ancla - FILA_PRIMER_DETALLE
-    filas = worksheet.get(f"A{FILA_PRIMER_DETALLE}:N{fila_ancla - 1}", value_render_option="FORMULA")
-
-    existentes = [list(f) + [""] * (14 - len(f)) for f in filas[:fila_on_hire]]
+    existentes = [list(f) + [""] * (14 - len(f)) for f in filas]
+    while existentes and not str(existentes[-1][1]).strip():
+        existentes.pop()
     claves = set()
     retornos_existentes = []
     ultimo_por_placa = {}
@@ -1753,7 +1708,7 @@ def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy
             claves.add((placa, f[2]))
             ultimo_por_placa[placa] = f
     if not retornos_existentes:
-        log.warning("Duración rentas: el detalle no tiene devoluciones con fecha -- no se agregan devoluciones")
+        log.warning("%s: el detalle no tiene devoluciones con fecha -- no se agregan devoluciones", worksheet.title)
         return []
 
     ultimo_retorno = max(retornos_existentes)
@@ -1774,16 +1729,17 @@ def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy
         nuevas.append((retorno, valores, completa))
         claves.add((placa, retorno))
     if not nuevas:
-        log.info("Duración rentas: sin devoluciones nuevas (última cargada: %s)", EPOCH_SHEETS + timedelta(days=ultimo_retorno))
+        log.info("%s: sin devoluciones nuevas (última cargada: %s)",
+                 worksheet.title, EPOCH_SHEETS + timedelta(days=ultimo_retorno))
         return []
 
     nuevas.sort(key=lambda n: n[0])
     incompletas = sum(1 for n in nuevas if not n[2])
     if incompletas:
         log.warning(
-            "Duración rentas: %d de %d devoluciones nuevas sin ejecutivo o tarifa (la renta no estaba en el "
+            "%s: %d de %d devoluciones nuevas sin ejecutivo o tarifa (la renta no estaba en el "
             "historial de activas); se agregan con esos campos vacíos para completarlos a mano",
-            incompletas, len(nuevas),
+            worksheet.title, incompletas, len(nuevas),
         )
     if not aplicar:
         return nuevas
@@ -1795,7 +1751,7 @@ def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy
 
     for posicion in sorted(grupos, reverse=True):
         lote = grupos[posicion]
-        primera_fila = FILA_PRIMER_DETALLE + posicion
+        primera_fila = primera + posicion
         libro.batch_update({"requests": [{"insertDimension": {
             "range": {"sheetId": worksheet.id, "dimension": "ROWS",
                       "startIndex": primera_fila - 1, "endIndex": primera_fila - 1 + len(lote)},
@@ -1812,79 +1768,33 @@ def actualizar_detalle_duracion_rentas(worksheet, session: requests.Session, hoy
             values=filas_nuevas, range_name=f"A{primera_fila}:N{primera_fila + len(lote) - 1}",
             value_input_option="USER_ENTERED",
         )
-    log.info("Duración rentas: %d devoluciones nuevas agregadas al detalle", len(nuevas))
+    log.info("%s: %d devoluciones nuevas agregadas al detalle", worksheet.title, len(nuevas))
     return nuevas
 
 
-def asegurar_formulas_on_hire_duracion_rentas(worksheet) -> None:
-    """Las filas ON HIRE salen de un UNIQUE que se derrama desde la columna B
-    y las demás columnas llevan una fórmula por fila que Nuvia arrastra a
-    mano. Extiende esas fórmulas hasta el final de la lista + holgura."""
-    fila_on_hire, modo = _localizar_on_hire(worksheet)
-    if fila_on_hire is None:
-        log.warning("Duración rentas: no encontré la lista ON HIRE (fórmula matricial en A o =UNIQUE en B)")
-        return
-    if modo == "matricial":
-        ancla = worksheet.get(f"A{fila_on_hire}", value_render_option="UNFORMATTED_VALUE")
-        valor = ancla[0][0] if ancla and ancla[0] else ""
-        if isinstance(valor, str) and valor in ERRORES_SHEETS:
-            log.warning("Duración rentas: la fórmula matricial de la lista ON HIRE da error (%s)", valor)
-        else:
-            log.info("Duración rentas: lista ON HIRE como fórmula matricial; no hay nada que extender")
-        return
-    valores_b = worksheet.get(f"B{fila_on_hire}:B", value_render_option="UNFORMATTED_VALUE")
-    activas = 0
-    for fila in valores_b:
-        if not fila or fila[0] == "":
-            break
-        if isinstance(fila[0], str) and fila[0] in ERRORES_SHEETS:
-            log.warning("Duración rentas: la lista ON HIRE tiene un error (%s)", fila[0])
-            return
-        activas += 1
-    columna_k = worksheet.get(f"K{fila_on_hire}:K", value_render_option="FORMULA")
-    ultima_con_formula = fila_on_hire - 1 + sum(1 for _ in _hasta_primer_hueco(columna_k))
-    necesaria = fila_on_hire + activas - 1 + HOLGURA_FILAS_ON_HIRE
-    if ultima_con_formula >= necesaria:
-        log.info("Duración rentas: fórmulas ON HIRE cubren las %d rentas activas", activas)
-        return
-    if necesaria > worksheet.row_count:
-        worksheet.add_rows(necesaria - worksheet.row_count + 100)
-    peticiones = []
-    for col_ini, col_fin in ((0, 1), (2, 12)):  # A y C:L (B es el derrame)
-        peticiones.append({"copyPaste": {
-            "source": {"sheetId": worksheet.id, "startRowIndex": ultima_con_formula - 1, "endRowIndex": ultima_con_formula,
-                       "startColumnIndex": col_ini, "endColumnIndex": col_fin},
-            "destination": {"sheetId": worksheet.id, "startRowIndex": ultima_con_formula, "endRowIndex": necesaria,
-                            "startColumnIndex": col_ini, "endColumnIndex": col_fin},
-            "pasteType": "PASTE_NORMAL",
-        }})
-    worksheet.spreadsheet.batch_update({"requests": peticiones})
-    log.info("Duración rentas: fórmulas ON HIRE extendidas de la fila %d a la %d", ultima_con_formula, necesaria)
-
-
-def _hasta_primer_hueco(columna: list):
-    for fila in columna:
-        if not fila or fila[0] == "":
-            return
-        yield fila
-
-
-def completar_retornos_mes_duracion_rentas(worksheet, fila_encabezado=10, fila_retornos=11, hoy: date = None) -> None:
-    """Crea la fórmula TIEMPO DE VIDA (RETORNOS) del mes en curso si falta
-    (Nuvia la escribe a mano cada mes)."""
+def completar_retornos_mes_duracion_rentas(worksheet, hoy: date = None) -> None:
+    """Crea la fórmula TIEMPO DE VIDA (RETORNOS) del mes en curso si su celda
+    está vacía (Nuvia la escribe a mano cada mes)."""
     hoy = hoy or _hoy_cdmx()
+    fila_encabezado = _fila_encabezado_detalle(worksheet)
+    bloque = _bloques_por_anio(worksheet, ETIQUETA_RETORNOS).get(hoy.year)
+    if bloque is None:
+        log.warning("%s: no hay bloque del año %d (fila de meses y fila %s); no se crea la fórmula del mes en curso",
+                    worksheet.title, hoy.year, ETIQUETA_RETORNOS)
+        return
+    fila_meses, fila_valores = bloque
     idx = hoy.month - 1
-    fila = worksheet.get(f"B{fila_retornos}:M{fila_retornos}", value_render_option="FORMULA")
+    fila = worksheet.get(f"B{fila_valores}:M{fila_valores}", value_render_option="FORMULA")
     fila = fila[0] if fila else []
     if idx < len(fila) and fila[idx] != "":
         return
     col = _indice_a_col_letra(_col_letra_a_indice("B") + idx)
     formula = (
-        f'=IFERROR(AVERAGEIFS($F${FILA_INICIO_DETALLE_RENTAS}:$F,$L${FILA_INICIO_DETALLE_RENTAS}:$L,'
-        f'{col}{fila_encabezado},$G${FILA_INICIO_DETALLE_RENTAS}:$G,"RETURNED"),0)'
+        f'=IFERROR(AVERAGEIFS($F${fila_encabezado}:$F,$L${fila_encabezado}:$L,'
+        f'{col}{fila_meses},$G${fila_encabezado}:$G,"RETURNED"),0)'
     )
-    worksheet.update(values=[[formula]], range_name=f"{col}{fila_retornos}", value_input_option="USER_ENTERED")
-    log.info("Duración rentas: RETORNOS %s%d creado con fórmula viva", col, fila_retornos)
+    worksheet.update(values=[[formula]], range_name=f"{col}{fila_valores}", value_input_option="USER_ENTERED")
+    log.info("%s: RETORNOS %s%d creado con fórmula viva", worksheet.title, col, fila_valores)
 
 
 # Hojas de solo fórmulas del tablero: mantener las fórmulas por fila
@@ -2698,7 +2608,7 @@ def main():
             log.warning("UBICACIONES: no se pudo actualizar (%s: %s)", type(e).__name__, str(e)[:120])
 
         # Todo lo que sigue son hojas auxiliares del tablero (periodos, fórmulas
-        # por fila, gráficos, Duración rentas): si el equipo mueve o renombra
+        # por fila, gráficos, duración de rentas): si el equipo mueve o renombra
         # algo, cada paso avisa en el log y en el resumen de la corrida y el
         # sync sigue, en vez de caerse antes de actualizar la base (así pasó
         # el 20-oct-2026 con TABLAS).
@@ -2713,17 +2623,31 @@ def main():
             "RESUMEN AFECTACIONES (mes)",
             lambda: actualizar_mes_resumen_afectaciones(conectar_sheet_secundario("RESUMEN AFECTACIONES")))
 
-        def _duracion_rentas():
-            worksheet_duracion_rentas = conectar_sheet_secundario("Duración rentas")
-            try:
-                actualizar_detalle_duracion_rentas(worksheet_duracion_rentas, session)
-                asegurar_formulas_on_hire_duracion_rentas(worksheet_duracion_rentas)
-                completar_retornos_mes_duracion_rentas(worksheet_duracion_rentas)
-            except Exception as e:
-                log.warning("Duración rentas: no se pudo actualizar el detalle (%s: %s)", type(e).__name__, str(e)[:200])
-            avanzar_formula_dia_duracion_rentas(worksheet_duracion_rentas)
-            avanzar_activas_duracion_rentas(worksheet_duracion_rentas)
-        _paso_auxiliar("Duración rentas", _duracion_rentas)
+        # Duración de rentas (dos pestañas desde el 22-oct-2026): primero el
+        # historial de rentas activas, que alimenta ejecutivo y tarifa de las
+        # devoluciones nuevas; si no se pudo actualizar, no se agregan
+        # devoluciones (quedarían incompletas y ya no se completarían solas).
+        historial = {}
+
+        def _historial_activas():
+            historial.update(_actualizar_historial_activas(_libro_secundario(), _hoy_cdmx()))
+
+        def _detalle_retornos():
+            if not historial:
+                raise RuntimeError("sin historial de rentas activas; no se agregan devoluciones")
+            actualizar_detalle_retornos(_hoja_duracion_retornos(), session, historial)
+
+        _paso_auxiliar("HISTORIAL ACTIVAS", _historial_activas)
+        _paso_auxiliar("Duración retornos (detalle)", _detalle_retornos)
+        _paso_auxiliar(
+            "Duración retornos (mes)", lambda: completar_retornos_mes_duracion_rentas(_hoja_duracion_retornos()))
+
+        def _duracion_activas():
+            worksheet_activas = conectar_sheet_secundario(
+                os.environ.get("WORKSHEET_DURACION_ACTIVAS") or PESTANA_DURACION_ACTIVAS)
+            verificar_lista_on_hire(worksheet_activas)
+            avanzar_activas_duracion_rentas(worksheet_activas)
+        _paso_auxiliar("Duración de rentas (activas)", _duracion_activas)
 
         # "Proyección de Mantenimientos" YA NO se actualiza aquí -- corre
         # aparte a las 8:10 am (10 minutos después de este sync). El % de cada
