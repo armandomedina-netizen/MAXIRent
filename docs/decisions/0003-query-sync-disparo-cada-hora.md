@@ -219,3 +219,13 @@ El equipo dividió `Duración rentas` en `Duracion de rentas` (promedio de renta
 - **Congelado del mes en ACTIVAS:** la matricial pone `PERIODO` = mes actual en todas las rentas ON HIRE, así que desde el día 1 el `AVERAGEIFS` vivo del mes que cerró no encuentra filas y da `#DIV/0!`. El código anterior habría congelado octubre en 0. Ahora, el primer día del mes nuevo, el valor sale del promedio de `MES` de las rentas ON HIRE de la lista de ese momento (el mismo cálculo, sin el criterio de periodo), y después se crea la fórmula viva del mes nuevo. Con datos reales el promedio calculado coincide con el valor vivo del mes (8.0035). Sólo se congela el mes inmediato anterior; uno más viejo ya no tiene de dónde salir y se avisa para resolverlo a mano, en vez de congelarlo en 0.
 - **Devoluciones nuevas:** se agregan al final de `Duración retornos` (o en su lugar por fecha de retorno si son tardías), con ejecutivo y tarifa del `HISTORIAL ACTIVAS`. Si ese historial no se pudo actualizar en la corrida, no se agregan devoluciones, porque quedarían incompletas y ya no se completarían solas. `HISTORIAL ACTIVAS` es ahora un paso propio.
 - Una devolución con estatus `CHECKED IN` todavía no cuenta: entra cuando Maxinet la marca `RETURNED`, así que el detalle puede ir un día detrás.
+
+### Clientes Nuevos con ventana a las 9:50 (2026-10-22)
+
+La primera mañana con la franja de las 8:00 a las 8:20 mostró que Clientes Nuevos es el único reporte del Tablero CP que depende de la hora: la corrida de las 8:18 trajo 0 filas porque los clientes del 21-oct llegaron con la importación de Maxinet de las 9:40 del 22-oct (la de las 9:00 trae el resto). El cron de GitHub de las 10:00 no sirve de respaldo: en la práctica llega con horas de retraso (el 21-oct corrió a las 13:51).
+
+- La ventana de Clientes Nuevos en el Vigilante pasa de las 8:15 a las 9:50, cuando ya terminaron las dos importaciones, con aviso de retraso a las 10:20. La compuerta de la función matutina se amplía de 9:30 a 10:30.
+- El resumen de las 8:45 muestra una línea `PENDIENTE` con la hora de la ventana para el reporte que todavía no le toca, en lugar de marcarlo como `FALLÓ`, y el asunto dice `todas en orden (1 pendiente de su ventana)`. Si Clientes Nuevos falla, el aviso llega a las 10:20 (tres intentos fallidos avisan antes).
+- Probado con el simulador de las APIs de Apps Script: no se lanza a las 8:17 ni a las 9:42, sí a las 9:52, no se duplica si sigue en curso, el resumen de las 8:45 no da falsa alarma y a las 10:32 la función no consulta a GitHub.
+- La corrida del día se hizo a mano a las 12:20 (9 filas nuevas, validación sin repetidos).
+- El cron de las 10:00 de GitHub se conserva como respaldo; el dato de este ADR sobre 8:15 queda sustituido por esta ventana.
