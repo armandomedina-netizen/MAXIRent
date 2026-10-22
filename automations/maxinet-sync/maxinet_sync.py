@@ -972,8 +972,14 @@ def actualizar_periodo_resumen(worksheet) -> None:
 
 # Extensión segura de fórmulas hacia abajo (RESUMEN y TABLAS): las filas de
 # origen con fórmulas de derrame no se copian y nunca se pega sobre celdas
-# que ya tienen contenido.
-FORMULAS_DE_DERRAME = ("TRANSPOSE(", "UNIQUE(", "FILTER(", "SORT(", "ARRAYFORMULA(")
+# que ya tienen contenido. IMPORTRANGE y QUERY también se derraman (varias
+# filas y columnas): el 22-oct-2026 el equipo puso un IMPORTRANGE en
+# TABLAS!BR2 y el sync lo copió 35 filas hacia abajo; las 36 copias chocaron
+# entre sí y todas dieron #REF!.
+FORMULAS_DE_DERRAME = (
+    "TRANSPOSE(", "UNIQUE(", "FILTER(", "SORT(", "ARRAYFORMULA(",
+    "IMPORTRANGE(", "QUERY(", "FLATTEN(", "SPLIT(", "SEQUENCE(",
+)
 
 
 def _tiene_derrame(celdas) -> bool:
