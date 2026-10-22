@@ -22,6 +22,25 @@ def test_fila_con_derrame_no_se_copia():
     assert m._extender_bloques_formulas(hoja, 7, None, [("BJ", "BK")], 37) == []
 
 
+@pytest.mark.parametrize("formula", [
+    '=IMPORTRANGE("https://docs.google.com/spreadsheets/d/ID/edit","DETALLE!GP:GR")',
+    '=QUERY(RESUMEN!A:G,"select A,B",1)',
+    "=FLATTEN(RESUMEN!A1:C3)",
+    '=SPLIT(RESUMEN!A2,",")',
+    "=SEQUENCE(10,1)",
+])
+def test_importrange_y_otras_formulas_que_se_derraman_no_se_copian(formula):
+    # el 22-oct TABLAS!BR2 era un IMPORTRANGE de 3 columnas y el sync lo copió hasta la fila 37
+    hoja = HojaFalsa({(2, col("BR")): formula}, col_count=73)
+    assert m._extender_bloques_formulas(hoja, 7, None, [("BR", "BR")], 37) == []
+
+
+def test_formula_por_fila_con_referencia_normal_sigue_extendiendose():
+    hoja = HojaFalsa({(r, col("BR")): "=IFERROR(AVERAGEIFS(RESUMEN!$G:$G,RESUMEN!$E:$E,$BQ3),\"\")"
+                      for r in range(2, 4)}, col_count=73)
+    assert len(m._extender_bloques_formulas(hoja, 7, None, [("BR", "BR")], 8)) == 1
+
+
 def test_bloque_fuera_de_la_hoja_se_omite():
     assert m._extender_bloques_formulas(HojaFalsa({}), 7, None, [("BR", "BR")], 37) == []
 

@@ -201,3 +201,10 @@ Los avisos del Vigilante (corrida sin éxito, tres fallos seguidos, error de App
 - Resumen diario: a partir de las 8:45 la función matutina envía un correo por día (uno solo, controlado con la clave `resumen_<fecha>`) con una línea por reporte (las dos ventanas del tablero LP, Query, Balance, Tablero CP y Gestoría): `OK` o `FALLÓ` con el número de intentos. El asunto dice si todo está en orden o cuántos tienen problema. Así también se confirma cuando las automatizaciones funcionan, no solo cuando fallan.
 - Para desactivarlo basta con quitar la propiedad `resumen` de la constante `MATUTINO` y la llamada a `resumenMatutino_`.
 
+
+### Fórmulas que se derraman en TABLAS: IMPORTRANGE y QUERY (2026-10-22)
+
+El sync extiende hacia abajo las fórmulas por fila de `TABLAS`, pero nunca una fila con fórmulas de derrame (`UNIQUE`, `TRANSPOSE`, `FILTER`, `SORT`, `ARRAYFORMULA`). Faltaban `IMPORTRANGE` y `QUERY`, que también ocupan varias filas y columnas. El 22-oct-2026 el equipo puso un `IMPORTRANGE` de tres columnas en la columna BR de `TABLAS` y la corrida de las 8:00 lo copió de la fila 2 a la 37: las 36 copias chocaron entre sí y todas dieron `#REF!`.
+
+- La lista de fórmulas de derrame suma `IMPORTRANGE`, `QUERY`, `FLATTEN`, `SPLIT` y `SEQUENCE`. Una fila de origen con cualquiera de ellas no se copia y el log lo avisa.
+- Las letras de los bloques de `TABLAS` siguen fijas en el código. Si el equipo reutiliza una columna para otra cosa, el sync no se entera; la protección es que nunca pega sobre celdas con contenido y que no copia derrames.
