@@ -8,7 +8,7 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 
 | Workflow | Qué hace | Horario | Disparo externo | Detalle |
 |---|---|---|---|---|
-| `maxinet-sync.yml` | Sync completo del tablero LP y de la base (flota, columnas diarias, `Duración rentas`, ubicaciones) y captura de la proyección de mantenimiento | 8:00 y 8:10 | Sí (ventanas de 8:00 y 8:10, hasta 3 reintentos) | ADR 0003 y 0006 |
+| `maxinet-sync.yml` | Sync completo del tablero LP y de la base (flota, columnas diarias, duración de rentas y retornos, ubicaciones) y captura de la proyección de mantenimiento | 8:00 y 8:10 | Sí (ventanas de 8:00 y 8:10, hasta 3 reintentos) | ADR 0003 y 0006 |
 | `maxinet-query-sync.yml` | Baja de Maxinet el cargo de reservas a la copia del Query | 7:40 y después cada hora, lunes a sábado desde las 8:00 | Sí (ventana de 7:40 y disparo cada hora) | ADR 0003 |
 | `maxinet-balance.yml` | Entregas, retornos y solicitudes del BALANCE | 7:50 y después cada hora, lunes a sábado desde las 8:00 | Sí (ventana de 7:50 y disparo cada hora) | ADR 0004 |
 | `gestoria-lp-cp-sync.yml` | Tickets de gestoría (todos los estatus) | 8:20 y después cada hora, lunes a sábado de 8:30 a 19:00 | Sí (ventana de 8:20 y disparo cada hora) | ADR 0005 |
@@ -27,17 +27,17 @@ Todos viven en Settings → Secrets and variables → Actions. Nada de esto se i
 - **Maxinet y Google:** `MAXINET_BASE_URL`, `MAXINET_USER`, `MAXINET_PASS`, `GOOGLE_CREDS_JSON` (cuenta de servicio; debe ser editora de los archivos que se escriben y de las pestañas protegidas).
 - **Archivos de Sheets:** `SPREADSHEET_ID` (base LP), `SPREADSHEET_ID_SECUNDARIO` (tablero LP), `SPREADSHEET_ID_QUERY` (copia del Query), `SPREADSHEET_ID_BALANCE`, `SPREADSHEET_ID_GESTORIA`, `SPREADSHEET_ID_CLIENTES_NUEVOS` (base del Tablero CP) y `SPREADSHEET_ID_SAC`.
 - **Pestañas con secret:** `WORKSHEET_NAME` (base), `WORKSHEET_FLOTA_LP`, `WORKSHEET_QUERY_NAME`, `WORKSHEET_CLIENTES_NUEVOS_NAME` y `WORKSHEET_CLIENTES_POTENCIALES_NAME`.
-- **Pestañas opcionales** (si el secret no existe se usa el nombre por defecto del código; aceptan nombre o gid): `WORKSHEET_UTILIZACION`, `WORKSHEET_GRUPO_AUTOS`, `WORKSHEET_TARIFA_DETALLE`, `WORKSHEET_ENTREGAS_NAME`, `WORKSHEET_ENCUESTAS_NAME`, `WORKSHEET_FRECUENTES_NAME` y `WORKSHEET_GESTORIA_NAME`.
+- **Pestañas opcionales** (si el secret no existe se usa el nombre por defecto del código; aceptan nombre o gid): `WORKSHEET_UTILIZACION`, `WORKSHEET_GRUPO_AUTOS`, `WORKSHEET_TARIFA_DETALLE`, `WORKSHEET_DURACION_ACTIVAS`, `WORKSHEET_DURACION_RETORNOS`, `WORKSHEET_ENTREGAS_NAME`, `WORKSHEET_ENCUESTAS_NAME`, `WORKSHEET_FRECUENTES_NAME` y `WORKSHEET_GESTORIA_NAME`.
 - **monday:** `MONDAY_TOKEN` y `MONDAY_SAC_SCHEMA_JSON` (solo Tablero SAC).
 - `SPREADSHEET_ID_ORIGINAL` ya no lo lee ningún workflow y puede borrarse.
 
 ## Qué hacer cuando algo cambia
 
-**Renombraron una pestaña.** Las pestañas que el sync busca por secret (`WORKSHEET_UTILIZACION`, `WORKSHEET_GRUPO_AUTOS`, `WORKSHEET_TARIFA_DETALLE`) aceptan el nombre o el gid, que es el número después de `#gid=` en la URL de la pestaña y no cambia al renombrarla. Con el gid en el secret un cambio de nombre ya no afecta. Si el nombre no existe, el error dice cuántas pestañas tiene el libro y los nombres más parecidos, sin volcar el inventario completo (los logs son públicos). Una fórmula que lleva el nombre de una pestaña dentro de un `IMPORTRANGE` sí se rompe al renombrarla y hay que corregirla en el Sheet.
+**Renombraron una pestaña.** Las pestañas que el sync busca por secret (`WORKSHEET_UTILIZACION`, `WORKSHEET_GRUPO_AUTOS`, `WORKSHEET_TARIFA_DETALLE`, `WORKSHEET_DURACION_ACTIVAS`, `WORKSHEET_DURACION_RETORNOS`) aceptan el nombre o el gid, que es el número después de `#gid=` en la URL de la pestaña y no cambia al renombrarla. Con el gid en el secret un cambio de nombre ya no afecta. Si el nombre no existe pero hay otro igual salvo mayúsculas, acentos o espacios (`Duracion` / `Duración`), se usa ese y el log lo avisa. Si no hay ninguno, el error dice cuántas pestañas tiene el libro y los nombres más parecidos, sin volcar el inventario completo (los logs son públicos). Una fórmula que lleva el nombre de una pestaña dentro de un `IMPORTRANGE` sí se rompe al renombrarla y hay que corregirla en el Sheet.
 
 **Movieron o borraron columnas.** Los lectores validan los encabezados que usan; si no coinciden se detienen sin escribir y el mensaje dice qué columna esperaban. Las extensiones de fórmulas hacia abajo (`RESUMEN`, `TABLAS`) nunca copian una fila de encabezados o con fórmulas de derrame (`UNIQUE`, `TRANSPOSE`, `FILTER`...) y solo pegan en columnas con el destino vacío. Letras de columna escritas a mano en el código son un riesgo cuando el tablero se reestructura: toda letra nueva debe pasar por esas protecciones.
 
-**Un paso auxiliar falla.** Lo crítico del sync completo (descarga, avance de las columnas diarias y escritura de la base) va primero. `RESUMEN`, `TABLAS`, `Duración rentas` y los gráficos son pasos auxiliares: si fallan, el log y el resumen de la corrida llevan un aviso (`::warning`) y el sync sigue. Un aviso repetido hay que atenderlo; no se arregla solo.
+**Un paso auxiliar falla.** Lo crítico del sync completo (descarga, avance de las columnas diarias y escritura de la base) va primero. `RESUMEN`, `TABLAS`, `HISTORIAL ACTIVAS`, `Duración retornos`, `Duracion de rentas` y los gráficos son pasos auxiliares: si fallan, el log y el resumen de la corrida llevan un aviso (`::warning`) y el sync sigue. Un aviso repetido hay que atenderlo; no se arregla solo.
 
 **Un día se quedó sin procesar.** Maxinet devuelve la foto de flota de cualquier fecha pasada. El avance diario de las columnas debe recuperarse en orden, un día a la vez, y esperar a que la hoja de flota muestre la fecha antes de pasar al siguiente día (si no, se congela la columna con datos de otro día). Hoy el procedimiento se hace con un script local; está pendiente versionarlo.
 

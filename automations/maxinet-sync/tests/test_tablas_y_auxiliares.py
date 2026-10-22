@@ -97,3 +97,13 @@ def test_nombres_por_defecto_y_listas_sin_pestanas_que_ya_no_existen():
     assert m.BLOQUES_FORMULAS_TABLERO == {}
     assert "GRAFICOS UTILIZACION" not in m.GRAFICOS_CRECIENTES["tablero"]
     m.mantener_formulas_tablero()  # sin bloques: no hace nada ni falla
+
+
+def test_pestana_con_otro_acento_o_mayusculas_se_encuentra(caplog):
+    from fakes import Libro
+    libro = Libro([HojaFalsa(titulo="Duración retornos", gid=5)])
+    with caplog.at_level("WARNING"):
+        assert m._resolver_pestana(libro, "Duracion  RETORNOS").id == 5
+    assert "se usa 'Duración retornos'" in caplog.text
+    with pytest.raises(gspread.exceptions.WorksheetNotFound):
+        m._resolver_pestana(libro, "Otra pestaña")

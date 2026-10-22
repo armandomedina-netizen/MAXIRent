@@ -73,6 +73,8 @@ jobs:
           WORKSHEET_FLOTA_LP: ${{ secrets.WORKSHEET_FLOTA_LP }}
           WORKSHEET_UTILIZACION: ${{ secrets.WORKSHEET_UTILIZACION }}
           WORKSHEET_GRUPO_AUTOS: ${{ secrets.WORKSHEET_GRUPO_AUTOS }}
+          WORKSHEET_DURACION_ACTIVAS: ${{ secrets.WORKSHEET_DURACION_ACTIVAS }}
+          WORKSHEET_DURACION_RETORNOS: ${{ secrets.WORKSHEET_DURACION_RETORNOS }}
           EVENTO_SCHEDULE: ${{ github.event.schedule }}
           MODO: ${{ inputs.modo }}
         # El cron de las 8:10 am ("10 14 * * *") o un disparo manual con
