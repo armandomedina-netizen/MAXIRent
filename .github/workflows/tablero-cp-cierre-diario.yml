@@ -1,0 +1,45 @@
+name: Tablero CP Cierre Diario
+
+# Congela la columna del día anterior y deja vivas las fórmulas del día en las columnas por día del
+# Tablero CP copia (UNIDADES CP y las dos de UTILIZACION). Es idempotente y no depende de la hora:
+# el disparo exacto lo hace el Vigilante (Apps Script) poco después del sync que cambia la fecha de
+# FLOTA CP, y este cron cada hora es el seguro, aunque GitHub lo retrase.
+on:
+  schedule:
+    - cron: "27 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tablero-cp-cierre-diario
+  cancel-in-progress: false
+
+jobs:
+  cierre:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: automations/tablero-cp-cierre-diario
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Cierre diario
+        env:
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/tablero-cp-cierre-diario/google-creds.json
+          SPREADSHEET_ID_TABLERO_CP: ${{ secrets.SPREADSHEET_ID_TABLERO_CP }}
+        run: python cierre_diario.py
