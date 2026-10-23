@@ -27,6 +27,9 @@ Variables de entorno esperadas (usar un gestor de secretos, nunca hardcodear):
                                 "UTILIZACION V3"): nombre o gid; opcional, ver PESTANA_UTILIZACION
     WORKSHEET_GRUPO_AUTOS    -> pestaña de flota por grupo (hoy "FLOTA POR GRUPO", antes
                                 "UTI. GRUPO DE AUTOS V1"): nombre o gid; opcional, ver PESTANA_GRUPO_AUTOS
+    SPREADSHEET_ID_TABLERO_CP -> ID del Tablero CP, de donde sale "UNIDADES CP" (avance diario);
+                                opcional: sin él ese paso avisa y el sync sigue
+    WORKSHEET_UNIDADES_CP    -> pestaña "UNIDADES CP" (nombre o gid); opcional, ver PESTANA_UNIDADES_CP
     WORKSHEET_DURACION_ACTIVAS / WORKSHEET_DURACION_RETORNOS -> pestañas "Duracion de rentas" y
                                 "Duración retornos" (nombre o gid); opcionales, ver PESTANA_DURACION_*
 
@@ -2554,6 +2557,97 @@ def actualizar_proyeccion_mantenimientos(
         )
 
 
+# Tablero CP: avance diario de "UNIDADES CP". Cada día es una columna (fila 2 =
+# fecha, una por día del año). La fila TOTAL ON HIRE y las de indicadores del
+# final son fórmulas en todas las columnas; las filas de conteo que hay entre
+# ellas (ON HIRE por base, disponibles, taller, seminuevos...) sólo tienen
+# fórmula viva -- un COUNTIFS sobre 'FLOTA CP', que importa de la Base -- en la
+# columna del último día, y en las demás son valores congelados. Nuvia lo
+# avanzaba a mano cada día; como el tablero ya no depende de su archivo, lo hace
+# el sync, con el mismo orden que el del LP: ANTES de actualizar la base, para
+# congelar la columna anterior con los datos de su propio día. Alimenta el
+# promedio mensual "AVG RENTA CP" (DETALLE!GP:GR) que lee TABLAS!BR del tablero LP.
+PESTANA_UNIDADES_CP = "UNIDADES CP"
+ETIQUETA_UCP_TOTAL = "TOTAL ON HIRE"
+ETIQUETA_UCP_FIN = "INVENTARIO COMERCIAL"
+FILAS_ETIQUETAS_UCP = 80
+
+
+def conectar_sheet_tablero_cp(nombre_pestana: str):
+    """Pestaña del Tablero CP (SPREADSHEET_ID_TABLERO_CP): nombre o gid."""
+    id_libro = os.environ.get("SPREADSHEET_ID_TABLERO_CP", "").strip()
+    if not id_libro:
+        raise RuntimeError("SPREADSHEET_ID_TABLERO_CP no está configurado")
+    creds = service_account.Credentials.from_service_account_file(
+        os.environ["GOOGLE_CREDS_PATH"], scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    return _resolver_pestana(gspread.authorize(creds).open_by_key(id_libro), nombre_pestana)
+
+
+def _filas_conteo_unidades_cp(worksheet) -> tuple:
+    """(primera, ultima) fila de conteo de UNIDADES CP: las que hay entre la
+    fila TOTAL ON HIRE y la fila INVENTARIO COMERCIAL, buscadas por etiqueta."""
+    columna = worksheet.get(f"A1:A{FILAS_ETIQUETAS_UCP}", value_render_option="UNFORMATTED_VALUE")
+    etiquetas = [_normalizar(f[0]) if f else "" for f in columna]
+    try:
+        fila_total = etiquetas.index(_normalizar(ETIQUETA_UCP_TOTAL)) + 1
+        fila_fin = etiquetas.index(_normalizar(ETIQUETA_UCP_FIN)) + 1
+    except ValueError:
+        raise LookupError(f"no encontré las filas {ETIQUETA_UCP_TOTAL} / {ETIQUETA_UCP_FIN} en la columna A")
+    if fila_fin - fila_total < 2:
+        raise LookupError("no hay filas de conteo entre TOTAL ON HIRE e INVENTARIO COMERCIAL")
+    return fila_total + 1, fila_fin - 1
+
+
+def avanzar_columna_unidades_cp(worksheet, fecha_objetivo: date = None) -> None:
+    """Cada día: copia las fórmulas de conteo de la columna del día anterior a
+    la de `fecha_objetivo` (por defecto ayer, la fecha de la foto que la base
+    está por recibir) y congela a valores las de la anterior. Sólo mueve las
+    filas que tienen fórmula en la columna de origen, no escribe si la de
+    destino ya tiene contenido (la corrida ya se hizo) y no hace nada si el
+    origen no tiene fórmulas vivas (hay que avanzarla a mano)."""
+    fecha = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
+    serial = (fecha - EPOCH_SHEETS).days
+    primera, ultima = _filas_conteo_unidades_cp(worksheet)
+    fechas = worksheet.row_values(2, value_render_option="UNFORMATTED_VALUE")
+    if serial not in fechas:
+        raise LookupError(f"la fecha {fecha.isoformat()} no está en la fila 2 de {worksheet.title}")
+    idx_destino = fechas.index(serial)
+    idx_origen = idx_destino - 1
+    if idx_origen < 1:
+        raise LookupError(f"{worksheet.title}: la fecha {fecha.isoformat()} es la primera columna; no hay origen")
+    col_origen, col_destino = _indice_a_col_letra(idx_origen), _indice_a_col_letra(idx_destino)
+
+    destino = worksheet.get(f"{col_destino}{primera}:{col_destino}{ultima}", value_render_option="FORMULA")
+    if any(f and str(f[0]) != "" for f in destino):
+        log.warning("%s: la columna %s (fecha %s) ya tiene contenido -- no se repite el avance.",
+                    worksheet.title, col_destino, fecha.isoformat())
+        return
+    origen = worksheet.get(f"{col_origen}{primera}:{col_origen}{ultima}", value_render_option="FORMULA")
+    filas = [primera + i for i, f in enumerate(origen) if f and str(f[0]).startswith("=")]
+    if not filas:
+        log.warning("%s: la columna %s (día anterior a %s) no tiene fórmulas vivas de conteo -- no se avanza; "
+                    "hay que avanzarla a mano.", worksheet.title, col_origen, fecha.isoformat())
+        return
+
+    def rango(fila_ini, fila_fin, col_idx):
+        return {"sheetId": worksheet.id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
+                "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1}
+
+    tramos = _rangos_contiguos(filas)
+    peticiones = [
+        {"copyPaste": {"source": rango(ini, fin, idx_origen), "destination": rango(ini, fin, idx_destino),
+                       "pasteType": "PASTE_FORMULA"}}
+        for ini, fin in tramos
+    ] + [
+        {"copyPaste": {"source": rango(ini, fin, idx_origen), "destination": rango(ini, fin, idx_origen),
+                       "pasteType": "PASTE_VALUES"}}
+        for ini, fin in tramos
+    ]
+    worksheet.spreadsheet.batch_update({"requests": peticiones})
+    log.info("%s: fórmulas avanzadas de la columna %s a %s (fecha %s), %d filas congeladas",
+             worksheet.title, col_origen, col_destino, fecha.isoformat(), len(filas))
+
+
 def _paso_auxiliar(nombre: str, paso) -> None:
     """Corre un paso auxiliar del sync. Si falla (hoja movida o renombrada,
     cuota, protección...) lo avisa en el log y como anotación de la corrida y
@@ -2585,6 +2679,11 @@ def main():
 
         worksheet_grupo_autos = conectar_sheet_secundario(os.environ.get("WORKSHEET_GRUPO_AUTOS") or PESTANA_GRUPO_AUTOS)
         avanzar_columna_grupo_autos(worksheet_grupo_autos)
+
+        # Tablero CP: UNIDADES CP avanza igual que las del LP, antes de la base
+        # (el aviso no detiene el sync: la base no puede depender de este libro).
+        _paso_auxiliar("UNIDADES CP (Tablero CP)", lambda: avanzar_columna_unidades_cp(
+            conectar_sheet_tablero_cp(os.environ.get("WORKSHEET_UNIDADES_CP") or PESTANA_UNIDADES_CP)))
 
         # La base se escribe en cuanto avanzaron las columnas diarias (el orden
         # de arriba se respeta): es lo que alimenta todo el tablero y no puede

@@ -229,3 +229,14 @@ La primera mañana con la franja de las 8:00 a las 8:20 mostró que Clientes Nue
 - Probado con el simulador de las APIs de Apps Script: no se lanza a las 8:17 ni a las 9:42, sí a las 9:52, no se duplica si sigue en curso, el resumen de las 8:45 no da falsa alarma y a las 10:32 la función no consulta a GitHub.
 - La corrida del día se hizo a mano a las 12:20 (9 filas nuevas, validación sin repetidos).
 - El cron de las 10:00 de GitHub se conserva como respaldo; el dato de este ADR sobre 8:15 queda sustituido por esta ventana.
+
+### Avance diario de UNIDADES CP en el Tablero CP (2026-10-22)
+
+El promedio mensual `AVG RENTA CP` que lee `TABLAS!BR` del tablero LP (y, de ahí, la pestaña `GESTORÍA`) salía del libro `CP - TABLERO` de Nuvia: `DETALLE!GP:GR`, que promedia por mes los autos en renta de `UNIDADES CP`. Como Nuvia ya trabaja sobre nuestros tableros, esa importación no puede depender de su archivo, pero repuntarla a nuestro Tablero CP daba un octubre distinto (318 contra 337): en `UNIDADES CP` la columna del día la avanzaba ella a mano y la nuestra se quedó en el 20-oct (la columna viva marcaba ceros porque `FLOTA CP` ya traía la foto del 21 y el 21 no existía).
+
+- `UNIDADES CP` tiene una columna por día. La fila `TOTAL ON HIRE` y los indicadores del final (`INVENTARIO COMERCIAL` en adelante) son fórmulas en todas las columnas; las filas de conteo que hay entre ellas sólo tienen fórmula viva (un `COUNTIFS` sobre `FLOTA CP`, que importa de la Base) en la columna del último día, y en las demás son valores.
+- El sync completo avanza esa columna como las del LP y en el mismo punto: antes de actualizar la base, para congelar la columna anterior con los datos de su propio día. Copia las fórmulas de conteo al día de ayer y congela las del día anterior (32 filas hoy). Las filas se buscan por etiqueta (entre `TOTAL ON HIRE` e `INVENTARIO COMERCIAL`), no por número.
+- Protecciones: no escribe si la columna de destino ya tiene contenido (la corrida ya se hizo), no avanza si el origen no tiene fórmulas vivas (avisa para hacerlo a mano) y si falta el secret `SPREADSHEET_ID_TABLERO_CP` o la pestaña, avisa y el sync sigue.
+- Secrets nuevos, opcionales: `SPREADSHEET_ID_TABLERO_CP` y `WORKSHEET_UNIDADES_CP` (nombre o gid).
+- Pendiente de un solo paso manual: el 20-oct de nuestro `UNIDADES CP` quedó con ceros y hay que sembrarlo una vez con los valores de ese día que ya tiene Nuvia (precedente: el detalle de `Duración rentas`); después la columna viva pasa al 21-oct y el sync sigue solo. Con eso `DETALLE!GP:GR` de nuestro Tablero CP da el mismo promedio y `TABLAS!BR2` se repunta a él.
+- Fuera de este cambio: las demás hojas con columna diaria del Tablero CP (utilización, disponible con reserva, días vendidos) siguen avanzándose a mano.
