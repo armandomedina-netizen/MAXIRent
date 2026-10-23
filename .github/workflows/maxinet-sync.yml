@@ -75,6 +75,8 @@ jobs:
           WORKSHEET_GRUPO_AUTOS: ${{ secrets.WORKSHEET_GRUPO_AUTOS }}
           WORKSHEET_DURACION_ACTIVAS: ${{ secrets.WORKSHEET_DURACION_ACTIVAS }}
           WORKSHEET_DURACION_RETORNOS: ${{ secrets.WORKSHEET_DURACION_RETORNOS }}
+          SPREADSHEET_ID_TABLERO_CP: ${{ secrets.SPREADSHEET_ID_TABLERO_CP }}
+          WORKSHEET_UNIDADES_CP: ${{ secrets.WORKSHEET_UNIDADES_CP }}
           EVENTO_SCHEDULE: ${{ github.event.schedule }}
           MODO: ${{ inputs.modo }}
         # El cron de las 8:10 am ("10 14 * * *") o un disparo manual con
