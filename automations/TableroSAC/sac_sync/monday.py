@@ -2,7 +2,8 @@
 
 Las consultas son items_page y next_items_page, con fragmentos que exponen display_value
 en reflejos, relaciones, fórmulas y subelementos, tipos que la herramienta MCP
-get_board_items_page no soporta.
+get_board_items_page no soporta. Cuando el esquema define una pestaña de subelementos, cada
+elemento trae además sus subelementos en la misma consulta.
 """
 from __future__ import annotations
 
@@ -29,43 +30,74 @@ CODIGOS_REINTENTABLES = {
     "IP_RATE_LIMIT_EXCEEDED", "CONCURRENCY_LIMIT_EXCEEDED",
 }
 
-# Campos de cada elemento; column_values se limita a las columnas del esquema.
-_CAMPOS_ITEM = """
-      id
-      name
-      group { id title }
-      column_values(ids: $ids) {
-        id
-        type
-        text
+# Fragmentos que exponen display_value, el valor legible de reflejos, relaciones, fórmulas y subelementos.
+_FRAGMENTOS = """
         ... on MirrorValue { display_value }
         ... on BoardRelationValue { display_value }
         ... on FormulaValue { display_value }
         ... on SubtasksValue { display_value }
+        ... on TimeTrackingValue { running }
+"""
+
+# Campos de cada elemento; column_values se limita a las columnas del esquema.
+_CAMPOS_ITEM = """
+      id
+      name
+      created_at
+      group { id title }
+      column_values(ids: $ids) {
+        id
+        type
+        text""" + _FRAGMENTOS + """      }
+"""
+
+# Subelementos de cada elemento, con las columnas del esquema de subelementos. El ticket padre no se
+# pide aparte: la consulta ya lo trae como el elemento que contiene al subelemento.
+_BLOQUE_SUBELEMENTOS = """      subitems {
+        id
+        name
+        created_at
+        column_values(ids: $ids_sub) {
+          id
+          type
+          text""" + _FRAGMENTOS + """        }
       }
 """
 
-# Primera página de un grupo: filtra por grupo y devuelve el cursor para continuar.
-PRIMERA_PAGINA = """
-query ($tablero: ID!, $limite: Int!, $filtro: ItemsQuery, $ids: [String!]) {
+
+def consulta_primera_pagina(con_subelementos: bool = False) -> str:
+    """Primera página de un grupo: filtra por grupo y devuelve el cursor para continuar. Con
+    subelementos, cada elemento trae además los suyos y se declara la variable $ids_sub."""
+    declaracion = ", $ids_sub: [String!]" if con_subelementos else ""
+    campos = _CAMPOS_ITEM + (_BLOQUE_SUBELEMENTOS if con_subelementos else "")
+    return ("""
+query ($tablero: ID!, $limite: Int!, $filtro: ItemsQuery, $ids: [String!]""" + declaracion + """) {
   boards(ids: [$tablero]) {
     items_page(limit: $limite, query_params: $filtro) {
       cursor
-      items {""" + _CAMPOS_ITEM + """      }
+      items {""" + campos + """      }
     }
   }
 }
-"""
+""")
 
-# Páginas siguientes: continúan desde el cursor de la anterior.
-SIGUIENTE_PAGINA = """
-query ($cursor: String!, $limite: Int!, $ids: [String!]) {
+
+def consulta_siguiente_pagina(con_subelementos: bool = False) -> str:
+    """Páginas siguientes: continúan desde el cursor de la anterior y tienen la misma forma que la primera."""
+    declaracion = ", $ids_sub: [String!]" if con_subelementos else ""
+    campos = _CAMPOS_ITEM + (_BLOQUE_SUBELEMENTOS if con_subelementos else "")
+    return ("""
+query ($cursor: String!, $limite: Int!, $ids: [String!]""" + declaracion + """) {
   next_items_page(limit: $limite, cursor: $cursor) {
     cursor
-    items {""" + _CAMPOS_ITEM + """    }
+    items {""" + campos + """    }
   }
 }
-"""
+""")
+
+
+PRIMERA_PAGINA = consulta_primera_pagina()
+SIGUIENTE_PAGINA = consulta_siguiente_pagina()
 
 # Columnas, grupos y total de elementos del tablero.
 ESTRUCTURA_TABLERO = """
@@ -74,6 +106,16 @@ query ($tablero: ID!) {
     items_count
     columns { id title type }
     groups { id title }
+  }
+}
+"""
+
+# Columnas de varios tableros en una sola consulta (el de tickets y el de subelementos).
+ESTRUCTURA_COLUMNAS = """
+query ($tableros: [ID!]) {
+  boards(ids: $tableros) {
+    id
+    columns { id }
   }
 }
 """
@@ -176,7 +218,7 @@ class ClienteMonday:
         columnas = {c["id"]: c for c in tablero["columns"]}
         grupos = {g["id"]: g for g in tablero["groups"]}
 
-        faltan = [c.encabezado for c in esquema.columnas if c.origen == "columna" and c.columna_id not in columnas]
+        faltan = [c.encabezado for c in esquema.columnas if c.origen in ("columna", "en_marcha") and c.columna_id not in columnas]
         if faltan:
             raise ErrorMonday(f"columnas del esquema que ya no existen en el tablero: {faltan}")
         faltan = [g.hoja for g in esquema.grupos if g.grupo_id not in grupos]
@@ -191,11 +233,37 @@ class ClienteMonday:
                 log.warning("el título del grupo de la pestaña '%s' cambió en monday", g.hoja)
         return int(tablero.get("items_count") or 0)
 
-    def leer_grupo(self, grupo_id: str, ids_columnas: list[str]) -> list[dict]:
+    def validar_subelementos(self, esquema: Esquema) -> None:
+        """Comprueba que el token vea el tablero de subelementos y que existan sus columnas del esquema y
+        las del ticket que se copian a cada fila. Va aparte de validar_esquema para que un problema en los
+        subelementos falle sólo su pestaña y no la de tickets. No compara títulos: los encabezados de la
+        pestaña de subelementos pueden ser distintos a propósito (monday tiene dos columnas llamadas igual)."""
+        tabla = esquema.subelementos
+        tableros = self._consultar(ESTRUCTURA_COLUMNAS,
+                                   {"tableros": [esquema.tablero_id, tabla.tablero_id]}).get("boards") or []
+        columnas = {str(t["id"]): {c["id"] for c in t["columns"]} for t in tableros}
+        propias = columnas.get(str(tabla.tablero_id))
+        if propias is None:
+            raise ErrorMonday("el token no ve el tablero de subelementos del esquema")
+        faltan = [c.encabezado for c in tabla.columnas if c.origen in ("columna", "en_marcha") and c.columna_id not in propias]
+        if faltan:
+            raise ErrorMonday(f"columnas de subelementos del esquema que ya no existen en el tablero: {faltan}")
+        del_ticket = columnas.get(str(esquema.tablero_id), set())
+        faltan = [c.encabezado for c in tabla.columnas if c.origen == "padre_columna" and c.columna_id not in del_ticket]
+        if faltan:
+            raise ErrorMonday(f"columnas del ticket que usan los subelementos y ya no existen en el tablero: {faltan}")
+
+    def leer_grupo(self, grupo_id: str, ids_columnas: list[str],
+                   ids_subelementos: list[str] | None = None) -> list[dict]:
         """Lee todos los elementos de un grupo, en el orden del tablero, paginando por cursor y
-        descartando los que monday repita entre páginas."""
+        descartando los que monday repita entre páginas. Con `ids_subelementos` cada elemento trae
+        también sus subelementos (una lista vacía si no tiene); si monday no los devuelve, falla en lugar
+        de entregar un grupo sin subelementos."""
+        con_subelementos = ids_subelementos is not None
+        extra = {"ids_sub": ids_subelementos} if con_subelementos else {}
         filtro = {"rules": [{"column_id": "group", "compare_value": [grupo_id], "operator": "any_of"}]}
-        datos = self._con_ajuste(PRIMERA_PAGINA, {"tablero": self._tablero, "filtro": filtro, "ids": ids_columnas})
+        datos = self._con_ajuste(consulta_primera_pagina(con_subelementos),
+                                 {"tablero": self._tablero, "filtro": filtro, "ids": ids_columnas, **extra})
         tableros = datos.get("boards") or []
         if not tableros:
             raise ErrorMonday("el token no ve el tablero del esquema")
@@ -204,6 +272,8 @@ class ClienteMonday:
         items, vistos, duplicados, paginas = [], set(), 0, 1
         while True:
             for item in pagina.get("items") or []:
+                if con_subelementos and not isinstance(item.get("subitems"), list):
+                    raise ErrorMonday("monday no devolvió los subelementos de un elemento")
                 if item["id"] in vistos:
                     duplicados += 1
                     continue
@@ -212,7 +282,8 @@ class ClienteMonday:
             cursor = pagina.get("cursor")
             if not cursor:
                 break
-            pagina = self._con_ajuste(SIGUIENTE_PAGINA, {"cursor": cursor, "ids": ids_columnas})["next_items_page"]
+            pagina = self._con_ajuste(consulta_siguiente_pagina(con_subelementos),
+                                      {"cursor": cursor, "ids": ids_columnas, **extra})["next_items_page"]
             paginas += 1
         if duplicados:
             log.warning("monday repitió %d elementos entre páginas (el tablero cambió durante la lectura); se descartaron", duplicados)

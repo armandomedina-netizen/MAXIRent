@@ -33,8 +33,10 @@ def construir_parser() -> argparse.ArgumentParser:
     destino.add_argument("--periodicas", action="store_true",
                          help="sincroniza las pestañas marcadas como periódicas en el esquema")
     destino.add_argument("--hoja", action="append", metavar="NOMBRE",
-                         help="sincroniza esa pestaña (se puede repetir; no distingue mayúsculas ni acentos)")
-    destino.add_argument("--listar", action="store_true", help="muestra las pestañas del esquema y termina")
+                         help="sincroniza esa pestaña (se puede repetir; no distingue mayúsculas ni acentos); "
+                              "nombrar la pestaña de subelementos de un grupo sincroniza el grupo completo")
+    destino.add_argument("--listar", action="store_true",
+                         help="muestra las pestañas del esquema, con las de subelementos, y termina")
     p.add_argument("--dry-run", action="store_true", help="lee monday y revisa la pestaña, pero no escribe nada")
     p.add_argument("--comparar", action="store_true",
                    help="compara contra lo que ya hay en la pestaña y cuenta las diferencias por columna")
@@ -63,6 +65,8 @@ def elegir_grupos(esquema: Esquema, todas: bool, nombres: list[str], periodicas:
             raise ErrorConfiguracion("ninguna pestaña del esquema está marcada como periódica")
         return marcados
     por_nombre = {_normalizar(g.hoja): g for g in esquema.grupos}
+    # La pestaña de subelementos se sincroniza con su grupo, así que nombrarla elige ese grupo.
+    por_nombre.update({_normalizar(g.hoja_subelementos): g for g in esquema.grupos if g.hoja_subelementos})
     elegidos, desconocidos = [], []
     for nombre in nombres:
         grupo = por_nombre.get(_normalizar(nombre))
@@ -119,9 +123,13 @@ def main(argv=None) -> int:
     try:
         esquema = cargar_esquema()
         filtro.agregar(esquema.tablero_id)
+        if esquema.subelementos is not None:
+            filtro.agregar(esquema.subelementos.tablero_id)
         if args.listar:
             for grupo in esquema.grupos:
                 print(grupo.hoja)
+                if grupo.hoja_subelementos:
+                    print(grupo.hoja_subelementos)
             return 0
         grupos = elegir_grupos(esquema, args.todas, args.hoja or [], args.periodicas)
         monday = _cliente_monday(esquema)
@@ -136,7 +144,8 @@ def main(argv=None) -> int:
         return 1
 
     modo = "dry-run" if args.dry_run else "escritura"
-    log.info("inicio (%s) de %d pestañas", modo, len(grupos))
+    pestanas = len(grupos) + sum(1 for g in grupos if g.hoja_subelementos)
+    log.info("inicio (%s) de %d pestañas", modo, pestanas)
     resultados = sincronizar(esquema, monday, libro, grupos, dry_run=args.dry_run,
                              comparar_con_hoja=args.comparar, aceptar_vacio=args.aceptar_vacio,
                              depurar=args.depurar)

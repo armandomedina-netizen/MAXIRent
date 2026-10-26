@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .config import Esquema
+from .config import Esquema, TablaSubelementos
 
 MAX_EJEMPLOS = 5
 
@@ -114,13 +114,14 @@ def _alinear(nuevas: list[list], actuales: list[list], i_clave: int | None):
     return pares, repetidas
 
 
-def comparar(nuevas: list[list], actuales: list[list], esquema: Esquema) -> Comparacion:
+def comparar(nuevas: list[list], actuales: list[list], tabla: Esquema | TablaSubelementos) -> Comparacion:
     """Compara las filas que se escribirían (`nuevas`) con lo que hay hoy en la pestaña de la fila 2
-    en adelante (`actuales`)."""
-    ncols = len(esquema.columnas)
+    en adelante (`actuales`). `tabla` es la definición de la pestaña (tickets o subelementos): sólo se
+    usan sus columnas y su columna clave."""
+    ncols = len(tabla.columnas)
     actuales = [list(fila) + [None] * (ncols - len(fila)) for fila in actuales]
     con_datos = sum(1 for fila in actuales if any(_vacio_a_none(v) is not None for v in fila))
-    pares, repetidas = _alinear(nuevas, actuales, esquema.indice_clave)
+    pares, repetidas = _alinear(nuevas, actuales, tabla.indice_clave)
 
     resultado = Comparacion(filas_monday=len(nuevas), filas_hoja=con_datos, comunes=len(pares),
                             solo_monday=len(nuevas) - len(pares),
@@ -130,7 +131,7 @@ def comparar(nuevas: list[list], actuales: list[list], esquema: Esquema) -> Comp
     resultado.mismo_orden = posiciones_hoja == sorted(posiciones_hoja)
 
     for p_nueva, p_hoja in pares:
-        for i, columna in enumerate(esquema.columnas):
+        for i, columna in enumerate(tabla.columnas):
             veredicto = _comparar_celdas(nuevas[p_nueva][i], actuales[p_hoja][i])
             if veredicto is None:
                 continue

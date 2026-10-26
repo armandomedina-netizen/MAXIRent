@@ -1,6 +1,6 @@
 # Programación de la ejecución
 
-Estado: horario aprobado el 7-oct-2026, pendiente de activar. Nada corre hasta que el workflow esté en la rama principal y existan los secrets.
+Estado: horario aprobado el 7-oct-2026. El workflow y los secrets están en `main` y Actions corre desde el 8-oct; el disparo exacto depende de los disparadores de Apps Script (paso 4 de la activación).
 
 ## Requisito
 
@@ -15,7 +15,7 @@ Estado: horario aprobado el 7-oct-2026, pendiente de activar. Nada corre hasta q
 | Sábado | 7:00, 9:00, 11:00, 13:00 y 14:00 (la última, de cierre) |
 | Domingo | ninguna |
 
-Cada corrida sincroniza sólo la pestaña periódica y tarda segundos. A las 10:00 la información tiene a lo más una hora, y la corrida de las 14:00 del sábado deja el estado de cierre.
+Cada corrida sincroniza la pestaña periódica y, si el esquema la define, la de sus subelementos (una sola lectura de monday), y tarda segundos. A las 10:00 la información tiene a lo más una hora, y la corrida de las 14:00 del sábado deja el estado de cierre.
 
 ## Dos disparos para el mismo horario
 
@@ -48,6 +48,10 @@ Un proyecto aparte no comparte nada con el que ya tiene otras automatizaciones: 
 La zona horaria del proyecto debe tener el mismo desfase que `TABLERO_SAC.ZONA` (`America/Mexico_City`). `America/Monterrey` sirve porque ambas son UTC-6 sin horario de verano. `crearDisparadoresTableroSac` lo verifica y se detiene con un error si no coincide.
 
 El token queda compartido entre los dos proyectos: si vence, dejan de dispararse las automatizaciones de ambos, y el cron del workflow sigue corriendo cada hora como seguro.
+
+## Cambiar el esquema
+
+Un cambio de `private/monday-sac-schema.json` (una columna nueva, la pestaña de subelementos) llega a Actions regenerando el secret `MONDAY_SAC_SCHEMA_JSON` con el contenido de `private/monday-sac-schema.min.json`. El código de `main` tiene que reconocer el formato nuevo antes de actualizar el secret: con claves que no conoce, la corrida se detiene antes de leer. El caso de los subelementos, con su orden, está en [subelementos.md](subelementos.md).
 
 ## Cambiar el horario
 

@@ -68,6 +68,41 @@ class FakeMonday:
         return self.items_por_grupo[grupo_id]
 
 
+class FakeMondaySub:
+    """Cliente de monday con subelementos: entrega elementos fijos por grupo y registra las validaciones
+    y las lecturas. Una lectura sin columnas de subelementos devuelve los elementos sin la clave
+    `subitems`, como la API; cada paso puede programarse para fallar."""
+
+    def __init__(self, items_por_grupo, error_validacion=None, error_con_subelementos=None,
+                 error_sin_subelementos=None):
+        """Recibe un diccionario grupo_id -> elementos y los errores que debe lanzar cada paso."""
+        self.items_por_grupo = items_por_grupo
+        self.error_validacion = error_validacion
+        self.error_con_subelementos = error_con_subelementos
+        self.error_sin_subelementos = error_sin_subelementos
+        self.validaciones = 0
+        self.lecturas = []
+
+    def validar_subelementos(self, esquema):
+        """Cuenta la validación y lanza el error programado."""
+        self.validaciones += 1
+        if self.error_validacion:
+            raise self.error_validacion
+
+    def leer_grupo(self, grupo_id, ids_columnas, ids_subelementos=None):
+        """Registra (grupo, columnas, columnas de subelementos) y devuelve los elementos del grupo."""
+        self.lecturas.append((grupo_id, list(ids_columnas),
+                              None if ids_subelementos is None else list(ids_subelementos)))
+        items = self.items_por_grupo[grupo_id]
+        if ids_subelementos is not None:
+            if self.error_con_subelementos:
+                raise self.error_con_subelementos
+            return items
+        if self.error_sin_subelementos:
+            raise self.error_sin_subelementos
+        return [{k: v for k, v in item.items() if k != "subitems"} for item in items]
+
+
 class FakeLibroHoja:
     """Libro de la pestaña: guarda las solicitudes de batch_update."""
 

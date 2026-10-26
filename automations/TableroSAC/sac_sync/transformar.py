@@ -10,9 +10,9 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
-from .config import Columna, Esquema
+from .config import Columna, Esquema, TablaSubelementos
 
 # Tipos de columna de monday cuyo valor legible está en display_value y no en text.
 TIPOS_CON_DISPLAY_VALUE = frozenset({"mirror", "board_relation", "formula", "subtasks"})
@@ -32,6 +32,9 @@ _RE_NUMERO_CON_MILES = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$")
 _RE_FECHA = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$")
 # H:MM:SS con horas sin tope.
 _RE_DURACION = re.compile(r"^(\d+):(\d{2}):(\d{2})$")
+# Hora de Ciudad de México: UTC-6 todo el año (México dejó el horario de verano en 2022). Las fechas
+# de las columnas de monday ya llegan en la hora de la cuenta; created_at llega en UTC.
+ZONA_CDMX = timezone(timedelta(hours=-6))
 
 
 @dataclass
@@ -39,6 +42,7 @@ class ResumenLimpieza:
     """Conteos de lo que no cuadró con el esquema durante la limpieza; no guarda valores."""
     filas: int = 0
     celdas_acotadas: int = 0
+    duplicados: int = 0                                          # filas descartadas por repetir el ID del subelemento
     no_reconocidos: Counter = field(default_factory=Counter)     # encabezado -> valores que no cuadraron con su tipo
     columnas_ausentes: Counter = field(default_factory=Counter)  # encabezado -> elementos sin esa columna en la respuesta
 
@@ -51,6 +55,8 @@ class ResumenLimpieza:
             lineas.append(f"columna '{encabezado}': monday no la devolvió en {n} elementos y quedó en blanco")
         if self.celdas_acotadas:
             lineas.append(f"{self.celdas_acotadas} celdas superaban {MAX_CARACTERES_CELDA} caracteres y se recortaron")
+        if self.duplicados:
+            lineas.append(f"{self.duplicados} subelementos repetían un ID ya visto y se descartaron")
         return lineas
 
 
@@ -138,31 +144,100 @@ def _acotar(texto: str, resumen: ResumenLimpieza) -> str:
     return texto
 
 
-def fila_desde_item(item: dict, esquema: Esquema, resumen: ResumenLimpieza) -> list:
-    """Arma la fila de un elemento: una celda por columna del esquema, en su orden."""
+def _valor_de_columna(columna: Columna, por_id: dict, elemento: dict, resumen: ResumenLimpieza) -> str | None:
+    """Valor crudo de una columna de monday dentro de `por_id` (las columnas de `elemento`). Una columna
+    que monday no devolvió cuenta como ausente y queda en blanco."""
+    cv = por_id.get(columna.columna_id)
+    if cv is None:
+        resumen.columnas_ausentes[columna.encabezado] += 1
+        return None
+    crudo = valor_crudo(cv)
+    # El ID del elemento respalda a la columna de tipo item_id cuando su texto viene vacío.
+    if not crudo and cv.get("type") == "item_id":
+        crudo = elemento.get("id")
+    return crudo
+
+
+def a_fecha_local(instante: str | None) -> str | None:
+    """Convierte un instante ISO 8601 en UTC ('2026-10-08T15:30:12Z') a 'AAAA-MM-DD HH:MM:SS' en hora
+    de Ciudad de México. Devuelve el texto sin cambios si no es un instante válido, para que la
+    limpieza lo cuente como no reconocido."""
+    if not instante:
+        return None
+    try:
+        momento = datetime.fromisoformat(instante.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return instante
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    return momento.astimezone(ZONA_CDMX).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _en_marcha(columna: Columna, por_id: dict, resumen: ResumenLimpieza) -> str | None:
+    """"Sí" o "No" según el cronómetro de una columna de seguimiento de tiempo esté corriendo. Una
+    columna que monday no devolvió, o sin el dato, cuenta como ausente y queda en blanco."""
+    cv = por_id.get(columna.columna_id)
+    corriendo = None if cv is None else cv.get("running")
+    if corriendo is None:
+        resumen.columnas_ausentes[columna.encabezado] += 1
+        return None
+    return "Sí" if corriendo else "No"
+
+
+def _fila(item: dict, columnas, resumen: ResumenLimpieza, padre: dict | None = None) -> list:
+    """Arma la fila de un elemento: una celda por columna, en su orden. `padre` es el elemento al que
+    pertenece un subelemento y de él salen los orígenes padre_id, padre_nombre y padre_columna."""
     por_id = {cv["id"]: cv for cv in item.get("column_values") or []}
+    por_id_padre = {cv["id"]: cv for cv in (padre or {}).get("column_values") or []}
     fila = []
-    for columna in esquema.columnas:
-        if columna.origen == "nombre":
+    for columna in columnas:
+        origen = columna.origen
+        if origen == "nombre":
             crudo = item.get("name")
-        elif columna.origen == "grupo":
+        elif origen == "grupo":
             crudo = (item.get("group") or {}).get("title")
+        elif origen == "id":
+            crudo = item.get("id")
+        elif origen == "creado":
+            crudo = a_fecha_local(item.get("created_at"))
+        elif origen == "en_marcha":
+            crudo = _en_marcha(columna, por_id, resumen)
+        elif origen == "padre_id":
+            crudo = padre.get("id")
+        elif origen == "padre_nombre":
+            crudo = padre.get("name")
+        elif origen == "padre_columna":
+            crudo = _valor_de_columna(columna, por_id_padre, padre, resumen)
         else:
-            cv = por_id.get(columna.columna_id)
-            if cv is None:
-                resumen.columnas_ausentes[columna.encabezado] += 1
-                crudo = None
-            else:
-                crudo = valor_crudo(cv)
-                # El ID del elemento respalda a la columna de tipo item_id cuando su texto viene vacío.
-                if not crudo and cv.get("type") == "item_id":
-                    crudo = item.get("id")
+            crudo = _valor_de_columna(columna, por_id, item, resumen)
         fila.append(limpiar_celda(crudo, columna, resumen))
     resumen.filas += 1
     return fila
+
+
+def fila_desde_item(item: dict, esquema: Esquema, resumen: ResumenLimpieza) -> list:
+    """Arma la fila de un elemento: una celda por columna del esquema, en su orden."""
+    return _fila(item, esquema.columnas, resumen)
 
 
 def filas_desde_items(items: list[dict], esquema: Esquema) -> tuple[list[list], ResumenLimpieza]:
     """Convierte una lista de elementos en filas y devuelve también el resumen de la limpieza."""
     resumen = ResumenLimpieza()
     return [fila_desde_item(item, esquema, resumen) for item in items], resumen
+
+
+def filas_subelementos_desde_items(items: list[dict], tabla: TablaSubelementos) -> tuple[list[list], ResumenLimpieza]:
+    """Aplana los subelementos de una lista de elementos en filas, una por subelemento y en el orden de
+    monday (elemento por elemento), con los datos del elemento padre que pide la tabla. Un elemento sin
+    subelementos no genera filas, y un subelemento con un ID ya visto se descarta y se cuenta, porque el
+    ID es la clave de la pestaña. Devuelve también el resumen de la limpieza."""
+    resumen = ResumenLimpieza()
+    vistos, filas = set(), []
+    for item in items:
+        for sub in item.get("subitems") or []:
+            if sub.get("id") in vistos:
+                resumen.duplicados += 1
+                continue
+            vistos.add(sub.get("id"))
+            filas.append(_fila(sub, tabla.columnas, resumen, padre=item))
+    return filas, resumen

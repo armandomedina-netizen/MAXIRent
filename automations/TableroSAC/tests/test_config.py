@@ -40,8 +40,8 @@ def test_la_marca_periodica_es_opcional_y_por_defecto_falsa():
 def test_tablero_como_texto_de_digitos_se_acepta():
     """El ID del tablero puede venir como texto numérico."""
     datos = _base()
-    datos["tablero_id"] = "1000000002"
-    assert esquema_desde_dict(datos).tablero_id == 1000000002
+    datos["tablero_id"] = "1000000009"
+    assert esquema_desde_dict(datos).tablero_id == 1000000009
 
 
 def test_el_json_en_linea_tiene_prioridad_sobre_el_archivo():

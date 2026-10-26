@@ -5,8 +5,10 @@ from pathlib import Path
 import pytest
 
 from datos_sac import ESQUEMA
+from datos_subelementos import ESQUEMA_SUB
 from sac_sync import cli
 from sac_sync.config import ErrorConfiguracion, Esquema, Grupo
+from sac_sync.sincronizar import ResultadoHoja
 
 EJEMPLO = Path(__file__).resolve().parents[1] / "schema.example.json"
 
@@ -75,9 +77,55 @@ def test_el_parser_exige_una_sola_forma_de_elegir_pestanas():
 
 
 def test_listar_imprime_las_pestanas_y_termina_sin_red(capsys):
-    """--listar sólo necesita el esquema: no pide token ni credenciales."""
+    """--listar sólo necesita el esquema: no pide token ni credenciales, y cada pestaña de subelementos
+    aparece justo después de la de su grupo."""
     assert cli.main(["--listar"]) == 0
-    assert capsys.readouterr().out.split("\n")[:2] == ["Pestana A", "Pestana B"]
+    assert capsys.readouterr().out.split("\n")[:3] == ["Pestana A", "Pestana S", "Pestana B"]
+
+
+def test_nombrar_la_pestana_de_subelementos_elige_su_grupo():
+    """La pestaña de subelementos se sincroniza con su grupo: nombrarla, sin acentos ni mayúsculas, lo elige."""
+    assert cli.elegir_grupos(ESQUEMA_SUB, False, ["PESTANA s"]) == [ESQUEMA_SUB.grupos[0]]
+
+
+def test_nombrar_un_grupo_y_su_pestana_de_subelementos_lo_elige_una_sola_vez():
+    """El grupo y su pestaña de subelementos son una misma selección, en el orden del esquema."""
+    elegidos = cli.elegir_grupos(ESQUEMA_SUB, False, ["Pestana B", "Pestana S", "Pestana A"])
+    assert elegidos == list(ESQUEMA_SUB.grupos)
+
+
+def test_periodicas_incluye_el_grupo_que_tiene_subelementos():
+    """--periodicas devuelve el grupo marcado; su pestaña de subelementos se sincroniza con él."""
+    assert cli.elegir_grupos(ESQUEMA_SUB, False, [], periodicas=True) == [ESQUEMA_SUB.grupos[0]]
+
+
+def test_el_resumen_cuenta_y_lista_las_dos_pestanas_del_grupo(monkeypatch, capsys):
+    """El inicio cuenta la pestaña de subelementos y el resumen trae una línea por cada pestaña."""
+    monkeypatch.setenv("MONDAY_TOKEN", "token-de-prueba-123")
+    monkeypatch.setattr(cli.ClienteMonday, "validar_esquema", lambda self, esquema: 42)
+    pedidos = []
+
+    def sincronizar_falso(esquema, monday, libro, grupos, **opciones):
+        """Registra los grupos pedidos y devuelve un resultado por pestaña, sin tocar monday ni Sheets."""
+        pedidos.append(grupos)
+        return [ResultadoHoja("Pestana A", filas_monday=3), ResultadoHoja("Pestana S", filas_monday=5)]
+
+    monkeypatch.setattr(cli, "sincronizar", sincronizar_falso)
+    assert cli.main(["--periodicas", "--dry-run"]) == 0
+    salida = capsys.readouterr().out
+    assert [g.hoja for g in pedidos[0]] == ["Pestana A"]
+    assert "inicio (dry-run) de 2 pestañas" in salida
+    assert "resumen [Pestana A]: 3 filas en monday" in salida and "resumen [Pestana S]: 5 filas en monday" in salida
+
+
+def test_un_error_en_la_pestana_de_subelementos_termina_con_1(monkeypatch, capsys):
+    """Si sólo falla la pestaña de subelementos, el proceso termina con error y la nombra."""
+    monkeypatch.setenv("MONDAY_TOKEN", "token-de-prueba-123")
+    monkeypatch.setattr(cli.ClienteMonday, "validar_esquema", lambda self, esquema: 42)
+    monkeypatch.setattr(cli, "sincronizar", lambda *a, **k: [ResultadoHoja("Pestana A", filas_monday=3),
+                                                             ResultadoHoja("Pestana S", error="ErrorHoja: x")])
+    assert cli.main(["--periodicas", "--dry-run"]) == 1
+    assert "terminó con error en 1 de 2 pestañas: Pestana S" in capsys.readouterr().out
 
 
 def test_sin_token_termina_con_error_antes_de_conectarse(capsys):

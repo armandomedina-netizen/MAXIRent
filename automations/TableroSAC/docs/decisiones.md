@@ -1,6 +1,6 @@
 # Decisiones: sincronización monday -> Google Sheets (TableroSAC)
 
-Fecha: 2026-10-07. Estado: código y pruebas listos; primera sincronización real de la pestaña periódica hecha el 7-oct; horario aprobado y pendiente de activar.
+Fecha: 2026-10-07; actualizado el 2026-10-08. Estado: la pestaña periódica se sincroniza desde Actions con el workflow y los secrets en `main` (corridas correctas el 8-oct). El 8-oct se agregó la pestaña de subelementos de esa pestaña (decisión 11), probada con una corrida real local y pendiente de activar en Actions.
 
 ## Contexto
 
@@ -28,13 +28,36 @@ El tablero de tickets de SAC de monday alimenta dashboards y análisis desde un 
 
 10. **Horario.** Entre una actualización y la siguiente pasan a lo más 2 horas y la información del día está lista antes de las 10:00. De lunes a viernes corre a las 7, 9, 11, 13, 15 y 17 h; el sábado a las 7, 9, 11 y 13 h más una corrida de cierre a las 14:00; el domingo no corre. El disparo exacto lo hace un Apps Script que llama a `workflow_dispatch`, porque los `schedule` de GitHub se retrasan y a veces se saltan, y el cron del workflow (cada hora a los 20 minutos) queda como seguro. `tests/test_programacion.py` comprueba que ambos cumplen el requisito.
 
+11. **Subelementos en una pestaña aparte, en formato largo.** Cada ticket del grupo periódico tiene subelementos en su propio tablero, que miden el proceso por área responsable (área, sub área, estado, SLA, tiempos y fechas). Se vuelcan en una pestaña propia con una fila por subelemento, y en la primera columna el identificador del ticket, que la relaciona con la pestaña de tickets (relación de uno a muchos). Se descartaron el concentrado plano (repite los campos del ticket en cada fila y cuenta doble a un ticket con dos subelementos) y los subelementos como columnas del ticket (no hay un número fijo). Un ticket sin subelementos no genera filas y la pestaña es un reflejo de monday, igual que la de tickets.
+    - **Datos del ticket en cada fila:** identificador, nombre y placa. La placa viaja en las dos pestañas para cruzar con Maxinet sin hacer la unión; el VIN se agregará después como identificador clave del reporte (una columna más con origen `padre_columna`, sin cambios de código).
+    - **Una sola lectura.** Los subelementos se piden anidados en la misma consulta GraphQL del ticket, no con una consulta por ticket: unos 350 puntos de complejidad por ticket, muy por debajo del límite. La API devuelve una lista vacía para un ticket sin subelementos; si falta la clave `subitems` o viene nula la respuesta es incompleta y no se escribe la pestaña, para no vaciarla por una lectura mala.
+    - **La clave de la pestaña es el ID del subelemento**, porque el identificador del ticket se repite en cada una de sus filas. Un ID repetido en la lectura se escribe una vez y se cuenta.
+    - **Aislamiento.** La pestaña de subelementos falla sola: si su validación o su lectura fallan, los tickets se leen y se vuelcan sin ellos y la corrida termina con error para que se note; si falla la de tickets, la de subelementos se sincroniza igual. Un grupo sin `hoja_subelementos` nunca pide subelementos.
+    - **La pestaña la crea una persona, una vez**, con los encabezados del esquema. El sincronizador nunca crea pestañas ni cambia la estructura del Sheet (mismo criterio que la decisión 7).
+    - **Despliegue sin romper nada.** Con el esquema anterior en el secret, el código nuevo se comporta como antes; con el esquema nuevo y el código anterior la corrida se detiene antes de leer, porque no reconoce las claves nuevas. Por eso el secret `MONDAY_SAC_SCHEMA_JSON` se actualiza después de mezclar el código y de crear la pestaña (pasos en `subelementos.md`). Quitar `hoja_subelementos` del esquema desactiva la función.
+
+12. **Fecha de creación y cronómetro en marcha (9-oct).** Dos datos de los subelementos que no son columnas de monday: `created_at` (llega en UTC y se escribe en hora de Ciudad de México, UTC-6 fijo desde que México dejó el horario de verano) y el estado `running` de la columna de seguimiento de tiempo. Sirven para medir cuánto lleva abierta cada área y distinguir las que ya pararon. Se agregaron al final de la pestaña de subelementos para no mover las columnas existentes.
+
+13. **Dashboard de mantenimiento en el mismo libro (9-oct).** Una pestaña con indicadores y gráficas sobre las pestañas de tickets y subelementos, y una comparativa por placa contra el proyector de mantenimientos de Maxinet, que se importa en vivo con `IMPORTRANGE`. Todo son fórmulas de Sheets: se actualiza con cada sincronización y se puede editar sin tocar código (la regla que define un ticket "de taller" es una celda editable). El script que lo creó vive en `private/` porque lleva nombres reales de pestañas y del archivo del proyector. La sincronización no toca estas pestañas.
+
 ## Verificación de la primera corrida (7-oct)
 
 - `--dry-run --comparar` antes de escribir: las 13 filas de monday coinciden con las 13 de la pestaña, en el mismo orden. De las 36 columnas sólo difieren las dos de duración, por exactamente la misma cantidad de horas en las 13 filas (el tiempo que los cronómetros corrieron desde la carga manual); no hay diferencias de tipo.
 - Sincronización real: 13 filas escritas y 13 con datos en la pestaña después. Una segunda corrida dio los mismos conteos. La estructura de la pestaña (columnas, fila fija, color) y los formatos de fecha y duración quedaron intactos.
 
+## Verificación de la primera corrida con subelementos (8-oct)
+
+- `--dry-run --comparar` con la pestaña de subelementos vacía: 11 tickets coinciden con las 11 filas de su pestaña (sólo difieren las dos columnas de duración, por los cronómetros en marcha) y 12 subelementos quedaron listos para escribir.
+- Sincronización real: 11 filas de tickets y 12 de subelementos escritas, con las mismas cantidades verificadas al terminar.
+- Comprobación independiente, sin usar el cliente del proyecto: un conteo directo por GraphQL dio 11 tickets con 12 subelementos, y la pestaña tiene exactamente esos 12 IDs, con los mismos subelementos por ticket. Todos los identificadores de ticket de la pestaña existen en la pestaña de tickets y la placa de cada fila es la de su ticket.
+- Tipos y formatos: identificadores como números, fechas con hora y duraciones como números de serie con el formato de la pestaña (`yyyy-mm-dd hh:mm` y `[h]:mm:ss`). Las columnas que salieron todas en blanco (relación con el tablero de SLA, su prioridad y tiempo, y días de atraso) también vienen en blanco desde monday.
+- Segunda corrida real: mismas cantidades; entre las dos corridas sólo cambiaron los cronómetros en marcha, en tickets y en subelementos, y nada más.
+
 ## Pendiente
 
+- Subelementos en Actions: mezclar la rama `monday-sac-subelementos` en `main` y después actualizar el secret `MONDAY_SAC_SCHEMA_JSON` (pasos en `subelementos.md`).
+- Disparo exacto: crear los disparadores de Apps Script si todavía no existen (`programacion.md`).
+- VIN: agregarlo a las filas de subelementos cuando se defina como identificador del reporte.
+- Conexión con Maxinet y un concentrado plano para el BI: fases futuras, se derivan de estas dos pestañas.
 - Carga de las demás pestañas: pendiente, no se ha pedido (la de tickets resueltos tiene más de mil filas).
-- Activar la programación: faltan los secrets del repositorio, mezclar la rama en `main` y crear los disparadores de Apps Script (pasos en `programacion.md`).
 - El Sheet destino tiene el acceso general "cualquier persona con el enlace" como lector y contiene datos de clientes; queda a decisión del dueño del archivo.

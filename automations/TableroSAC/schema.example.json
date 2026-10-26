@@ -1,7 +1,7 @@
 {
   "tablero_id": 1000000001,
   "grupos": [
-    { "hoja": "Pestana A", "grupo_id": "grupo_a", "periodica": true },
+    { "hoja": "Pestana A", "grupo_id": "grupo_a", "periodica": true, "hoja_subelementos": "Pestana S" },
     { "hoja": "Pestana B", "grupo_id": "grupo_b" }
   ],
   "columnas": [
@@ -17,5 +17,23 @@
     { "encabezado": "Dias", "columna_id": "col_formula_dias", "tipo": "numero" },
     { "encabezado": "Enlace", "columna_id": "col_formula_url" },
     { "encabezado": "Grupo", "origen": "grupo" }
-  ]
+  ],
+  "subelementos": {
+    "tablero_id": 1000000002,
+    "columnas": [
+      { "encabezado": "Folio", "origen": "padre_id", "tipo": "numero" },
+      { "encabezado": "Solicitud", "origen": "padre_nombre" },
+      { "encabezado": "Estado del ticket", "origen": "padre_columna", "columna_id": "col_estado" },
+      { "encabezado": "ID subelemento", "origen": "id", "tipo": "numero", "clave": true },
+      { "encabezado": "Subelemento", "origen": "nombre" },
+      { "encabezado": "Estado", "columna_id": "sub_estado" },
+      { "encabezado": "Area", "columna_id": "sub_area" },
+      { "encabezado": "Horas estimadas", "columna_id": "sub_horas_sla", "tipo": "numero" },
+      { "encabezado": "Fecha limite", "columna_id": "sub_fecha", "tipo": "fecha" },
+      { "encabezado": "Cronometro", "columna_id": "sub_cronometro", "tipo": "duracion" },
+      { "encabezado": "Horas", "columna_id": "sub_horas", "tipo": "numero" },
+      { "encabezado": "Creado", "origen": "creado", "tipo": "fecha" },
+      { "encabezado": "Cronometro en marcha", "origen": "en_marcha", "columna_id": "sub_cronometro" }
+    ]
+  }
 }
