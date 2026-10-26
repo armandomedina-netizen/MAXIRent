@@ -229,3 +229,12 @@ La primera mañana con la franja de las 8:00 a las 8:20 mostró que Clientes Nue
 - Probado con el simulador de las APIs de Apps Script: no se lanza a las 8:17 ni a las 9:42, sí a las 9:52, no se duplica si sigue en curso, el resumen de las 8:45 no da falsa alarma y a las 10:32 la función no consulta a GitHub.
 - La corrida del día se hizo a mano a las 12:20 (9 filas nuevas, validación sin repetidos).
 - El cron de las 10:00 de GitHub se conserva como respaldo; el dato de este ADR sobre 8:15 queda sustituido por esta ventana.
+
+### Cron de Clientes Nuevos a las 9:00 (2026-10-26)
+
+La ventana de las 9:50 del apartado anterior no llegó al Apps Script que está en uso: el Vigilante sigue con la de las 8:15 y la función matutina termina a las 9:30. El 26-oct la corrida de las 8:18 se adelantó otra vez a la importación y quedaron 7 clientes sin cargar hasta una corrida manual al mediodía; el cron de las 10:00 de GitHub tampoco corrió en esas horas.
+
+- El `DateImport` de los clientes de los últimos ocho días muestra que Maxinet importa a las 9:00 casi siempre y a las 9:40 algunos días (22 y 25 de octubre).
+- El workflow agrega un cron a las 9:00 y conserva el de las 10:00 como segundo respaldo, que cubre las importaciones de las 9:40. La automatización sólo agrega filas nuevas y valida duplicados, por lo que repetir la corrida es inocuo.
+- Mientras el cron de GitHub siga llegando con retraso, la forma de garantizar la hora es la ventana de las 9:50 en el Vigilante descrita arriba.
+
