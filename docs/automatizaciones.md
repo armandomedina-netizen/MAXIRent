@@ -18,7 +18,7 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 | `maxinet-entregas-cp.yml` | Entregas del Tablero CP (refresca el mes en curso) | 8:05 | Sí (ventana de 8:05) | ADR 0007 |
 | `maxinet-encuestas-cp.yml` | Encuestas de satisfacción del Tablero CP | 8:05 | Sí (ventana de 8:05) | ADR 0009 |
 | `maxinet-frecuentes-activos-cp.yml` | Clientes frecuentes activos (semana más reciente) | 8:10 | Sí (ventana de 8:10) | ADR 0008 |
-| `tablero-cp-cierre-diario.yml` | Cierre diario de las columnas por día del Tablero CP copia: congela el día anterior y deja vivas las fórmulas del día nuevo | Cada hora al :27 (seguro); disparo exacto recomendado a las 8:25, después del sync que cambia la fecha de FLOTA CP | Por agregar en el Vigilante (8:25 y cada hora al :27) | ADR 0014 |
+| `tablero-cp-cierre-diario.yml` | Cierre diario de las columnas por día del Tablero CP copia: congela el día anterior, deja vivas las fórmulas del día nuevo y reconstruye desde Maxinet los días que falten | Cada hora al :27 (seguro); disparo exacto recomendado a las 8:25, después del sync que cambia la fecha de FLOTA CP | Por agregar en el Vigilante (8:25 y cada hora al :27) | ADR 0014 |
 | `pruebas.yml` | Pruebas automáticas en cada PR y en cada integración a `main` | Al abrir un PR | No aplica | ADR 0011 |
 
 Los horarios que aparecen en los ADR 0007, 0008 y 0009 (9:30 y 9:45) son los de cuando se escribieron; los vigentes son los de esta tabla.
