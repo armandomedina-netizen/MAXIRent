@@ -22,6 +22,11 @@ Este script hace ese cierre. No depende de la hora a la que corre:
    congelar: nunca se congelan los valores que da la fórmula después del cambio de fecha, que son
    ceros.
 
+4. Si hay días sin columna entre la última cerrada y la del día (el cierre no corrió uno o más días), los
+   reconstruye con el reporte de flota de Maxinet de esa fecha (ver recuperar_dias.py). Antes de rellenar,
+   reconstruye con el mismo código un día que ya se conoce (su foto de cierre, o la columna viva) y exige
+   que coincida exactamente; si no coincide, no rellena nada y avisa.
+
 Seguridad: no escribe nada si "FLOTA CP" no tiene al menos MIN_FILAS_FLOTA filas con la fecha del
 día (los datos aún no cargan), no guarda una foto con valores no numéricos o en cero y no congela
 una columna que no tenga foto (avisa y termina con código 1). Idempotente: se puede correr varias
@@ -42,6 +47,8 @@ from collections import Counter
 import gspread
 from google.oauth2 import service_account
 from dotenv import load_dotenv
+
+import recuperar_dias
 
 load_dotenv()
 
@@ -137,7 +144,7 @@ def planear(columnas: dict, fechas: dict, fecha_datos: dt.date, fotos: dict) -> 
     fotos:    {fecha: {fila: valor}} de los cierres guardados.
     """
     plan = {"errores": [], "avisos": [], "col_dia": None, "base": None, "fuente": None, "congelar": [],
-            "crear_viva": False, "filas_patron": []}
+            "crear_viva": False, "filas_patron": [], "huecos": [], "col_ref": None}
     col_dia = next((i for i, f in fechas.items() if f == fecha_datos), None)
     if col_dia is None:
         plan["errores"].append(f"la fecha {fecha_datos} no está en la fila {FILA_FECHAS} de la pestaña")
@@ -170,6 +177,12 @@ def planear(columnas: dict, fechas: dict, fecha_datos: dt.date, fotos: dict) -> 
     if not plan["filas_patron"]:
         plan["errores"].append("no hay filas por congelar según la columna cerrada anterior")
         return plan
+    # días sin columna llena entre la última columna con contenido y la del día
+    llenas = [i for i, c in clases.items() if c != "vacia" and i < col_dia]
+    if llenas:
+        ultima_llena = max(llenas)
+        plan["col_ref"] = ultima_llena
+        plan["huecos"] = [i for i in sorted(clases) if clases[i] == "vacia" and ultima_llena < i < col_dia]
     for c in (v for v in vivas if fechas[v] < fecha_datos):
         filas = patron(c)
         foto = fotos.get(fechas[c])
@@ -191,7 +204,7 @@ def _rango(sid, c1, c2, r1, r2):
             "startRowIndex": r1 - 1, "endRowIndex": r2}
 
 
-def solicitudes(sid: int, plan: dict, filas_formato: int, ultima_formula: int) -> list:
+def solicitudes(sid: int, plan: dict, filas_formato: int, ultima_formula: int, rellenar=None) -> list:
     """Orden: primero se copian las fórmulas del día (aún vivas), luego se congela y se da formato."""
     reqs = []
     if plan["crear_viva"]:
@@ -202,22 +215,35 @@ def solicitudes(sid: int, plan: dict, filas_formato: int, ultima_formula: int) -
         reqs.append({"copyPaste": {"source": _rango(sid, f, f, 1, filas_formato),
                                    "destination": _rango(sid, d, d, 1, filas_formato),
                                    "pasteType": "PASTE_FORMAT", "pasteOrientation": "NORMAL"}})
+    f, b = plan["fuente"], plan["base"]
+    for g, valores in (rellenar or []):          # días sin columna: fórmulas de la viva, valores en las filas que se congelan
+        reqs.append({"copyPaste": {"source": _rango(sid, f, f, PRIMERA_FILA, ultima_formula),
+                                   "destination": _rango(sid, g, g, PRIMERA_FILA, ultima_formula),
+                                   "pasteType": "PASTE_FORMULA", "pasteOrientation": "NORMAL"}})
+        reqs.extend(_valores_en_columna(sid, g, valores))
+        reqs.append({"copyPaste": {"source": _rango(sid, b, b, 1, filas_formato),
+                                   "destination": _rango(sid, g, g, 1, filas_formato),
+                                   "pasteType": "PASTE_FORMAT", "pasteOrientation": "NORMAL"}})
     for c, valores in plan["congelar"]:
-        filas = sorted(valores)
-        i = 0
-        while i < len(filas):                    # una solicitud por tramo de filas seguidas
-            j = i
-            while j + 1 < len(filas) and filas[j + 1] == filas[j] + 1:
-                j += 1
-            reqs.append({"updateCells": {
-                "rows": [{"values": [{"userEnteredValue": {"numberValue": valores[r]}}]} for r in filas[i:j + 1]],
-                "fields": "userEnteredValue",
-                "start": {"sheetId": sid, "rowIndex": filas[i] - 1, "columnIndex": c - 1}}})
-            i = j + 1
-        b = plan["base"]
+        reqs.extend(_valores_en_columna(sid, c, valores))
         reqs.append({"copyPaste": {"source": _rango(sid, b, b, 1, filas_formato),
                                    "destination": _rango(sid, c, c, 1, filas_formato),
                                    "pasteType": "PASTE_FORMAT", "pasteOrientation": "NORMAL"}})
+    return reqs
+
+
+def _valores_en_columna(sid: int, col: int, valores: dict) -> list:
+    """Una solicitud updateCells por tramo de filas seguidas, con los valores como números."""
+    reqs, filas, i = [], sorted(valores), 0
+    while i < len(filas):
+        j = i
+        while j + 1 < len(filas) and filas[j + 1] == filas[j] + 1:
+            j += 1
+        reqs.append({"updateCells": {
+            "rows": [{"values": [{"userEnteredValue": {"numberValue": valores[r]}}]} for r in filas[i:j + 1]],
+            "fields": "userEnteredValue",
+            "start": {"sheetId": sid, "rowIndex": filas[i] - 1, "columnIndex": col - 1}}})
+        i = j + 1
     return reqs
 
 
@@ -291,14 +317,52 @@ def _leer_estado(ws, fecha_datos):
     return columnas, fechas, ultima
 
 
-def cerrar_pestana(libro, nombre: str, fecha_datos: dt.date, fotos: Fotos, hoy: dt.date, dry_run: bool) -> bool:
+def _recuperar_huecos(ws, nombre, plan, columnas, fechas, fecha_datos, fotos_p, recuperador):
+    """([(columna, {fila: valor})], ok): valores de los días sin columna, reconstruidos con Maxinet."""
+    huecos, fuente = plan["huecos"], plan["fuente"]
+    dias = [fechas[g].isoformat() for g in huecos]
+    if recuperador is None:
+        log.error("%s: faltan los días %s y no hay credenciales de Maxinet para reconstruirlos", nombre, dias)
+        return [], False
+    letra_f, filas = letras(fuente), plan["filas_patron"]
+    n = len(columnas[fuente])
+    formulas = {r: columnas[fuente][r - 1] for r in range(PRIMERA_FILA, n + 1) if es_formula(columnas[fuente][r - 1])}
+    et = reintentar(ws.get, f"A1:A{n}", value_render_option="UNFORMATTED_VALUE")
+    etiquetas = {i + 1: (f[0] if f else "") for i, f in enumerate(et)}
+    # comprobación: un día que ya se conoce debe salir exactamente igual con este mismo código
+    if plan["crear_viva"]:
+        fecha_ref, esperado = fechas[fuente], fotos_p.get(fechas[fuente])
+    else:
+        fecha_ref = fecha_datos
+        viva = reintentar(ws.get, f"{letra_f}1:{letra_f}{n}", value_render_option="UNFORMATTED_VALUE")
+        esperado = {r: (viva[r - 1][0] if r - 1 < len(viva) and viva[r - 1] else None) for r in filas}
+    if not esperado or any(r not in esperado for r in filas):
+        log.error("%s: no hay un día conocido con qué comprobar la reconstrucción; no se rellenan %s", nombre, dias)
+        return [], False
+    try:
+        obtenido = recuperador.evaluar(formulas, letra_f, etiquetas, fecha_ref, filas)
+        difieren = [r for r in filas if abs(float(obtenido[r]) - float(esperado[r])) > 1e-9]
+    except Exception as e:                                   # fórmula no soportada, Maxinet caído, valores no numéricos
+        log.error("%s: no se pudo comprobar la reconstrucción (%s: %s); no se rellenan %s", nombre, type(e).__name__, e, dias)
+        return [], False
+    if difieren:
+        log.error("%s: la reconstrucción del %s no coincide con lo conocido en %d de %d filas; no se rellenan %s",
+                  nombre, fecha_ref, len(difieren), len(filas), dias)
+        return [], False
+    log.info("%s: la reconstrucción del %s coincide en las %d filas; se rellenan %s", nombre, fecha_ref, len(filas), dias)
+    return [(g, recuperador.evaluar(formulas, letra_f, etiquetas, fechas[g], filas)) for g in huecos], True
+
+
+def cerrar_pestana(libro, nombre: str, fecha_datos: dt.date, fotos: Fotos, hoy: dt.date, dry_run: bool,
+                   recuperador=None) -> bool:
     """True si la pestaña quedó en orden; False si hay algo que revisar."""
     ws = reintentar(libro.worksheet, nombre)
     columnas, fechas, ultima = _leer_estado(ws, fecha_datos)
     if not columnas:
         log.error("%s: no hay columnas con fecha cercana a %s en la fila %d", nombre, fecha_datos, FILA_FECHAS)
         return False
-    plan = planear(columnas, fechas, fecha_datos, fotos.leer_todas(nombre))
+    fotos_p = fotos.leer_todas(nombre)
+    plan = planear(columnas, fechas, fecha_datos, fotos_p)
     for e in plan["errores"]:
         log.error("%s: %s", nombre, e)
     if plan["col_dia"] is None or plan["fuente"] is None or not plan["filas_patron"]:
@@ -309,7 +373,12 @@ def cerrar_pestana(libro, nombre: str, fecha_datos: dt.date, fotos: Fotos, hoy: 
              nombre, fecha_datos, letra, "ya viva" if not plan["crear_viva"] else "nueva",
              "sí" if plan["crear_viva"] else "no", [fechas[c].isoformat() for c, _ in plan["congelar"]] or "ninguna",
              len(plan["filas_patron"]))
-    reqs = solicitudes(ws.id, plan, filas_formato, ultima)
+    rellenar, ok_huecos = [], True
+    if plan["huecos"]:
+        rellenar, ok_huecos = _recuperar_huecos(ws, nombre, plan, columnas, fechas, fecha_datos, fotos_p, recuperador)
+        if not ok_huecos:
+            plan["errores"].append("días sin columna que no se pudieron reconstruir")
+    reqs = solicitudes(ws.id, plan, filas_formato, ultima, rellenar)
     if reqs and not dry_run:
         reintentar(libro.batch_update, {"requests": reqs})
         log.info("%s: %d solicitudes aplicadas", nombre, len(reqs))
@@ -338,6 +407,21 @@ def conectar_libro():
     return reintentar(gspread.authorize(creds).open_by_key, os.environ["SPREADSHEET_ID_TABLERO_CP"])
 
 
+def cargar_flota_hoy(libro) -> dict:
+    """Columnas A:BA de FLOTA CP de hoy, {letra: [valores]} desde la fila 2."""
+    ws = reintentar(libro.worksheet, HOJA_FLOTA)
+    vals = reintentar(ws.get, "A2:BA6000", value_render_option="UNFORMATTED_VALUE")
+    return {letras(n): [(f[n - 1] if n - 1 < len(f) else "") for f in vals] for n in range(1, 54)}
+
+
+def crear_recuperador(libro):
+    """Reconstruye días pasados desde Maxinet; None si no hay credenciales (los huecos se avisan, no se inventan)."""
+    if not all(os.environ.get(v) for v in ("MAXINET_BASE_URL", "MAXINET_USER", "MAXINET_PASS")):
+        log.info("Sin credenciales de Maxinet: no se podrán reconstruir días faltantes")
+        return None
+    return recuperar_dias.Recuperador(lambda: cargar_flota_hoy(libro))
+
+
 def main() -> int:
     dry_run = bool(os.environ.get("DRY_RUN"))
     libro = conectar_libro()
@@ -358,10 +442,11 @@ def main() -> int:
         log.info("Fecha de los datos de %s: %s (%d filas)", HOJA_FLOTA, fecha, filas)
     hoy = dt.datetime.now(dt.timezone(dt.timedelta(hours=-6))).date()
     fotos = Fotos(libro, escribir=not dry_run)
+    recuperador = crear_recuperador(libro)
     resultados = []
     for nombre in PESTANAS:
         try:
-            resultados.append(cerrar_pestana(libro, nombre, fecha, fotos, hoy, dry_run))
+            resultados.append(cerrar_pestana(libro, nombre, fecha, fotos, hoy, dry_run, recuperador))
         except Exception:                                    # una pestaña con error no detiene a las demás
             log.exception("%s: error inesperado", nombre)
             resultados.append(False)

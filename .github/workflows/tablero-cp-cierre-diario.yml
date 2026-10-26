@@ -42,4 +42,7 @@ jobs:
         env:
           GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/tablero-cp-cierre-diario/google-creds.json
           SPREADSHEET_ID_TABLERO_CP: ${{ secrets.SPREADSHEET_ID_TABLERO_CP }}
+          MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
+          MAXINET_USER: ${{ secrets.MAXINET_USER }}
+          MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
         run: python cierre_diario.py
