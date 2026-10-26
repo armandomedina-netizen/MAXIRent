@@ -1,6 +1,6 @@
 # ADR 0013: Columnas diarias del Tablero CP copia y actualización del 23 de octubre
 
-- Estado: aceptada; el cierre diario automático está pendiente de autorización
+- Estado: aceptada; el cierre diario automático se decidió el mismo día (ADR 0014)
 - Fecha: 2026-10-23
 
 ## Contexto
@@ -30,7 +30,7 @@ Comparación de valores mostrados celda por celda contra el original, en las 30 
 
 ## Pendiente
 
-1. **Cierre diario automático.** Sin él, la columna viva vuelve a 0 cada vez que cambia la fecha de `FLOTA CP` y falta la columna del día siguiente. Propuesta: un workflow poco antes del sync que cambia esa fecha (alrededor de las 7:50) que congele la columna viva y deje las fórmulas en la siguiente. Hay que definir qué hacer los días sin sync. Requiere el id del Tablero como secret y la autorización del dueño del proceso.
+1. **Cierre diario automático.** Resuelto: ver el ADR 0014.
 2. **`FACTURACION LP & CP!D12` (Base copia)** da `#REF!` hasta que alguien pulse "Permitir acceso" en esa celda (importación del Tablero LP). Google no permite autorizarlo por API.
 3. **Siguen en archivos o hojas sin resolver:** `PROYECCIÓN DE VENTA $$` y `RESERVAS SIN FACTURAR` (archivo sin acceso para la cuenta de servicio), y `DISPONIBLE+TALLER` (640 errores también en el original, lee una hoja que ya no existe).
 4. **Las hojas manuales copiadas son una instantánea del 23 de octubre.** Mientras Nuvia las capture en su archivo seguirán desfasándose; falta identificar el reporte de Maxinet que las alimenta o acordar un refresco periódico.
