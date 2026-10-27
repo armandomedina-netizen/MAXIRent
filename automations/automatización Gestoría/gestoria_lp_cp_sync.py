@@ -39,8 +39,8 @@ Lógica de sincronización (decidida por el usuario, no inventada aquí):
     5. Campos de análisis de una fila ya existente (CAMPOS_REFRESCABLES: fecha del
        evento, tipo, cliente, sucursal, Site, BSite y PUSite): se corrigen con
        lo que diga Maxinet hoy, porque Maxinet los reclasifica o corrige después
-       de que la fila entró al Sheet y las pestañas GESTORIA, ÍNDICE SINIESTRALIDAD,
-       RESUMEN y 2026 cuentan con ellos. Sólo se escribe si Maxinet trae un valor
+       de que la fila entró al Sheet y la pestaña ÍNDICE SINIESTRALIDAD, BDATOS y el
+       dashboard GESTORÍA del TABLERO LP cuentan con ellos. Sólo se escribe si Maxinet trae un valor
        (nunca se borra una celda porque Maxinet venga vacío) y, en la fecha, si el
        año es verosímil (un "26" tecleado llega como 0026 y se lee como 2026, igual
        que Google Sheets; cualquier otro año imposible se ignora). Si un campo cambiaría en
@@ -81,38 +81,21 @@ IMPORTANTE sobre cómo se agregan las filas nuevas:
 
 Columnas auxiliares AJ:AM en "GESTORIA CP - LP" (no tocar, no son de esta
 automatización): AJ/AK/AL calculan mes/año a partir de la Fecha del Evento
-(columna C), y AM devuelve "OK" si el año es 2025 o 2026. La pestaña
-"2026" (histórico) usa esas columnas -- ver abajo.
+(columna C), y AM devuelve "OK" si el año es 2025 o 2026. Hoy ninguna fórmula las
+usa (alimentaban las pestañas RESUMEN y 2026, que ya no existen).
 
-Pestaña "2026" (histórico de eventos, mismo Sheet): -- NUNCA se escribe su
-    columna A. El usuario pidió en algún momento agregar
-    ahí Folio/Fecha/Tipo/Placa/Cliente/Sucursal/Site/BSite para cada evento
-    nuevo, pero inspeccionando el Sheet real se encontró que esa pestaña ya
-    hace exactamente eso SOLA, vía fórmulas:
-        A2 = =UNIQUE(FILTER('GESTORIA CP - LP'!A:A,
-                             'GESTORIA CP - LP'!AM:AM="OK"))
-    Esta es una fórmula de array que se "derrama" (spill) automáticamente
-    hacia abajo listando todo folio de "GESTORIA CP - LP" cuya columna AM
-    diga "OK" (fecha del evento en 2025 o 2026). Las columnas B a H de esa
-    misma pestaña ya vienen con fórmulas XLOOKUP precargadas fila por fila
-    (arrastradas de antemano hasta la fila 1501) que traen el resto de los
-    datos por Folio. En otras palabras: en cuanto una fila nueva en
-    "GESTORIA CP - LP" tiene una fecha válida, aparece sola en "2026" --
-    no hace falta escribir nada ahí.
-    Se intentó automatizar esa pestaña el 2026-09-28 escribiendo el Folio
-    directamente en su columna A, sin saber que era parte del rango de
-    "derrame" de esa fórmula. En cuanto la fórmula necesitó crecer una fila
-    más (porque se corrigió la fecha del folio 1624 y pasó a calificar como
-    "OK"), chocó con el valor fijo que se había escrito ahí y toda la
-    fórmula colapsó a #REF!, vaciando visualmente el histórico completo
-    (sin pérdida real de datos: "GESTORIA CP - LP" nunca se tocó). Se
-    corrigió borrando esa única celda y dejando que la fórmula se
-    reexpandiera sola. No se debe volver a escribir la columna A de esa pestaña.
-    Lo único que se escribe ahí son las fórmulas por fila de B:H, que sí había
-    que arrastrar a mano hacia abajo: sin ellas, un folio nuevo aparece en A
-    sin fecha, tipo, placa ni cliente (el 2026-10-12 los folios 1630 a 1654
-    estaban así: las fórmulas terminaban en la fila 1290 y el derrame en la
-    1310). Ver mantener_formulas_historico().
+Pestañas de apoyo (hojas_apoyo.py; ninguna se crea sola, si falta se omite con un aviso):
+    FUENTES            sello de la última corrida (B3:B8) junto a la tabla de procedencia que
+                       escribe una persona: de dónde sale cada bloque y qué es manual.
+    ALERTAS DE DATOS   datos dudosos del reporte de Maxinet (fecha imposible, posible duplicado,
+                       sucursal vacía); se reescribe en cada corrida (anomalias.py).
+    REVISAR NOMBRES    nombres de cliente nuevos que parecen una cuenta interna; una persona marca
+                       ESTADO = INTERNA o CLIENTE y el sync agrega a 'NO SON CLIENTES' los internos
+                       (cuentas_internas.py). El patrón de cuentas internas vive en
+                       'ÍNDICE SINIESTRALIDAD'!B2 y lo usa también BDATOS!B2.
+    La antigua pestaña "2026" (histórico con XLOOKUP por fila) ya no existe: su paso de
+    mantenimiento se retiró el 2026-10-27. Una pestaña "2026" nueva, si se vuelve a necesitar,
+    debe ser una sola fórmula de derrame sobre BDATOS, sin nada que arrastrar.
 
 Requiere:
     pip install -r requirements.txt
@@ -125,7 +108,6 @@ Variables de entorno esperadas (ver .env.example):
         automatizada, no el original que usa el equipo)
     WORKSHEET_GESTORIA_NAME    -> nombre de la pestaña principal (default
         "GESTORIA CP - LP")
-    WORKSHEET_HISTORICO_NAME   -> pestaña histórico (default "2026")
 """
 
 import os
@@ -145,6 +127,9 @@ from google.oauth2 import service_account
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
+import anomalias  # noqa: E402  (junto a este archivo)
+import hojas_apoyo  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("gestoria_lp_cp_sync")
@@ -228,9 +213,6 @@ CAMPOS_CORREGIBLES = {"SUCURSAL": 19, "TIPO": 6, "CLIENTE": 15, "SITE": 20, "BSI
 MAX_FRACCION_REFRESCO = 0.5  # un campo que cambiaría en más de la mitad de las filas se omite...
 MIN_FILAS_GUARDIA = 50       # ...siempre que haya al menos esta cantidad de filas comparadas
 ANIO_MIN_FECHA = 2020
-# Filas de fórmulas por fila que se mantienen de más, debajo del último folio
-# del derrame de la pestaña histórico.
-HOLGURA_FILAS_HISTORICO = 50
 
 
 def _parse_json(resp: requests.Response):
@@ -580,87 +562,27 @@ def sincronizar_gestoria(worksheet, df_maxinet: pd.DataFrame, dry_run: bool = Fa
     return len(df_nuevos), n_cerrados, n_cerrado_fecha, sum(conteo_refrescos.values())
 
 
-def conectar_hoja_historico(libro):
-    # Mismo patrón que conectar_sheet_gestoria: un secret vacío no debe pasar
-    # un nombre vacío.
-    return libro.worksheet(os.environ.get("WORKSHEET_HISTORICO_NAME") or "2026")
-
-
-def mantener_formulas_historico(libro, dry_run: bool = False) -> int:
-    """
-    En la pestaña "2026" la columna A es un derrame (UNIQUE/FILTER) que nunca
-    se escribe, y B:H son fórmulas XLOOKUP por fila que alguien arrastraba a
-    mano. Aquí se extienden esas fórmulas hasta el último folio del derrame
-    más HOLGURA_FILAS_HISTORICO, copiando su formato (la fecha de B), y se
-    rellenan huecos. Sólo se escribe en filas con B:H totalmente vacías: nunca
-    se pisa contenido. La fórmula se toma de la última fila que ya la tenga,
-    cambiando únicamente su referencia a la columna A de esa fila.
-    """
-    ws = conectar_hoja_historico(libro)
-    col_a = ws.get(f"A{FILA_INICIO_DATOS}:A")
-    if col_a and col_a[0] and str(col_a[0][0]).startswith("#"):
-        log.warning("Histórico '%s': A%d muestra %s (derrame bloqueado); no se toca nada.",
-                    ws.title, FILA_INICIO_DATOS, col_a[0][0])
-        return 0
-    ultima_lista = FILA_INICIO_DATOS + max((i for i, r in enumerate(col_a) if r and str(r[0]).strip()), default=-1)
-    objetivo = ultima_lista + HOLGURA_FILAS_HISTORICO
-
-    leer_hasta = min(objetivo, ws.row_count)
-    bloque = ws.get(f"B{FILA_INICIO_DATOS}:H{leer_hasta}", value_render_option="FORMULA")
-    bloque += [[]] * (leer_hasta - FILA_INICIO_DATOS + 1 - len(bloque))
-
-    plantilla_fila = None
-    for i in range(len(bloque) - 1, -1, -1):
-        if bloque[i] and str(bloque[i][0]).startswith("="):
-            plantilla_fila = FILA_INICIO_DATOS + i
-            break
-    if plantilla_fila is None:
-        log.warning("Histórico '%s': no hay ninguna fila con fórmulas de la cual copiar; no se toca nada.", ws.title)
-        return 0
-    plantilla = [str(c) for c in bloque[plantilla_fila - FILA_INICIO_DATOS]]
-
-    vacias = []
-    for fila in range(FILA_INICIO_DATOS, objetivo + 1):
-        i = fila - FILA_INICIO_DATOS
-        celdas = bloque[i] if i < len(bloque) else []
-        if not any(str(c).strip() for c in celdas):
-            vacias.append(fila)
-    if not vacias:
-        log.info("Histórico '%s': las fórmulas ya cubren el derrame (hasta la fila %d).", ws.title, ultima_lista)
-        return 0
-
-    log.info("%sHistórico '%s': %d filas sin fórmulas (de %d a %d); derrame hasta la fila %d.",
-             "[dry-run] " if dry_run else "", ws.title, len(vacias), vacias[0], vacias[-1], ultima_lista)
-    if dry_run:
-        return len(vacias)
-
-    if objetivo > ws.row_count:
-        ws.add_rows(objetivo - ws.row_count)
-
-    # Bloques contiguos de filas vacías -> una escritura y un copiado de formato por bloque.
-    bloques, ini = [], vacias[0]
-    for previa, actual in zip(vacias, vacias[1:] + [None]):
-        if actual != previa + 1:
-            bloques.append((ini, previa))
-            ini = actual
-    escrituras, formatos = [], []
-    patron = re.compile(rf"\bA{plantilla_fila}\b")
-    for ini, fin in bloques:
-        escrituras.append({
-            "range": f"B{ini}:H{fin}",
-            "values": [[patron.sub(f"A{f}", c) for c in plantilla] for f in range(ini, fin + 1)],
-        })
-        formatos.append({"copyPaste": {
-            "source": {"sheetId": ws.id, "startRowIndex": plantilla_fila - 1, "endRowIndex": plantilla_fila,
-                       "startColumnIndex": 1, "endColumnIndex": 8},
-            "destination": {"sheetId": ws.id, "startRowIndex": ini - 1, "endRowIndex": fin,
-                            "startColumnIndex": 1, "endColumnIndex": 8},
-            "pasteType": "PASTE_FORMAT",
-        }})
-    ws.batch_update(escrituras, value_input_option="USER_ENTERED")
-    libro.batch_update({"requests": formatos})
-    log.info("Histórico '%s': fórmulas de B:H escritas en %d filas.", ws.title, len(vacias))
-    return len(vacias)
+def actualizar_apoyo(worksheet, df_maxinet: pd.DataFrame, nuevos: int, cerrados: int, fechas: int,
+                     refrescados: int, dry_run: bool = False) -> None:
+    """Pestañas de apoyo del libro (ver hojas_apoyo.py): alertas de datos, nombres por revisar y el sello de
+    la corrida en FUENTES. Va después de la sincronización y su falla no la invalida."""
+    libro = worksheet.spreadsheet
+    alertas = anomalias.detectar(df_maxinet, date.today())
+    n_alertas = hojas_apoyo.escribir_alertas(libro, alertas, dry_run=dry_run)
+    tickets = [(int(r[FOLIO_COL]), r["ClientName"]) for r in df_maxinet.to_dict("records")
+               if pd.notna(r[FOLIO_COL]) and isinstance(r["ClientName"], str)]
+    avisados, agregados, pendientes = hojas_apoyo.actualizar_revisar_nombres(libro, tickets, dry_run=dry_run)
+    folios_hoja = len(leer_filas_existentes(leer_bloque(worksheet)))
+    hojas_apoyo.escribir_estado(libro, {
+        "ultima_sincronizacion": hojas_apoyo.ahora_cdmx(),
+        "tickets_maxinet": len(df_maxinet),
+        "folios_hoja": folios_hoja,
+        "ultima_corrida": f"{nuevos} nuevos, {cerrados} cerrados, {fechas} fechas de cierre, {refrescados} campos refrescados",
+        "alertas": n_alertas,
+        "nombres_por_revisar": pendientes,
+    }, dry_run=dry_run)
+    log.info("%sApoyo: %d alertas de datos; nombres por revisar: %d (%d nuevos, %d agregados a la lista).",
+             "[dry-run] " if dry_run else "", n_alertas, pendientes, avisados, agregados)
 
 
 def main():
@@ -674,9 +596,9 @@ def main():
         # Secundario: si falla (cuota, rango protegido) se avisa pero no se
         # considera fallida la sincronización principal, que ya terminó.
         try:
-            mantener_formulas_historico(worksheet.spreadsheet, dry_run=dry_run)
+            actualizar_apoyo(worksheet, df_maxinet, nuevos, cerrados, fechas, refrescados, dry_run=dry_run)
         except Exception:
-            log.exception("No se pudieron mantener las fórmulas de la pestaña histórico")
+            log.exception("No se pudieron actualizar las pestañas de apoyo (FUENTES, ALERTAS DE DATOS, REVISAR NOMBRES)")
 
         log.info(
             "Automatización completada con éxito%s (%d nuevos, %d cerrados, %d fechas de cierre, %d campos refrescados)",
