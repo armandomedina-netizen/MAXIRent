@@ -174,6 +174,7 @@ def test_resumen_y_codigo_de_salida(monkeypatch, capsys):
     monkeypatch.setattr(g, "revisar", lambda rev, *a, **k: ok)
     monkeypatch.setattr(g, "revisar_tablero", lambda ayer, *a, **k: [ok])
     monkeypatch.setattr(g, "revisar_errores", lambda *a, **k: ok)
+    monkeypatch.setattr(g, "revisar_radar", lambda *a, **k: ok)
     assert g.main() == 0
     monkeypatch.setattr(g, "revisar_errores", lambda *a, **k: mal)
     assert g.main() == 1
@@ -218,3 +219,31 @@ def test_con_reintentos_no_oculta_otros_errores(monkeypatch):
         raise gspread.exceptions.APIError(_Resp(403))
     with pytest.raises(gspread.exceptions.APIError):
         g.con_reintentos(fn)
+
+
+# ---------------------------------------------------------------- radar de cambios de Nuvia
+AHORA = dt.datetime(2026, 10, 27, 17, 0, tzinfo=dt.timezone.utc)
+RECIENTE = (AHORA - dt.timedelta(hours=1)).isoformat()
+
+
+def test_radar_sin_cambios_o_en_curso_no_es_pendiente():
+    ok = g.revisar_radar(lambda: {"Tablero CP": {"estado": "sin cambios", "revisado": RECIENTE}, "Base CP": {"estado": "sin cambios", "revisado": RECIENTE}}, AHORA)
+    assert ok.estado == "ok" and "sin cambios" in ok.detalle
+    en_curso = g.revisar_radar(lambda: {"Tablero CP": {"estado": "en curso", "revisado": RECIENTE}}, AHORA)
+    assert en_curso.estado == "ok" and "sigue ajustando" in en_curso.detalle
+
+
+def test_radar_con_cambios_estables_es_pendiente_y_dice_que_hacer():
+    r = g.revisar_radar(lambda: {"Tablero CP": {"estado": "estable", "revisado": RECIENTE}}, AHORA)
+    assert r.estado == "pendiente" and "Tablero CP" in r.detalle and "_RADAR" in r.detalle and "línea base" in r.detalle
+
+
+def test_radar_que_no_corre_o_sin_linea_base_no_se_da_por_bueno():
+    viejo = (AHORA - dt.timedelta(hours=7)).isoformat()
+    assert g.revisar_radar(lambda: {"Tablero CP": {"estado": "sin cambios", "revisado": viejo}}, AHORA).estado == "no verificado"
+    assert g.revisar_radar(lambda: {"Tablero CP": {"estado": "sin cambios"}}, AHORA).estado == "no verificado"
+    assert g.revisar_radar(lambda: {}, AHORA).estado == "no verificado"
+
+    def falla():
+        raise RuntimeError("x")
+    assert g.revisar_radar(falla, AHORA).estado == "no verificado"
