@@ -30,10 +30,11 @@ def test_actualizar_apoyo_escribe_sello_alertas_y_nombres():
                      "fecha_evento": "2026-10-10", "created_at": "2026-10-10 09:00:00", "registrationNo": "A", "bookingNo": "#R"})
     g.actualizar_apoyo(hoja, df, nuevos=3, cerrados=1, fechas=0, refrescados=2)
     sello = {r: v[0][0] for r, v in fuentes.escrituras}
-    assert sello["B4"] == 1 and sello["B5"] == 2 and sello["B7"] == 1 and sello["B8"] == 1
+    assert sello["B4"] == 1 and sello["B5"] == 2 and sello["B7"] == 1 and sello["B8"] == 0   # primera corrida: línea base
     assert sello["B6"] == "3 nuevos, 1 cerrados, 0 fechas de cierre, 2 campos refrescados"
     assert alertas.escrituras and alertas.escrituras[0][1][0][3] == "Sucursal"
-    assert revisar.escrituras[0][1][0][0] == "REPOSICION"
+    fila = revisar.escrituras[0][1][0]
+    assert fila[0] == "REPOSICION" and fila[4] == "CLIENTE"
 
 
 def test_actualizar_apoyo_en_dry_run_no_escribe_nada():

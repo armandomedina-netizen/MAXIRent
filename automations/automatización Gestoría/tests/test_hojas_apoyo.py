@@ -38,17 +38,29 @@ def test_las_alertas_reemplazan_lo_anterior():
     assert ws2.limpiezas and ws2.escrituras == []         # sin alertas: sólo se limpia
 
 
-def test_nombres_nuevos_se_avisan_una_sola_vez():
+def test_primera_corrida_siembra_linea_base_sin_inundar():
     revisar = HojaFalsa(h.PESTANA_REVISAR)
     libro = LibroFalso(indice(), revisar)
-    nuevos, agregados, pendientes = h.actualizar_revisar_nombres(libro, [(10, "REPOSICION"), (11, "REPOSICION"), (12, "EMPRESA EJEMPLO SA DE CV")])
-    assert (nuevos, agregados, pendientes) == (1, 0, 1)
-    assert revisar.escrituras == [("A2", [["REPOSICION", 2, 10, "nombre corto sin sufijo legal", "", ""]])]
-    # segunda corrida: el nombre ya está en la pestaña, sólo se refrescan sus conteos
-    revisar2 = HojaFalsa(h.PESTANA_REVISAR, {"A2:F": [["REPOSICION", 2, 10, "motivo", "", ""]]})
-    nuevos, agregados, pendientes = h.actualizar_revisar_nombres(LibroFalso(indice(), revisar2), [(10, "REPOSICION"), (11, "REPOSICION"), (13, "REPOSICION")])
-    assert (nuevos, agregados, pendientes) == (0, 0, 1)
-    assert revisar2.escrituras == [("B2:C2", [[3, 10]])]
+    tickets = [(10, "REPOSICION"), (11, "REPOSICION"), (12, "EMPRESA EJEMPLO SA DE CV"), (13, "TALLER MTO")]
+    nuevos, agregados, pendientes = h.actualizar_revisar_nombres(libro, tickets)
+    assert (nuevos, agregados, pendientes) == (2, 0, 1)
+    filas = {f[0]: f for f in revisar.escrituras[0][1]}
+    assert filas["REPOSICION"][4] == "CLIENTE" and filas["REPOSICION"][3].startswith("Línea base")
+    assert filas["TALLER MTO"][4] == "" and "patrón" in filas["TALLER MTO"][3]       # la cubre el patrón: se confirma
+
+
+def test_nombres_nuevos_se_avisan_una_sola_vez():
+    base = [["TALLER MTO", 1, 13, "motivo", "", ""]]
+    revisar = HojaFalsa(h.PESTANA_REVISAR, {"A2:F": base})
+    libro = LibroFalso(indice(), revisar)
+    nuevos, agregados, pendientes = h.actualizar_revisar_nombres(libro, [(10, "REPOSICION"), (11, "REPOSICION"), (13, "TALLER MTO")])
+    assert (nuevos, agregados, pendientes) == (1, 0, 2)
+    assert ("A3", [["REPOSICION", 2, 10, "nombre corto sin sufijo legal", "", ""]]) in revisar.escrituras
+    # segunda corrida: ya están en la pestaña, sólo se refrescan sus conteos
+    revisar2 = HojaFalsa(h.PESTANA_REVISAR, {"A2:F": [["TALLER MTO", 1, 13, "m", "", ""], ["REPOSICION", 2, 10, "m", "", ""]]})
+    nuevos, agregados, pendientes = h.actualizar_revisar_nombres(LibroFalso(indice(), revisar2), [(10, "REPOSICION"), (11, "REPOSICION"), (14, "REPOSICION"), (13, "TALLER MTO")])
+    assert (nuevos, agregados, pendientes) == (0, 0, 2)
+    assert ("B3:C3", [[3, 10]]) in revisar2.escrituras
 
 
 def test_un_nombre_marcado_interna_se_agrega_a_la_lista():
@@ -78,3 +90,17 @@ def test_dry_run_no_escribe_en_revisar_nombres():
     idx = indice()
     h.actualizar_revisar_nombres(LibroFalso(idx, revisar), [(10, "REPOSICION")], dry_run=True)
     assert revisar.escrituras == [] and idx.escrituras == []
+
+
+def test_interna_confirmada_se_agrega_aunque_el_patron_ya_la_cubra():
+    revisar = HojaFalsa(h.PESTANA_REVISAR, {"A2:F": [["TALLER MTO", 1, 13, "patrón", "INTERNA", ""]]})
+    idx = indice()
+    h.actualizar_revisar_nombres(LibroFalso(idx, revisar), [(13, "TALLER MTO")])
+    assert idx.escrituras == [("A4", [["TALLER MTO"]])]
+
+
+def test_interna_ya_en_la_lista_solo_anota_la_fecha():
+    revisar = HojaFalsa(h.PESTANA_REVISAR, {"A2:F": [["USO INTERNO", 1, 13, "m", "INTERNA", ""]]})
+    idx = indice()
+    h.actualizar_revisar_nombres(LibroFalso(idx, revisar), [(13, "USO INTERNO")])
+    assert idx.escrituras == [] and revisar.escrituras and revisar.escrituras[-1][0] == "F2"

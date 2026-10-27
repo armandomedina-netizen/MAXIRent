@@ -86,17 +86,29 @@ class Aviso:
     tickets: int
     primer_folio: int
     razones: tuple[str, ...]
+    por_patron: bool = False   # ya cuenta como interna sólo porque el patrón la cubre: una persona debe confirmarlo
 
 
 def nombres_por_revisar(tickets: list[tuple[int, str]], lista: set[str], revisados: set[str],
                         patron: re.Pattern | None = None) -> list[Aviso]:
-    """tickets = [(folio, nombre_cliente)]. Devuelve los nombres sin clasificar que parecen cuenta interna
-    y que nadie ha revisado todavía (revisados = nombres ya confirmados como cliente o como interna)."""
+    """tickets = [(folio, nombre_cliente)]. Devuelve los nombres que una persona debe confirmar y que nadie ha
+    revisado todavía (revisados = nombres ya confirmados como cliente o como interna, o ya avisados):
+      - los que NO clasifica ni la lista ni el patrón pero se parecen a una cuenta interna (siguen contando como cliente);
+      - los que clasifica SÓLO el patrón (ya cuentan como interna, pero un cliente real con un nombre parecido
+        saldría del índice en silencio; la confirmación lo evita)."""
     acum: dict[str, list[int]] = {}
     for folio, nombre in tickets:
         n = normalizar(nombre)
-        if not n or n in revisados or clasificar(n, lista, patron).es_interna:
+        if not n or n in revisados:
             continue
         acum.setdefault(n, []).append(folio)
-    avisos = [Aviso(n, len(f), min(f), tuple(r)) for n, f in acum.items() if (r := senales_de_cuenta_interna(n))]
+    avisos = []
+    for n, folios in acum.items():
+        d = clasificar(n, lista, patron)
+        if d.es_interna and d.motivo == "lista":
+            continue
+        if d.es_interna:
+            avisos.append(Aviso(n, len(folios), min(folios), ("clasificada como interna por el patrón; confirmar",), True))
+        elif razones := senales_de_cuenta_interna(n):
+            avisos.append(Aviso(n, len(folios), min(folios), tuple(razones)))
     return sorted(avisos, key=lambda a: a.primer_folio)

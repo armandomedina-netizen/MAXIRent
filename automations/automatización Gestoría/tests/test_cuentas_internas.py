@@ -46,3 +46,10 @@ def test_aviso_de_nombres_nuevos_que_parecen_cuenta_interna():
     avisos = nombres_por_revisar(tickets, LISTA, revisados=set())
     assert [(a.nombre, a.tickets, a.primer_folio) for a in avisos] == [("REPOSICION", 2, 1)]
     assert nombres_por_revisar(tickets, LISTA, revisados={"REPOSICION"}) == []
+
+
+def test_los_nombres_que_solo_cubre_el_patron_tambien_se_avisan():
+    tickets = [(1, "TALLER MTO"), (2, "TALLER MTO"), (3, "USO INTERNO"), (4, "EMPRESA EJEMPLO SA DE CV")]
+    avisos = nombres_por_revisar(tickets, LISTA, revisados=set())
+    assert [(a.nombre, a.tickets, a.por_patron) for a in avisos] == [("TALLER MTO", 2, True)]   # USO INTERNO ya está en la lista
+    assert nombres_por_revisar(tickets, LISTA, revisados={"TALLER MTO"}) == []

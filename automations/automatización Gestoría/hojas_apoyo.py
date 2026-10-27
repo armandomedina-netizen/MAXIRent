@@ -99,9 +99,12 @@ def escribir_alertas(libro, alertas: list[Alerta], dry_run: bool = False) -> int
 def actualizar_revisar_nombres(libro, tickets: list[tuple[int, str]], dry_run: bool = False) -> tuple[int, int, int]:
     """Mantiene REVISAR NOMBRES y agrega a la lista 'NO SON CLIENTES' los nombres que una persona confirmó.
 
-    - Nombres sin clasificar que parecen una cuenta interna se agregan con ESTADO vacío (y sus tickets se actualizan).
+    - Nombres sin clasificar que parecen una cuenta interna, y nombres que sólo clasifica el patrón, se agregan
+      con ESTADO vacío (sus tickets se actualizan en cada corrida).
     - ESTADO = INTERNA: el nombre se agrega a ÍNDICE SINIESTRALIDAD!A (sólo agrega, nunca borra) y se anota la fecha.
-    - ESTADO = CLIENTE: deja de avisarse.
+    - ESTADO = CLIENTE: deja de avisarse (y BDATOS lo cuenta como cliente aunque el patrón lo cubra).
+    - Primera corrida (pestaña vacía): los nombres sin clasificar que ya existían se siembran con ESTADO = CLIENTE
+      ("línea base") para no inundar la pestaña; los que sólo cubre el patrón quedan para confirmar.
     Devuelve (nombres nuevos avisados, nombres agregados a la lista, pendientes de decidir).
     """
     ws = _pestana(libro, PESTANA_REVISAR)
@@ -118,24 +121,22 @@ def actualizar_revisar_nombres(libro, tickets: list[tuple[int, str]], dry_run: b
         n = normalizar(f[0])
         if n:
             existentes[n] = {"fila": 2 + i, "estado": f[4].strip().upper(), "agregada": f[5].strip()}
+    semilla = not existentes
 
-    revisados = {n for n, d in existentes.items() if d["estado"] in ESTADOS_VALIDOS}
-    avisos = nombres_por_revisar(tickets, lista, revisados | set(existentes), patron)
+    avisos = nombres_por_revisar(tickets, lista, set(existentes), patron)
     ya_avisados = {n: d for n, d in existentes.items() if d["estado"] not in ESTADOS_VALIDOS}
 
-    # 1) nombres confirmados como internos que todavía no están en la lista ni los cubre el patrón
-    por_agregar = [n for n, d in existentes.items()
-                   if d["estado"] == "INTERNA" and not d["agregada"] and not clasificar(n, lista, patron).es_interna]
-    marcar_agregadas = [n for n, d in existentes.items()
-                        if d["estado"] == "INTERNA" and not d["agregada"] and n not in por_agregar]
+    # confirmados como internos que todavía no están en la lista manual (el patrón no basta: puede cambiar)
+    por_agregar = [n for n, d in existentes.items() if d["estado"] == "INTERNA" and not d["agregada"] and n not in lista]
+    marcar_agregadas = [n for n, d in existentes.items() if d["estado"] == "INTERNA" and not d["agregada"] and n in lista]
 
-    # 2) conteos actualizados de los que siguen pendientes
     conteo: dict[str, list[int]] = {}
     for folio, nombre in tickets:
         conteo.setdefault(normalizar(nombre), []).append(folio)
 
+    pendientes = len(ya_avisados) + sum(1 for a in avisos if a.por_patron or not semilla)
     if dry_run:
-        return len(avisos), len(por_agregar), len(ya_avisados) + len(avisos)
+        return len(avisos), len(por_agregar), pendientes
 
     hoy = date.today().isoformat()
     cambios = []
@@ -155,8 +156,13 @@ def actualizar_revisar_nombres(libro, tickets: list[tuple[int, str]], dry_run: b
 
     if avisos:
         primera = 2 + max((d["fila"] - 2 for d in existentes.values()), default=-1) + 1
-        nuevas = [[a.nombre, a.tickets, a.primer_folio, "; ".join(a.razones), "", ""] for a in avisos]
+        nuevas = []
+        for a in avisos:
+            if semilla and not a.por_patron:
+                nuevas.append([a.nombre, a.tickets, a.primer_folio, "Línea base: ya existía al activar el aviso", "CLIENTE", ""])
+            else:
+                nuevas.append([a.nombre, a.tickets, a.primer_folio, "; ".join(a.razones), "", ""])
         if primera + len(nuevas) - 1 > ws.row_count:
             ws.add_rows(primera + len(nuevas) - 1 - ws.row_count)
         ws.update(values=nuevas, range_name=f"A{primera}", value_input_option="RAW")
-    return len(avisos), len(por_agregar), len(ya_avisados) + len(avisos)
+    return len(avisos), len(por_agregar), pendientes
