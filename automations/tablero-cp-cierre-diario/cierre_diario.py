@@ -248,11 +248,23 @@ def _valores_en_columna(sid: int, col: int, valores: dict) -> list:
 
 
 # ---------------------------------------------------------------- fotos de cierre (pestaña oculta)
+def _es_fecha(texto: str) -> bool:
+    try:
+        dt.date.fromisoformat(texto)
+        return True
+    except ValueError:
+        return False
+
+
 class Fotos:
-    """Fotos de los valores de la columna viva, una fila por (fecha, pestaña): [fecha, pestaña, JSON fila->valor]."""
+    """
+    Pestaña oculta del cierre. Fotos de los valores de la columna viva, una fila por (fecha, pestaña):
+    [fecha, pestaña, JSON fila->valor]; y el identificador de cada pestaña que se maneja, para encontrarla
+    aunque la renombren: ["gid", nombre de siempre, identificador].
+    """
 
     def __init__(self, libro, escribir: bool):
-        self.libro, self.escribir, self._ws = libro, escribir, None
+        self.libro, self.escribir, self._ws, self._filas_cache = libro, escribir, None, None
 
     def _hoja(self, crear=False):
         if self._ws is None:
@@ -269,13 +281,38 @@ class Fotos:
                 log.info("Se creó la pestaña oculta %s", HOJA_FOTOS)
         return self._ws
 
-    def leer_todas(self, pestana: str) -> dict:
+    def _filas(self) -> list:
         ws = self._hoja()
         if ws is None:
-            return {}
+            return []
+        if self._filas_cache is None:
+            self._filas_cache = reintentar(ws.get_all_values)
+        return self._filas_cache
+
+    def gid_de(self, logico: str):
+        """Identificador guardado de la pestaña que siempre se ha llamado `logico`, o None si aún no se guardó."""
+        for fila in self._filas()[1:]:
+            if len(fila) >= 3 and fila[0] == "gid" and fila[1] == logico and fila[2].strip().isdigit():
+                return int(fila[2])
+        return None
+
+    def guardar_gid(self, logico: str, gid: int):
+        if not self.escribir:
+            return
+        ws = self._hoja(crear=True)
+        if ws is None:
+            return
+        filas = reintentar(ws.get_all_values)
+        destino = next((i + 1 for i, f in enumerate(filas) if i > 0 and len(f) >= 2 and f[0] == "gid" and f[1] == logico),
+                       len(filas) + 1)
+        reintentar(ws.update, range_name=f"A{destino}:C{destino}", values=[["gid", logico, str(gid)]],
+                   value_input_option="RAW")
+        self._filas_cache = None
+
+    def leer_todas(self, pestana: str) -> dict:
         out = {}
-        for fila in reintentar(ws.get_all_values)[1:]:
-            if len(fila) >= 3 and fila[1] == pestana and fila[2]:
+        for fila in self._filas()[1:]:
+            if len(fila) >= 3 and fila[1] == pestana and fila[2] and _es_fecha(fila[0]):
                 try:
                     out[dt.date.fromisoformat(fila[0])] = {int(k): v for k, v in json.loads(fila[2]).items()}
                 except (ValueError, TypeError):
@@ -286,16 +323,36 @@ class Fotos:
         ws = self._hoja(crear=True)
         if ws is None:
             return
+        self._filas_cache = None
         filas = reintentar(ws.get_all_values)
         destino = next((i + 1 for i, f in enumerate(filas) if i > 0 and len(f) >= 2 and f[0] == fecha.isoformat()
                         and f[1] == pestana), len(filas) + 1)
         reintentar(ws.update, range_name=f"A{destino}:C{destino}",
                    values=[[fecha.isoformat(), pestana, json.dumps({str(k): v for k, v in sorted(valores.items())})]],
                    value_input_option="RAW")
-        viejas = [i + 1 for i, f in enumerate(filas) if i > 0 and f and f[0] and
+        viejas = [i + 1 for i, f in enumerate(filas) if i > 0 and f and f[0] and _es_fecha(f[0]) and
                   dt.date.fromisoformat(f[0]) < hoy - dt.timedelta(days=DIAS_FOTOS)]
         if viejas:
             reintentar(ws.batch_clear, [f"A{i}:C{i}" for i in viejas])
+
+
+def resolver_pestana(libro, fotos: Fotos, logico: str):
+    """
+    La pestaña que siempre se ha llamado `logico`, aunque hoy tenga otro nombre. La primera vez se busca por
+    nombre y se guarda su identificador en la pestaña oculta; después se busca sólo por identificador.
+    """
+    gid = fotos.gid_de(logico)
+    if gid is not None:
+        try:
+            ws = reintentar(libro.get_worksheet_by_id, gid)
+        except gspread.WorksheetNotFound:
+            raise gspread.WorksheetNotFound(f"la pestaña '{logico}' (id {gid}) ya no existe en el libro")
+    else:
+        ws = reintentar(libro.worksheet, logico)
+        fotos.guardar_gid(logico, ws.id)
+    if ws.title != logico:
+        log.info("%s: hoy se llama '%s'", logico, ws.title)
+    return ws
 
 
 # ---------------------------------------------------------------- lectura y ejecución por pestaña
@@ -356,7 +413,7 @@ def _recuperar_huecos(ws, nombre, plan, columnas, fechas, fecha_datos, fotos_p, 
 def cerrar_pestana(libro, nombre: str, fecha_datos: dt.date, fotos: Fotos, hoy: dt.date, dry_run: bool,
                    recuperador=None) -> bool:
     """True si la pestaña quedó en orden; False si hay algo que revisar."""
-    ws = reintentar(libro.worksheet, nombre)
+    ws = resolver_pestana(libro, fotos, nombre)
     columnas, fechas, ultima = _leer_estado(ws, fecha_datos)
     if not columnas:
         log.error("%s: no hay columnas con fecha cercana a %s en la fila %d", nombre, fecha_datos, FILA_FECHAS)
@@ -407,24 +464,25 @@ def conectar_libro():
     return reintentar(gspread.authorize(creds).open_by_key, os.environ["SPREADSHEET_ID_TABLERO_CP"])
 
 
-def cargar_flota_hoy(libro) -> dict:
+def cargar_flota_hoy(libro, fotos) -> dict:
     """Columnas A:BA de FLOTA CP de hoy, {letra: [valores]} desde la fila 2."""
-    ws = reintentar(libro.worksheet, HOJA_FLOTA)
+    ws = resolver_pestana(libro, fotos, HOJA_FLOTA)
     vals = reintentar(ws.get, "A2:BA6000", value_render_option="UNFORMATTED_VALUE")
     return {letras(n): [(f[n - 1] if n - 1 < len(f) else "") for f in vals] for n in range(1, 54)}
 
 
-def crear_recuperador(libro):
+def crear_recuperador(libro, fotos):
     """Reconstruye días pasados desde Maxinet; None si no hay credenciales (los huecos se avisan, no se inventan)."""
     if not all(os.environ.get(v) for v in ("MAXINET_BASE_URL", "MAXINET_USER", "MAXINET_PASS")):
         log.info("Sin credenciales de Maxinet: no se podrán reconstruir días faltantes")
         return None
-    return recuperar_dias.Recuperador(lambda: cargar_flota_hoy(libro))
+    return recuperar_dias.Recuperador(lambda: cargar_flota_hoy(libro, fotos))
 
 
 def main() -> int:
     dry_run = bool(os.environ.get("DRY_RUN"))
     libro = conectar_libro()
+    fotos = Fotos(libro, escribir=not dry_run)
     simulada = (os.environ.get("FECHA_DATOS") or "").strip()
     if simulada:
         if not (dry_run or os.environ.get("FORZAR")):
@@ -433,7 +491,7 @@ def main() -> int:
         fecha, filas = dt.date.fromisoformat(simulada), None
         log.warning("Fecha de datos simulada: %s", fecha)
     else:
-        valores = reintentar(reintentar(libro.worksheet, HOJA_FLOTA).get, "E2:E6000", value_render_option="UNFORMATTED_VALUE")
+        valores = reintentar(resolver_pestana(libro, fotos, HOJA_FLOTA).get, "E2:E6000", value_render_option="UNFORMATTED_VALUE")
         fecha, filas = fecha_de_datos(valores)
         if fecha is None or filas < MIN_FILAS_FLOTA:
             log.error("FLOTA CP no trae datos completos de un día (%s filas con la fecha más común, mínimo %d); no se hace nada",
@@ -441,8 +499,7 @@ def main() -> int:
             return 1
         log.info("Fecha de los datos de %s: %s (%d filas)", HOJA_FLOTA, fecha, filas)
     hoy = dt.datetime.now(dt.timezone(dt.timedelta(hours=-6))).date()
-    fotos = Fotos(libro, escribir=not dry_run)
-    recuperador = crear_recuperador(libro)
+    recuperador = crear_recuperador(libro, fotos)
     resultados = []
     for nombre in PESTANAS:
         try:

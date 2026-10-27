@@ -43,6 +43,8 @@ ZONA = ZoneInfo("America/Mexico_City")
 TIMEOUT_SECO = 900
 ESPERA_MAX_RELANZAR = 900
 SONDEO_SEG = 15
+# Nuvia renombra pestañas de nuestro Tablero: se acepta el nombre de siempre o el que ya se le conoce
+ALIAS_PESTANAS = {"UNIDADES CP": ("REPORTE FLOTA CP",), "DETALLE": ("GRAFICOS",)}
 PESTANAS_SIN_ERRORES = (
     "FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "DETALLE", "GRAFICAS", "MKT",
     "Bitácora Entregas / Recolecciones CP", "ENTREGAS POR SUCURSAL", "INDICADOR DE GASOLINA",
@@ -168,15 +170,20 @@ def con_reintentos(fn, *args, **kwargs):
 
 
 def contar_errores_tablero() -> dict:
-    """Celdas con error por pestaña clave del Tablero CP, sólo las pestañas que tienen alguna."""
+    """Celdas con error por pestaña clave del Tablero CP, sólo las que tienen alguna o ya no se encuentran."""
     import gspread
     from google.oauth2 import service_account
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"], scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
     libro = con_reintentos(gspread.authorize(creds).open_by_key, os.environ["SPREADSHEET_ID_TABLERO_CP"])
+    existentes = {w.title: w for w in con_reintentos(libro.worksheets)}
     con_error = {}
     for nombre in PESTANAS_SIN_ERRORES:
-        valores = con_reintentos(con_reintentos(libro.worksheet, nombre).get_all_values)
+        ws = next((existentes[n] for n in (nombre,) + ALIAS_PESTANAS.get(nombre, ()) if n in existentes), None)
+        if ws is None:
+            con_error[nombre] = "no se encontró la pestaña (¿la renombraron?)"
+            continue
+        valores = con_reintentos(ws.get_all_values)
         n = sum(1 for fila in valores for x in fila if ERROR_CELDA.match(x))
         if n:
             con_error[nombre] = n

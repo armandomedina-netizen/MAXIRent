@@ -226,3 +226,62 @@ def test_reintentar_no_oculta_otros_errores(monkeypatch):
         raise gspread.exceptions.APIError(_Resp(403))
     with pytest.raises(gspread.exceptions.APIError):
         c.reintentar(fn)
+
+
+# ---------------------------------------------------------------- pestañas por identificador (si Nuvia las renombra)
+from tests.fakes import HojaOculta
+
+
+def _libro_con(nombre_actual, gid=11):
+    ws = HojaFalsa([[""]], [[""]], nombre=nombre_actual, row_count=5, id=gid)
+    return LibroFalso([ws]), ws
+
+
+def test_resolver_encuentra_la_pestana_renombrada_por_su_identificador():
+    libro, ws = _libro_con("REPORTE FLOTA CP", gid=11)
+    fotos = FotosFalsas(gids={"UNIDADES CP": 11})
+    assert c.resolver_pestana(libro, fotos, "UNIDADES CP") is ws
+
+
+def test_resolver_la_primera_vez_busca_por_nombre_y_guarda_el_identificador():
+    libro, ws = _libro_con("UNIDADES CP", gid=11)
+    fotos = FotosFalsas()
+    assert c.resolver_pestana(libro, fotos, "UNIDADES CP") is ws and fotos.gids == {"UNIDADES CP": 11}
+
+
+def test_resolver_avisa_con_claridad_si_la_pestana_ya_no_existe():
+    libro, _ = _libro_con("OTRA", gid=11)
+    with pytest.raises(c.gspread.WorksheetNotFound, match="UNIDADES CP.*ya no existe"):
+        c.resolver_pestana(libro, FotosFalsas(gids={"UNIDADES CP": 99}), "UNIDADES CP")
+
+
+def test_el_cierre_funciona_aunque_la_pestana_tenga_otro_nombre():
+    cols, fechas = estado(D22)
+    ws = hoja_desde(cols, {4: {4: 375, 5: 14, 6: 3, 8: 392}})
+    ws.title = "REPORTE FLOTA CP"
+    libro = LibroFalso([ws]); fotos = FotosFalsas(gids={"UNIDADES CP": ws.id})
+    assert c.cerrar_pestana(libro, "UNIDADES CP", D22, fotos, dt.date(2026, 10, 23), dry_run=False)
+    assert fotos.guardadas and fotos.guardadas[0][1] == "UNIDADES CP"          # la foto se guarda con el nombre de siempre
+
+
+def test_las_filas_de_identificador_no_se_confunden_con_fotos_ni_se_purgan():
+    oculta = HojaOculta([["fecha", "pestaña", "valores_por_fila"],
+                         ["gid", "UNIDADES CP", "0"],
+                         ["2026-10-01", "UNIDADES CP", '{"4": 1}'],                  # foto vieja: se purga
+                         ["2026-10-22", "UNIDADES CP", '{"4": 7, "5": 2}']])
+    libro = LibroFalso([oculta]); libro.hojas = {"_CIERRE_DIARIO": oculta}
+    f = c.Fotos(libro, escribir=True)
+    assert f.gid_de("UNIDADES CP") == 0 and f.gid_de("OTRA") is None
+    assert f.leer_todas("UNIDADES CP") == {dt.date(2026, 10, 1): {4: 1}, dt.date(2026, 10, 22): {4: 7, 5: 2}}
+    f.guardar(dt.date(2026, 10, 26), "UNIDADES CP", {4: 9}, dt.date(2026, 10, 26))
+    assert oculta.limpiadas == ["A3:C3"]                                             # sólo la foto vieja; la fila gid sigue
+    assert oculta.filas[1] == ["gid", "UNIDADES CP", "0"]
+
+
+def test_guardar_gid_actualiza_la_fila_existente_y_no_escribe_en_seco():
+    oculta = HojaOculta([["fecha", "pestaña", "valores_por_fila"], ["gid", "UNIDADES CP", "0"]])
+    libro = LibroFalso([oculta]); libro.hojas = {"_CIERRE_DIARIO": oculta}
+    c.Fotos(libro, escribir=True).guardar_gid("UNIDADES CP", 5)
+    assert oculta.filas[1] == ["gid", "UNIDADES CP", "5"] and len(oculta.filas) == 2
+    c.Fotos(libro, escribir=False).guardar_gid("OTRA", 7)
+    assert len(oculta.filas) == 2
