@@ -13,7 +13,7 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 | `maxinet-balance.yml` | Entregas, retornos y solicitudes del BALANCE | 7:50 y después cada hora, lunes a sábado desde las 8:00 | Sí (ventana de 7:50 y disparo cada hora) | ADR 0004 |
 | `gestoria-lp-cp-sync.yml` | Tickets de gestoría (todos los estatus) | 8:20 y después cada hora, lunes a sábado de 8:30 a 19:00 | Sí (ventana de 8:20 y disparo cada hora) | ADR 0005 |
 | `tablero-sac.yml` | Solicitudes de monday (SAC) a Sheets | Cada hora, lunes a viernes de 7:20 a 17:20 y sábado hasta las 14:20 | Sí | `automations/TableroSAC/README.md` |
-| `maxinet-clientes-nuevos-cp.yml` | Clientes nuevos del Tablero CP | 9:50 (el reloj de GitHub lo repite hacia las 10:00, a veces con horas de retraso) | Sí (ventana de 9:50) | ADR 0002 y 0003 |
+| `maxinet-clientes-nuevos-cp.yml` | Clientes nuevos del Tablero CP | 8:15 en el Vigilante; el reloj de GitHub lo repite a las 9:00 y a las 10:00, a veces con horas de retraso (Maxinet importa a las 9:00 y a veces a las 9:40) | Sí (ventana de 8:15) | ADR 0002 y 0003 |
 | `maxinet-clientes-potenciales-cp.yml` | Clientes potenciales del Tablero CP | 8:15 | Sí (ventana de 8:15) | ADR 0002 |
 | `maxinet-entregas-cp.yml` | Entregas del Tablero CP (refresca el mes en curso) | 8:05 | Sí (ventana de 8:05) | ADR 0007 |
 | `maxinet-encuestas-cp.yml` | Encuestas de satisfacción del Tablero CP | 8:05 | Sí (ventana de 8:05) | ADR 0009 |
