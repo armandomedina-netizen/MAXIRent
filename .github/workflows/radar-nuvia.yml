@@ -1,0 +1,51 @@
+name: Radar Nuvia
+
+# Vigila la estructura de nuestro Tablero CP y de la Base CP copia, que Nuvia está ajustando, y deja el
+# detalle en la pestaña oculta _RADAR. La guardia de actualización avisa cuando los cambios llevan una hora
+# sin moverse. Con aceptar=true se toma la estructura actual como línea base (después de adaptar las reglas).
+on:
+  schedule:
+    - cron: "12 * * * *"
+  workflow_dispatch:
+    inputs:
+      aceptar:
+        description: "Tomar la estructura actual como línea base"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: radar-nuvia
+  cancel-in-progress: false
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: automations/radar-nuvia
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Radar
+        env:
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/radar-nuvia/google-creds.json
+          SPREADSHEET_ID_TABLERO_CP: ${{ secrets.SPREADSHEET_ID_TABLERO_CP }}
+          SPREADSHEET_ID_CLIENTES_NUEVOS: ${{ secrets.SPREADSHEET_ID_CLIENTES_NUEVOS }}
+          ACEPTAR_BASE: ${{ inputs.aceptar && '1' || '' }}
+        run: python radar.py

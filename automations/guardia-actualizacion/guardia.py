@@ -25,6 +25,7 @@ actions:write más GITHUB_REPOSITORY para relanzar. Opcional: SIN_RELANZAR=1 (s�
 import os
 import re
 import sys
+import json
 import time
 import logging
 import subprocess
@@ -42,6 +43,7 @@ RAIZ = Path(__file__).resolve().parents[1]
 ZONA = ZoneInfo("America/Mexico_City")
 TIMEOUT_SECO = 900
 ESPERA_MAX_RELANZAR = 900
+RADAR_MAX_HORAS = 6
 SONDEO_SEG = 15
 PESTANAS_SIN_ERRORES = (
     "FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "DETALLE", "GRAFICAS", "MKT",
@@ -232,6 +234,43 @@ def revisar_errores(contar=contar_errores_tablero) -> Resultado:
     return Resultado("Errores en el Tablero", "ok", f"{len(PESTANAS_SIN_ERRORES)} pestañas sin celdas con error")
 
 
+def leer_estado_radar() -> dict:
+    """{libro: estado} que dejó el radar en la pestaña oculta _RADAR del Tablero; {} si no existe."""
+    import gspread
+    from google.oauth2 import service_account
+    creds = service_account.Credentials.from_service_account_file(
+        os.environ["GOOGLE_CREDS_PATH"], scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
+    libro = con_reintentos(gspread.authorize(creds).open_by_key, os.environ["SPREADSHEET_ID_TABLERO_CP"])
+    try:
+        filas = con_reintentos(con_reintentos(libro.worksheet, "_RADAR").get_all_values)
+    except gspread.WorksheetNotFound:
+        return {}
+    return {f[1]: json.loads(f[2]) for f in filas if len(f) >= 3 and f[0] == "ESTADO" and f[2]}
+
+
+def revisar_radar(leer=leer_estado_radar, ahora=None) -> Resultado:
+    """Cambios de estructura que Nuvia hizo en nuestros libros: si ya están estables hay que adaptar las reglas."""
+    ahora = ahora or dt.datetime.now(dt.timezone.utc)
+    try:
+        estados = leer()
+    except Exception as e:
+        return Resultado("Cambios de Nuvia", "no verificado", f"{type(e).__name__}")
+    if not estados:
+        return Resultado("Cambios de Nuvia", "no verificado", "el radar no tiene línea base (corre el workflow Radar Nuvia)")
+    viejos = [k for k, e in estados.items()
+              if not e.get("revisado") or (ahora - dt.datetime.fromisoformat(e["revisado"])).total_seconds() > RADAR_MAX_HORAS * 3600]
+    if viejos:
+        return Resultado("Cambios de Nuvia", "no verificado", f"el radar no corre desde hace más de {RADAR_MAX_HORAS} h ({', '.join(viejos)})")
+    estables = [k for k, e in estados.items() if e.get("estado") == "estable"]
+    if estables:
+        return Resultado("Cambios de Nuvia", "pendiente", f"cambios de estructura estables en: {', '.join(estables)}. Revisa la pestaña "
+                         "oculta _RADAR, adapta las reglas y acepta la línea base con el workflow Radar Nuvia")
+    en_curso = [k for k, e in estados.items() if e.get("estado") == "en curso"]
+    if en_curso:
+        return Resultado("Cambios de Nuvia", "ok", f"Nuvia sigue ajustando: {', '.join(en_curso)}")
+    return Resultado("Cambios de Nuvia", "ok", "sin cambios de estructura")
+
+
 def resumen(resultados: list) -> str:
     marcas = {"ok": "OK         ", "recuperado": "RECUPERADO ", "pendiente": "PENDIENTE  ", "sin datos": "SIN DATOS  ", "no verificado": "NO VERIFICADO"}
     return "\n".join(f"{marcas[r.estado]} {r.nombre}" + (f" — {r.detalle}" if r.detalle else "") for r in resultados)
@@ -240,7 +279,7 @@ def resumen(resultados: list) -> str:
 def main() -> int:
     ayer = dt.datetime.now(ZONA).date() - dt.timedelta(days=1)
     log.info("Guardia de actualización: se espera información hasta el %s", ayer)
-    resultados = [revisar(r) for r in REVISIONES] + revisar_tablero(ayer) + [revisar_errores()]
+    resultados = [revisar(r) for r in REVISIONES] + revisar_tablero(ayer) + [revisar_errores(), revisar_radar()]
     texto = resumen(resultados)
     log.info("Resultado:\n%s", texto)
     ruta = os.environ.get("GITHUB_STEP_SUMMARY")
