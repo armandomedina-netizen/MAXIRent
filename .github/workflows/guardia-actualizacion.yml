@@ -1,0 +1,52 @@
+name: Guardia Actualizacion
+
+# Segundo corte después del matutino: comprueba que la información de CP realmente se actualizó
+# (no sólo que los workflows terminaron) y relanza lo que falte. Disparo exacto: Vigilante a las 10:30;
+# este cron es el respaldo, aunque GitHub lo retrase.
+on:
+  schedule:
+    - cron: "45 16 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: guardia-actualizacion
+  cancel-in-progress: false
+
+jobs:
+  guardia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: automations/guardia-actualizacion
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r ../maxinet-entregas-cp/requirements.txt -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Guardia de actualización
+        env:
+          MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
+          MAXINET_USER: ${{ secrets.MAXINET_USER }}
+          MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/guardia-actualizacion/google-creds.json
+          SPREADSHEET_ID_CLIENTES_NUEVOS: ${{ secrets.SPREADSHEET_ID_CLIENTES_NUEVOS }}
+          SPREADSHEET_ID_TABLERO_CP: ${{ secrets.SPREADSHEET_ID_TABLERO_CP }}
+          WORKSHEET_CLIENTES_NUEVOS_NAME: ${{ secrets.WORKSHEET_CLIENTES_NUEVOS_NAME }}
+          WORKSHEET_CLIENTES_POTENCIALES_NAME: ${{ secrets.WORKSHEET_CLIENTES_POTENCIALES_NAME }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python guardia.py
