@@ -129,6 +129,17 @@ def descargar_clientes_potenciales(periodos: list[str]) -> pd.DataFrame:
     return df
 
 
+def resolver_pestana(libro, referencia: str):
+    """La pestaña del libro por gid (si la referencia es un número) o por nombre. Nuvia renombra pestañas;
+    el gid no cambia. Los logs son públicos: si falta, el error sólo dice cuántas pestañas tiene el libro."""
+    referencia = str(referencia).strip()
+    try:
+        return libro.get_worksheet_by_id(int(referencia)) if referencia.isdigit() else libro.worksheet(referencia)
+    except gspread.exceptions.WorksheetNotFound:
+        raise gspread.exceptions.WorksheetNotFound(
+            f"{referencia} (el libro tiene {len(libro.worksheets())} pestañas; si la renombraron, usa su gid en el secret)") from None
+
+
 def conectar_sheet():
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"],
@@ -136,8 +147,8 @@ def conectar_sheet():
     )
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
-    nombre = os.environ.get("WORKSHEET_CLIENTES_POTENCIALES_NAME") or "Reporte Clientes Potenciales CP"
-    return sh.worksheet(nombre)
+    nombre = (os.environ.get("WORKSHEET_CLIENTES_POTENCIALES_NAME") or "").strip().strip("\"'").strip() or "Reporte Clientes Potenciales CP"
+    return resolver_pestana(sh, nombre)
 
 
 def mapear_columnas(worksheet) -> tuple[int, int]:
