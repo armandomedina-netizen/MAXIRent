@@ -218,3 +218,41 @@ def test_con_reintentos_no_oculta_otros_errores(monkeypatch):
         raise gspread.exceptions.APIError(_Resp(403))
     with pytest.raises(gspread.exceptions.APIError):
         g.con_reintentos(fn)
+
+
+# ---------------------------------------------------------------- pestañas renombradas
+def test_errores_acepta_el_nombre_conocido_de_una_pestana_renombrada(monkeypatch):
+    class Hoja:
+        def __init__(self, valores): self.valores = valores
+        def get_all_values(self): return self.valores
+
+    class Libro:
+        def worksheets(self):
+            out = []
+            for n in g.PESTANAS_SIN_ERRORES:
+                nombre = g.ALIAS_PESTANAS.get(n, (n,))[0]                      # todas con su nombre nuevo si lo tienen
+                h = Hoja([["#REF!"]] if n == "DETALLE" else [["ok"]]); h.title = nombre
+                out.append(h)
+            return out
+
+        def open_by_key(self, k): return self
+    import gspread
+    from google.oauth2 import service_account
+    monkeypatch.setattr(service_account.Credentials, "from_service_account_file", lambda *a, **k: None)
+    monkeypatch.setattr(gspread, "authorize", lambda c: Libro())
+    monkeypatch.setattr(g.time, "sleep", lambda s: None)
+    monkeypatch.setenv("GOOGLE_CREDS_PATH", "x"); monkeypatch.setenv("SPREADSHEET_ID_TABLERO_CP", "y")
+    assert g.contar_errores_tablero() == {"DETALLE": 1}                         # la encontró como GRAFICOS y vio su error
+
+
+def test_errores_avisa_si_una_pestana_ya_no_se_encuentra(monkeypatch):
+    class Libro:
+        def worksheets(self): return []
+        def open_by_key(self, k): return self
+    import gspread
+    from google.oauth2 import service_account
+    monkeypatch.setattr(service_account.Credentials, "from_service_account_file", lambda *a, **k: None)
+    monkeypatch.setattr(gspread, "authorize", lambda c: Libro())
+    monkeypatch.setenv("GOOGLE_CREDS_PATH", "x"); monkeypatch.setenv("SPREADSHEET_ID_TABLERO_CP", "y")
+    r = g.contar_errores_tablero()
+    assert len(r) == len(g.PESTANAS_SIN_ERRORES) and all("renombraron" in v for v in r.values())

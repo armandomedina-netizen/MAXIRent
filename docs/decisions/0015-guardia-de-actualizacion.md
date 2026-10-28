@@ -17,6 +17,7 @@ Un workflow (`guardia-actualizacion.yml`) corre a las 10:30, después de que ter
 - **Además:** comprueba que `FLOTA CP` traiga los datos de ayer, que el cierre diario no tenga columnas pendientes y que 14 pestañas clave del Tablero no tengan celdas con error. Las pestañas con errores conocidos que no son de nosotros (`NOMINA` y `DISPONIBLE+TALLER`) quedan fuera.
 - **Reglas de lectura:** en Entregas sólo cuentan las altas y las bajas del bloque del mes; los estatus cambiados no, porque cambian durante el día. Una corrida que no termina con el mensaje de éxito de su script es `NO VERIFICADO`.
 - **Código de salida:** 1 si al final algo sigue pendiente, sin datos o sin verificar. El Vigilante de Apps Script dispara la guardia a las 10:30, reintenta una vez si falla y avisa por correo, con el enlace de la corrida, si termina sin éxito. El resumen queda en el resumen del job de GitHub, sin datos de clientes.
+- **Pestañas renombradas (2026-10-27):** la lectura de errores acepta el nombre de siempre o el que Nuvia ya les puso (`ALIAS_PESTANAS`: `UNIDADES CP` es hoy `REPORTE FLOTA CP` y `DETALLE` es `GRAFICOS`); si una pestaña no se encuentra, lo informa en lugar de fallar. Estos nombres se actualizan cuando Nuvia termine sus ajustes.
 - **Reintentos de Sheets:** la lectura de errores del Tablero reintenta con espera creciente ante 429, porque la cuota de lecturas por minuto se comparte con las demás automatizaciones.
 
 ## Alcance

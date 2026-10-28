@@ -44,6 +44,12 @@ class LibroFalso:
             raise gspread.WorksheetNotFound(nombre)
         return self.hojas[nombre]
 
+    def get_worksheet_by_id(self, gid):
+        for h in self.hojas.values():
+            if h.id == gid:
+                return h
+        raise gspread.WorksheetNotFound(str(gid))
+
     def batch_update(self, cuerpo):
         self.peticiones.extend(cuerpo["requests"])
 
@@ -51,13 +57,42 @@ class LibroFalso:
 class FotosFalsas:
     """Misma interfaz que cierre_diario.Fotos, en memoria."""
 
-    def __init__(self, existentes=None):
+    def __init__(self, existentes=None, gids=None):
         self.datos = dict(existentes or {})          # (fecha, pestaña) -> {fila: valor}
+        self.gids = dict(gids or {})                 # nombre de siempre -> identificador
         self.guardadas = []
 
     def leer_todas(self, pestana):
         return {f: v for (f, p), v in self.datos.items() if p == pestana}
 
+    def gid_de(self, logico):
+        return self.gids.get(logico)
+
+    def guardar_gid(self, logico, gid):
+        self.gids[logico] = gid
+
     def guardar(self, fecha, pestana, valores, hoy):
         self.datos[(fecha, pestana)] = dict(valores)
         self.guardadas.append((fecha, pestana, dict(valores)))
+
+
+
+class HojaOculta:
+    """Pestaña oculta del cierre: filas de texto, con lo mínimo que usa cierre_diario.Fotos."""
+
+    def __init__(self, filas, id=900):
+        self.filas, self.id, self.title = [list(f) for f in filas], id, "_CIERRE_DIARIO"
+        self.limpiadas = []
+
+    def get_all_values(self):
+        return [list(f) for f in self.filas]
+
+    def update(self, range_name=None, values=None, value_input_option=None):
+        m = re.fullmatch(r"A(\d+):C(\d+)", range_name)
+        n = int(m[1])
+        while len(self.filas) < n:
+            self.filas.append(["", "", ""])
+        self.filas[n - 1] = list(values[0])
+
+    def batch_clear(self, rangos):
+        self.limpiadas.extend(rangos)
