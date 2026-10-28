@@ -1,0 +1,12 @@
+{
+  "tablero_id": 0,
+  "columna_estado": "ID_COLUMNA_DE_ESTADO",
+  "etiqueta_califica": "ETIQUETA_DE_LEAD_CALIFICADO",
+  "columna_tipo": "ID_COLUMNA_DE_TIPO_DE_LEAD",
+  "tipos_incluidos": ["TIPO_DE_LEAD"],
+  "hoja": "MKT",
+  "columna_periodo": "F",
+  "columna_recibidos": "G",
+  "columna_calificados": "H",
+  "primera_fila": 4
+}

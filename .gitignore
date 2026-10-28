@@ -69,3 +69,7 @@ automations/maxinet-frecuentes-activos-cp/logs/
 automations/maxinet-encuestas-cp/google-creds.json
 automations/maxinet-encuestas-cp/*.venv/
 automations/maxinet-encuestas-cp/logs/
+
+# MKT Monday automation (monday -> hoja MKT): local secrets and runtime artifacts
+automations/MKT Monday/google-creds.json
+automations/MKT Monday/logs/

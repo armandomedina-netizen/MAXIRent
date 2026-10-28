@@ -13,6 +13,7 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 | `maxinet-balance.yml` | Entregas, retornos y solicitudes del BALANCE | 7:50 y después cada hora, lunes a sábado desde las 8:00 | Sí (ventana de 7:50 y disparo cada hora) | ADR 0004 |
 | `gestoria-lp-cp-sync.yml` | Tickets de gestoría (todos los estatus) | 8:20 y después cada hora, lunes a sábado de 8:30 a 19:00 | Sí (ventana de 8:20 y disparo cada hora) | ADR 0005 |
 | `tablero-sac.yml` | Solicitudes de monday (SAC) a Sheets | Cada hora, lunes a viernes de 7:20 a 17:20 y sábado hasta las 14:20 | Sí | `automations/TableroSAC/README.md` |
+| `mkt-monday.yml` | Leads recibidos y calificados del mes en curso, de monday a la pestaña `MKT` de la hoja del tablero LP | 9:00, una vez al día (reloj de GitHub) | No | `automations/MKT Monday/README.md` y ADR 0020 |
 | `maxinet-clientes-nuevos-cp.yml` | Clientes nuevos del Tablero CP | 8:15 en el Vigilante; el reloj de GitHub lo repite a las 9:00 y a las 10:00, a veces con horas de retraso (Maxinet importa a las 9:00 y a veces a las 9:40) | Sí (ventana de 8:15) | ADR 0002 y 0003 |
 | `maxinet-clientes-potenciales-cp.yml` | Clientes potenciales del Tablero CP | 8:15 | Sí (ventana de 8:15) | ADR 0002 |
 | `maxinet-mtto-ordenes.yml` | Órdenes de mantenimiento LP: pestaña `ORDENES MTTO` de la Base LP copia con el mes corriente y las órdenes abiertas | 8:30 y después cada hora hasta las 17:30 (reloj de GitHub) | Pendiente (ventana de 8:30 por agregar) | ADR 0017 |
