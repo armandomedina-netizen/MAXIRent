@@ -1,13 +1,17 @@
 name: Tablero CP Cierre Diario
 
 # Congela la columna del día anterior y deja vivas las fórmulas del día en las columnas por día del
-# Tablero CP copia (UNIDADES CP y las dos de UTILIZACION). Es idempotente: el disparo exacto lo hace el
-# Vigilante (Apps Script) a las 8:00, antes del sync que cambia la fecha de FLOTA CP; por la mañana el
-# cierre espera a que cargue y cierra en cuanto cambia. Este cron cada hora es el seguro, aunque GitHub lo retrase.
+# Tablero CP copia (UNIDADES CP y las dos de UTILIZACION). Es idempotente y corre en cuanto termina con éxito el
+# workflow Maxinet Sync, que es el que cambia la fecha de FLOTA CP (por la mañana espera a que la hoja cargue y
+# cierra en cuanto cambia). El Vigilante (Apps Script) también lo dispara y este cron cada hora es el seguro,
+# aunque GitHub lo retrase.
 on:
   schedule:
     - cron: "27 * * * *"
   workflow_dispatch: {}
+  workflow_run:
+    workflows: ["Maxinet Sync"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -18,6 +22,7 @@ concurrency:
 
 jobs:
   cierre:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 45          # por la mañana espera hasta 25 min a que FLOTA CP cargue el día de ayer
     defaults:
