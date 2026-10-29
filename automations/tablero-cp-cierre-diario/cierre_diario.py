@@ -32,9 +32,14 @@ día (los datos aún no cargan), no guarda una foto con valores no numéricos o 
 una columna que no tenga foto (avisa y termina con código 1). Idempotente: se puede correr varias
 veces al día. No escribe datos personales en el log; sólo fechas, nombres de pestañas y conteos.
 
-Variables de entorno: GOOGLE_CREDS_PATH, SPREADSHEET_ID_TABLERO_CP; opcionales DRY_RUN (calcula y
-muestra el plan sin escribir), FECHA_DATOS=AAAA-MM-DD (simula otra fecha de datos; sólo con
-DRY_RUN, o con FORZAR=1 para un caso excepcional).
+Espera matutina: entre las 7:55 y las 9:30 (hora CDMX), si FLOTA CP todavía trae un día anterior a ayer, el cierre
+espera hasta ESPERA_MANANA_MIN minutos (lee cada SONDEO_ESPERA_SEG segundos) a que el sync de las 8:00 la cargue y
+cierra en cuanto cambia la fecha, de modo que el día anterior no queda en ceros mientras tanto. Si se agota el
+tiempo termina con código 1 (el Vigilante reintenta y avisa). Fuera de ese horario, o con DRY_RUN, no espera.
+
+Variables de entorno: GOOGLE_CREDS_PATH, SPREADSHEET_ID_TABLERO_CP; opcionales ESPERAR_DATOS_MIN (minutos de
+espera; 0 la desactiva), DRY_RUN (calcula y muestra el plan sin escribir), FECHA_DATOS=AAAA-MM-DD (simula otra
+fecha de datos; sólo con DRY_RUN, o con FORZAR=1 para un caso excepcional).
 """
 import os
 import sys
@@ -64,6 +69,9 @@ FILAS_MAX = 400            # las tablas diarias terminan mucho antes; se lee has
 VENTANA_DIAS = 8           # días hacia atrás que se revisan
 MIN_FILAS_FLOTA = 1000     # filas de FLOTA CP con la fecha del día para dar los datos por cargados
 DIAS_FOTOS = 14
+ESPERA_MANANA_MIN = 25     # por la mañana, minutos máximos que espera a que FLOTA CP cargue el día de ayer
+SONDEO_ESPERA_SEG = 30     # cada cuánto vuelve a leer la fecha de FLOTA CP mientras espera
+VENTANA_MANANA = (dt.time(7, 55), dt.time(9, 30))     # hora CDMX: el sync que cambia la fecha de FLOTA CP corre a las 8:00
 BASE_SERIE = dt.date(1899, 12, 30)
 
 
@@ -479,6 +487,42 @@ def crear_recuperador(libro, fotos):
     return recuperar_dias.Recuperador(lambda: cargar_flota_hoy(libro, fotos))
 
 
+def minutos_de_espera(ahora: dt.datetime, dry_run: bool, simulada: bool) -> int:
+    """Minutos máximos que el cierre espera a que FLOTA CP traiga el día de ayer. Por la mañana (VENTANA_MANANA)
+    el sync que carga esa hoja termina unos minutos después de las 8:00 y, hasta que el cierre corre, la columna
+    viva del día anterior cuenta contra una hoja que ya no trae su fecha y muestra ceros. ESPERAR_DATOS_MIN fija
+    el valor (0 desactiva la espera); con DRY_RUN o una fecha simulada no se espera."""
+    fijo = (os.environ.get("ESPERAR_DATOS_MIN") or "").strip()
+    if fijo.isdigit():
+        return int(fijo)
+    if fijo:
+        log.warning("ESPERAR_DATOS_MIN no es un número de minutos; se ignora")
+    if dry_run or simulada:
+        return 0
+    return ESPERA_MANANA_MIN if VENTANA_MANANA[0] <= ahora.time() <= VENTANA_MANANA[1] else 0
+
+
+def esperar_datos_nuevos(leer, ayer: dt.date, max_min: int, reloj=time.monotonic, dormir=time.sleep) -> tuple:
+    """(fecha, filas) de FLOTA CP. Con max_min > 0 sigue leyendo cada SONDEO_ESPERA_SEG hasta que la hoja traiga datos
+    completos con la fecha de ayer o más reciente, o hasta agotar el tiempo (entonces devuelve lo último que leyó)."""
+    limite = reloj() + max_min * 60
+    avisado = False
+    while True:
+        fecha, filas = leer()
+        completos = fecha is not None and filas >= MIN_FILAS_FLOTA
+        if max_min <= 0 or (completos and fecha >= ayer):
+            if avisado:
+                log.info("FLOTA CP ya trae los datos del %s (%d filas)", fecha, filas)
+            return fecha, filas
+        if reloj() >= limite:
+            return fecha, filas
+        if not avisado:
+            log.info("FLOTA CP trae %s; se espera hasta %d min a que cargue el %s",
+                     fecha if completos else "datos incompletos", max_min, ayer)
+            avisado = True
+        dormir(SONDEO_ESPERA_SEG)
+
+
 def main() -> int:
     dry_run = bool(os.environ.get("DRY_RUN"))
     libro = conectar_libro()
@@ -491,8 +535,16 @@ def main() -> int:
         fecha, filas = dt.date.fromisoformat(simulada), None
         log.warning("Fecha de datos simulada: %s", fecha)
     else:
-        valores = reintentar(resolver_pestana(libro, fotos, HOJA_FLOTA).get, "E2:E6000", value_render_option="UNFORMATTED_VALUE")
-        fecha, filas = fecha_de_datos(valores)
+        ws_flota = resolver_pestana(libro, fotos, HOJA_FLOTA)
+        ahora = dt.datetime.now(dt.timezone(dt.timedelta(hours=-6)))
+        espera = minutos_de_espera(ahora, dry_run, False)
+        fecha, filas = esperar_datos_nuevos(
+            lambda: fecha_de_datos(reintentar(ws_flota.get, "E2:E6000", value_render_option="UNFORMATTED_VALUE")),
+            ahora.date() - dt.timedelta(days=1), espera)
+        if espera and fecha is not None and filas >= MIN_FILAS_FLOTA and fecha < ahora.date() - dt.timedelta(days=1):
+            log.error("FLOTA CP sigue con los datos del %s después de esperar %d min; el sync que la carga no terminó. No se hace nada",
+                      fecha, espera)
+            return 1
         if fecha is None or filas < MIN_FILAS_FLOTA:
             log.error("FLOTA CP no trae datos completos de un día (%s filas con la fecha más común, mínimo %d); no se hace nada",
                       filas, MIN_FILAS_FLOTA)
