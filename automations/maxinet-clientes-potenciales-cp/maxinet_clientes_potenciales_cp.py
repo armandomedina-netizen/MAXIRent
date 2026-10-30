@@ -47,6 +47,7 @@ Variables de entorno (ver .env.example):
 
 import os
 import sys
+import time
 import json
 import logging
 from datetime import datetime
@@ -55,6 +56,7 @@ from zoneinfo import ZoneInfo
 import requests
 import pandas as pd
 import gspread
+from gspread.http_client import HTTPClient
 from google.oauth2 import service_account
 from dotenv import load_dotenv
 
@@ -62,6 +64,35 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("maxinet_clientes_potenciales_cp")
+
+
+def _instalar_reintentos_gspread(cliente=HTTPClient) -> None:
+    """Google Sheets limita las lecturas por minuto por usuario y esa cuota la comparten TODAS las automatizaciones que
+    usan la misma cuenta de servicio (entre las 8:05 y las 8:30 corren varias a la vez). Un 429 se rechaza antes de
+    procesarse, así que reintentar es seguro; los errores 5xx sólo se reintentan en lecturas (GET), para no duplicar una
+    escritura. Es la misma regla del sync de LP."""
+    if getattr(cliente.request, "_reintenta_429", False):
+        return
+    original = cliente.request
+
+    def con_reintentos(self, method, *args, **kwargs):
+        for intento in range(1, 7):
+            try:
+                return original(self, method, *args, **kwargs)
+            except gspread.exceptions.APIError as e:
+                codigo = getattr(e.response, "status_code", None)
+                reintentable = codigo == 429 or (codigo in (500, 502, 503) and str(method).lower() == "get")
+                if not reintentable or intento == 6:
+                    raise
+                espera = 20 * intento
+                log.warning("Google Sheets respondió %s; reintento %d de 5 en %d s", codigo, intento, espera)
+                time.sleep(espera)
+
+    con_reintentos._reintenta_429 = True
+    cliente.request = con_reintentos
+
+
+_instalar_reintentos_gspread()
 
 # Orden de las columnas que devuelve Maxinet (= encabezados de la tabla)
 COLUMNAS = [
