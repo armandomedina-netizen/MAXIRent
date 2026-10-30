@@ -15,7 +15,7 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 | `tablero-sac.yml` | Solicitudes de monday (SAC) a Sheets | Cada hora, lunes a viernes de 7:20 a 17:20 y sábado hasta las 14:20 | Sí | `automations/TableroSAC/README.md` |
 | `maxinet-clientes-nuevos-cp.yml` | Clientes nuevos del Tablero CP | 8:15 en el Vigilante; el reloj de GitHub lo repite a las 9:00 y a las 10:00, a veces con horas de retraso (Maxinet importa a las 9:00 y a veces a las 9:40) | Sí (ventana de 8:15) | ADR 0002 y 0003 |
 | `maxinet-clientes-potenciales-cp.yml` | Clientes potenciales del Tablero CP | 8:15 | Sí (ventana de 8:15) | ADR 0002 |
-| `maxinet-expedientes-lp.yml` | Expedientes de prospección LP (validaciones por área): pestaña `EXPEDIENTES LP` de la Base LP copia, copia fiel de la tabla de Maxinet | 8:40 y después cada hora hasta las 17:40 (reloj de GitHub) | No | ADR 0021 |
+| `maxinet-expedientes-lp.yml` | Expedientes de prospección LP (validaciones por área): pestaña `EXPEDIENTES LP` de la Base LP copia, copia fiel de la tabla de Maxinet | 8:30, 9:30 y 10:30 (reloj de GitHub; nada después de las 10:30) | No | ADR 0021 |
 | `maxinet-mtto-ordenes.yml` | Órdenes de mantenimiento LP: pestaña `ORDENES MTTO` de la Base LP copia con el mes corriente y las órdenes abiertas | 8:30 y después cada hora hasta las 17:30 (reloj de GitHub) | Pendiente (ventana de 8:30 por agregar) | ADR 0017 |
 | `maxinet-entregas-cp.yml` | Entregas del Tablero CP (refresca el mes en curso) | 8:05 | Sí (ventana de 8:05) | ADR 0007 |
 | `maxinet-encuestas-cp.yml` | Encuestas de satisfacción del Tablero CP | 8:05 | Sí (ventana de 8:05) | ADR 0009 |

@@ -20,7 +20,7 @@ Los expedientes "Cerrados" (`Estatus=0`) sólo salen con un rango de fechas y no
 
 **Datos personales.** La tabla trae nombres, correos y teléfonos de prospectos y de contactos de compras; se copian porque se pidieron como columnas de la hoja. Los logs sólo llevan conteos y las pruebas usan datos ficticios.
 
-**Horario.** Cada hora de 8:40 a 17:40 (reloj de GitHub), porque cada área valida su parte durante el día. La consulta tarda unos 3 segundos y la corrida completa unos 20.
+**Horario.** A las 8:30, 9:30 y 10:30 (reloj de GitHub): de las 8:30 a las 10:30 como máximo, por decisión de quien pidió la hoja. La consulta tarda unos 3 segundos y la corrida completa unos 20. El reloj de GitHub a veces llega con horas de retraso; si se necesita que las corridas caigan en esa franja con puntualidad, hace falta una ventana en el Vigilante (cambio aparte).
 
 ## Consecuencias
 

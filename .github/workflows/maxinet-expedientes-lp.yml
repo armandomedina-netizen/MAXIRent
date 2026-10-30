@@ -2,9 +2,9 @@ name: Maxinet Expedientes LP Sync
 
 on:
   schedule:
-    # De 8:40 AM a 5:40 PM hora Ciudad de México (UTC-6, sin horario de verano desde 2022), cada hora al :40.
-    # Los expedientes cambian durante el día (cada área valida el suyo) y la tabla es chica: unos 20 segundos.
-    - cron: "40 14-23 * * *"
+    # 8:30, 9:30 y 10:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): de las 8:30 a las
+    # 10:30 como máximo. La tabla es chica: la corrida tarda unos 20 segundos.
+    - cron: "30 14-16 * * *"
   workflow_dispatch: {}
 
 permissions:
