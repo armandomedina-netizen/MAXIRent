@@ -168,10 +168,11 @@ def login_maxinet() -> requests.Session:
     return session
 
 
-class FlotaNoDisponible(RuntimeError):
-    """Maxinet no tiene (todavía) la foto de flota de la fecha pedida: el reporte responde sin filas.
-    El 30-oct-2026 el corte nocturno de Maxinet no generó la del 29 y el sync fallaba con un mensaje
-    engañoso ("trae [] columnas")."""
+class FotoFlotaVacia(RuntimeError):
+    """Maxinet todavía no publicó la foto de flota del día: su corte nocturno no la generó (no es un cambio de estructura)."""
+
+
+SONDEO_FOTO_SEG = 120      # cada cuánto se vuelve a pedir la foto de flota mientras Maxinet no la publica
 
 
 def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
@@ -188,11 +189,14 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     # Confirmado contra el servidor real: la clave es "data", y cada fila
     # trae como primer elemento el link HTML del botón de comentarios
     # (checkbox/acciones de la tabla web) -> se descarta antes de armar el DF.
-    if not payload["data"]:
-        raise FlotaNoDisponible(
-            f"Maxinet no tiene la foto de flota del {fecha_ayer} (el reporte responde sin filas): el corte nocturno "
-            "todavía no la genera o falló. No se escribió nada; el sync se puede relanzar cuando exista.")
     filas = [fila[1:] for fila in payload["data"]]
+
+    # Sin filas no es un cambio de estructura: Maxinet no ha generado la foto de ese día
+    # (visto el 2026-10-30, cuando su corte nocturno no corrió). No se escribe nada.
+    if not filas:
+        raise FotoFlotaVacia(
+            f"Maxinet todavía no publica la foto de flota del {fecha_ayer}: el reporte trae 0 filas. "
+            "Su corte nocturno no generó ese día; no es un cambio de estructura. No se escribió nada.")
 
     # Si Maxinet vuelve a cambiar el ancho del reporte, fallar con un mensaje
     # claro (y sin escribir nada) en vez de pegar columnas corridas.
@@ -206,6 +210,22 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     df = pd.DataFrame(filas, columns=COLUMNAS)
     log.info("Datos descargados de Maxinet: %d filas (fecha %s)", len(df), fecha_ayer)
     return df
+
+
+def descargar_datos_flota_esperando(session: requests.Session, espera_min: int, reloj=time.monotonic, dormir=time.sleep):
+    """(DataFrame, sesión) con la foto de flota de ayer. Si Maxinet todavía no la publica (0 filas) y espera_min > 0,
+    la vuelve a pedir cada SONDEO_FOTO_SEG segundos, con una sesión nueva, hasta que aparezca o se agote el tiempo
+    (entonces falla con FotoFlotaVacia). Es lo primero que hace el sync: mientras espera no se ha escrito nada."""
+    limite = reloj() + espera_min * 60
+    while True:
+        try:
+            return descargar_datos_flota(session), session
+        except FotoFlotaVacia as e:
+            if reloj() >= limite:
+                raise
+            log.warning("%s Se vuelve a consultar en %d s (espera máxima: %d min).", e, SONDEO_FOTO_SEG, espera_min)
+            dormir(SONDEO_FOTO_SEG)
+            session = login_maxinet()
 
 
 def _leer_tarifa_detalle(rango: str = "A:U") -> list:
@@ -2337,24 +2357,6 @@ VENTANA_REVISION_DIAS = 10
 TOLERANCIA_REVISION = 0.00005  # el Sheet guarda la fracción con 4 decimales
 
 
-INTERVALO_ESPERA_FLOTA_SEG = 120
-
-
-def descargar_datos_flota_con_espera(session: requests.Session) -> pd.DataFrame:
-    """Como descargar_datos_flota, pero si Maxinet aún no tiene la foto de ayer vuelve a preguntar cada 2 minutos
-    hasta ESPERA_FLOTA_MIN minutos (por defecto 0: no espera). El corte nocturno de Maxinet suele terminar entre
-    las 7:00 y las 7:30, y a veces tarda más; esperar evita que el Vigilante agote sus tres intentos en 10 minutos."""
-    limite = time.monotonic() + float(os.environ.get("ESPERA_FLOTA_MIN") or 0) * 60
-    while True:
-        try:
-            return descargar_datos_flota(session)
-        except FlotaNoDisponible as e:
-            if time.monotonic() + INTERVALO_ESPERA_FLOTA_SEG > limite:
-                raise
-            log.warning("%s Se vuelve a preguntar en %d s.", e, INTERVALO_ESPERA_FLOTA_SEG)
-            time.sleep(INTERVALO_ESPERA_FLOTA_SEG)
-
-
 def _post_con_reintentos(session: requests.Session, url: str, data: dict, intentos: int = 3):
     """Maxinet a veces corta la conexión (ConnectionResetError, visto el
     2026-10-02); un reintento corto suele bastar."""
@@ -2618,7 +2620,8 @@ def _paso_auxiliar(nombre: str, paso) -> None:
 def main():
     try:
         session = login_maxinet()
-        df_nuevo = descargar_datos_flota_con_espera(session)
+        espera = int(os.environ.get("ESPERAR_FOTO_MIN") or 0)
+        df_nuevo, session = descargar_datos_flota_esperando(session, espera)
         df_nuevo = leer_datos(df_nuevo)
 
         # IMPORTANTE: avanzar_columna_formulas() va ANTES de actualizar_sheet().

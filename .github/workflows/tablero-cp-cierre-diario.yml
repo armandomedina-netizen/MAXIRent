@@ -50,4 +50,6 @@ jobs:
           MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
           MAXINET_USER: ${{ secrets.MAXINET_USER }}
           MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
+          # tras un Maxinet Sync exitoso espera hasta 10 min a que FLOTA CP refleje la carga, a cualquier hora
+          ESPERAR_DATOS_MIN: ${{ github.event_name == 'workflow_run' && '10' || '' }}
         run: python cierre_diario.py
