@@ -656,6 +656,28 @@ def _filas_a_congelar(worksheet, col_origen: str, fila_inicio: int, fila_fin: in
     return filas_congelar
 
 
+def _columna_origen_viva(worksheet, idx_destino: int, fila_prueba: int, fecha, max_hueco: int = 7) -> int:
+    """Índice de la última columna ANTERIOR a la del día nuevo que sigue con fórmula viva en `fila_prueba`.
+    Normalmente es la del día anterior. Si Maxinet no generó la foto de un día (30-oct-2026: no existió la del 29),
+    la columna viva se quedó en el último día procesado: se cierra esa con sus propios datos (la base aún los
+    tiene, porque el avance va antes de escribirla) y las columnas de los días sin foto quedan vacías, en vez de
+    copiar una columna vacía al día nuevo y dejar la viva sin cerrar para siempre. Si no hay ninguna viva en
+    `max_hueco` columnas, falla sin escribir: el avance se hace a mano."""
+    fila = worksheet.row_values(fila_prueba, value_render_option="FORMULA")
+    for idx in range(idx_destino - 1, max(idx_destino - 1 - max_hueco, 0), -1):
+        valor = fila[idx] if idx < len(fila) else ""
+        if isinstance(valor, str) and valor.startswith("="):
+            saltados = idx_destino - idx - 1
+            if saltados:
+                log.warning(
+                    "%s: no hay columna viva el día anterior a %s; la última es %s, así que %d día(s) sin foto de flota "
+                    "quedan vacíos (sin dato).", worksheet.title, fecha, _indice_a_col_letra(idx), saltados)
+            return idx
+    raise RuntimeError(
+        f"{worksheet.title}: ninguna de las {max_hueco} columnas anteriores a la del {fecha} tiene fórmula viva en la "
+        f"fila {fila_prueba}; no se avanzó nada (hay que avanzar la hoja a mano antes de escribir la base).")
+
+
 def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=None):
     """
     Cada día: encuentra la columna correspondiente a 'ayer' (columna destino),
@@ -675,8 +697,6 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     """
     fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
-    idx_origen = idx_destino - 1
-    col_origen = _indice_a_col_letra(idx_origen)
     col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: si la columna destino ya tiene contenido, probablemente ya
@@ -692,6 +712,8 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
         )
         return
 
+    idx_origen = _columna_origen_viva(worksheet, idx_destino, FILA_FORMULA_INICIO, fecha_ayer)
+    col_origen = _indice_a_col_letra(idx_origen)
     filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_FORMULA_INICIO, FILA_FORMULA_FIN)
 
     sheet_id = worksheet.id
@@ -764,8 +786,6 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
     """
     fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
-    idx_origen = idx_destino - 1
-    col_origen = _indice_a_col_letra(idx_origen)
     col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: misma razón que en avanzar_columna_formulas -- si la
@@ -779,6 +799,8 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
         )
         return
 
+    idx_origen = _columna_origen_viva(worksheet, idx_destino, FILA_GRUPO_METRICAS_INICIO, fecha_ayer)
+    col_origen = _indice_a_col_letra(idx_origen)
     filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_RATIOS_FIN)
 
     sheet_id = worksheet.id

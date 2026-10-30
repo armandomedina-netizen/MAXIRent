@@ -244,3 +244,11 @@ La ventana de las 9:50 del apartado anterior no llegó al Apps Script que está 
 - El sync distingue ahora la foto vacía (`FotoFlotaVacia`, con su propio mensaje) del cambio de estructura y, en el modo completo, espera hasta `ESPERAR_FOTO_MIN` minutos (120 en el workflow) a que Maxinet la publique, volviendo a iniciar sesión cada 2 minutos. Es lo primero que hace, antes de tocar ninguna hoja. El workflow sube su tiempo máximo a 150 minutos; el Vigilante no lo vuelve a lanzar mientras la corrida siga en curso.
 - El cierre del Tablero CP, cuando lo dispara un `Maxinet Sync` exitoso, espera hasta 10 minutos a que `FLOTA CP` refleje la carga a cualquier hora (`ESPERAR_DATOS_MIN`), de modo que una foto tardía también se cierra sola.
 
+### Un día sin foto de flota no debe romper la cadena de columnas (2026-10-30)
+
+Al investigar la falla del 30-oct (Maxinet sin la foto del 29; la espera y el mensaje claro ya los resolvió el cambio anterior) apareció un riesgo que no cubría: el avance diario de `REPORTE DE FLOTA` y `FLOTA POR GRUPO` copiaba siempre desde la columna del día anterior. Si ese día nunca se procesa, su columna está vacía: el día siguiente se copiaría una columna vacía al día nuevo y la última columna viva quedaría sin cerrar para siempre, con fórmulas que dan cero en cuanto cambia la fecha de `FLOTA LP`.
+
+- El origen ahora es la **última columna con fórmula viva** de los 7 días anteriores. Con un día sin foto, se cierra esa columna con sus propios datos (la base aún los tiene, porque el avance va antes de escribirla), las columnas de los días sin foto quedan vacías (sin dato, no ceros) y el log avisa. Si no hay ninguna viva en esa ventana, el avance falla sin escribir nada.
+- El día normal y la protección de "el destino ya tiene contenido" (relanzar el sync no repite el avance) no cambian; la comprobación de la columna de origen va después de esa protección.
+- Comprobado en seco sobre las hojas reales (sin escribir): pidiendo el 30-oct con el 29 sin foto, el avance toma `BAS` y `YQ` (28-oct) y escribe en `BAU` y `YS`, sin tocar `BAT` ni `YR` (29-oct); pidiendo el 29, hace el avance normal de `BAS` a `BAT`.
+- Pendiente fuera de este cambio: el cierre diario del Tablero CP trata por su cuenta los días faltantes y reconstruye desde este mismo reporte.
