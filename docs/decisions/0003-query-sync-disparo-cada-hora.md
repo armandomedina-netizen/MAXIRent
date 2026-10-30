@@ -238,3 +238,9 @@ La ventana de las 9:50 del apartado anterior no llegó al Apps Script que está 
 - El workflow agrega un cron a las 9:00 y conserva el de las 10:00 como segundo respaldo, que cubre las importaciones de las 9:40. La automatización sólo agrega filas nuevas y valida duplicados, por lo que repetir la corrida es inocuo.
 - Mientras el cron de GitHub siga llegando con retraso, la forma de garantizar la hora es la ventana de las 9:50 en el Vigilante descrita arriba.
 
+## Revisión 2026-10-30: foto de flota sin publicar
+
+- El corte nocturno de Maxinet no generó la foto de flota del 29-oct: el reporte devolvió 0 filas a las 8:04, 8:09 y 8:14 (y a las 9:30 seguía vacío) mientras las demás fuentes (entregas, reservas, clientes) estaban al día. El sync decía "Maxinet cambió la estructura", lo que era falso: el ancho del reporte y los 41 encabezados de `reporte-flota-general.php` no cambiaron.
+- El sync distingue ahora la foto vacía (`FotoFlotaVacia`, con su propio mensaje) del cambio de estructura y, en el modo completo, espera hasta `ESPERAR_FOTO_MIN` minutos (120 en el workflow) a que Maxinet la publique, volviendo a iniciar sesión cada 2 minutos. Es lo primero que hace, antes de tocar ninguna hoja. El workflow sube su tiempo máximo a 150 minutos; el Vigilante no lo vuelve a lanzar mientras la corrida siga en curso.
+- El cierre del Tablero CP, cuando lo dispara un `Maxinet Sync` exitoso, espera hasta 10 minutos a que `FLOTA CP` refleje la carga a cualquier hora (`ESPERAR_DATOS_MIN`), de modo que una foto tardía también se cierra sola.
+

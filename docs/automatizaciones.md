@@ -50,6 +50,8 @@ Todos viven en Settings → Secrets and variables → Actions. Nada de esto se i
 
 **A qué hora hay datos nuevos.** Maxinet cierra la foto de flota del día anterior de madrugada (entre las 7:00 y las 7:30 según sistemas; el último mensaje de GPS de cada foto cae a las 06:27 del día siguiente). Por eso el sync completo corre a las 8:00: antes del corte la foto del día anterior todavía no existe y el reporte de "hoy" viene vacío.
 
+**Maxinet no publicó la foto de flota.** El 30-oct-2026 el corte nocturno de Maxinet no generó la foto del 29-oct y el reporte (`Desde` = `Hasta` = ese día) devolvió 0 filas; el sync falló tres veces y el Tablero LP y el Tablero CP se quedaron un día atrás. No es un cambio de estructura: el sync lo dice (`Maxinet todavía no publica la foto de flota del ...`) y, desde ese día, espera hasta 120 minutos (`ESPERAR_FOTO_MIN`, con una sesión nueva cada 2 minutos) a que aparezca, sin escribir nada mientras tanto. Cuando Maxinet la publica, el sync sigue solo y el cierre del Tablero CP se dispara al terminar. Si no aparece, hay que pedir a Sistemas que regeneren la foto de ese día y, ya publicada, lanzar a mano `maxinet-sync.yml` (modo completo) el mismo día calendario: el sync sólo pide la foto de ayer, así que al día siguiente el día perdido habría que recuperarlo como se describe en "Un día se quedó sin procesar".
+
 **Sospechas de que algo no corre.** `gh run list --workflow <archivo>.yml --limit 10` muestra las últimas corridas, su evento (`schedule` o `workflow_dispatch`) y su resultado. Una corrida completa de `maxinet-sync.yml` que falla antes de escribir deja el tablero un día atrás.
 
 ## Trabajar en el repositorio

@@ -168,6 +168,13 @@ def login_maxinet() -> requests.Session:
     return session
 
 
+class FotoFlotaVacia(RuntimeError):
+    """Maxinet todavía no publicó la foto de flota del día: su corte nocturno no la generó (no es un cambio de estructura)."""
+
+
+SONDEO_FOTO_SEG = 120      # cada cuánto se vuelve a pedir la foto de flota mientras Maxinet no la publica
+
+
 def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     """Pide al endpoint de datos el reporte del día anterior y arma un DataFrame."""
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
@@ -184,6 +191,13 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     # (checkbox/acciones de la tabla web) -> se descarta antes de armar el DF.
     filas = [fila[1:] for fila in payload["data"]]
 
+    # Sin filas no es un cambio de estructura: Maxinet no ha generado la foto de ese día
+    # (visto el 2026-10-30, cuando su corte nocturno no corrió). No se escribe nada.
+    if not filas:
+        raise FotoFlotaVacia(
+            f"Maxinet todavía no publica la foto de flota del {fecha_ayer}: el reporte trae 0 filas. "
+            "Su corte nocturno no generó ese día; no es un cambio de estructura. No se escribió nada.")
+
     # Si Maxinet vuelve a cambiar el ancho del reporte, fallar con un mensaje
     # claro (y sin escribir nada) en vez de pegar columnas corridas.
     anchos = {len(fila) for fila in filas}
@@ -196,6 +210,22 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     df = pd.DataFrame(filas, columns=COLUMNAS)
     log.info("Datos descargados de Maxinet: %d filas (fecha %s)", len(df), fecha_ayer)
     return df
+
+
+def descargar_datos_flota_esperando(session: requests.Session, espera_min: int, reloj=time.monotonic, dormir=time.sleep):
+    """(DataFrame, sesión) con la foto de flota de ayer. Si Maxinet todavía no la publica (0 filas) y espera_min > 0,
+    la vuelve a pedir cada SONDEO_FOTO_SEG segundos, con una sesión nueva, hasta que aparezca o se agote el tiempo
+    (entonces falla con FotoFlotaVacia). Es lo primero que hace el sync: mientras espera no se ha escrito nada."""
+    limite = reloj() + espera_min * 60
+    while True:
+        try:
+            return descargar_datos_flota(session), session
+        except FotoFlotaVacia as e:
+            if reloj() >= limite:
+                raise
+            log.warning("%s Se vuelve a consultar en %d s (espera máxima: %d min).", e, SONDEO_FOTO_SEG, espera_min)
+            dormir(SONDEO_FOTO_SEG)
+            session = login_maxinet()
 
 
 def _leer_tarifa_detalle(rango: str = "A:U") -> list:
@@ -2568,7 +2598,8 @@ def _paso_auxiliar(nombre: str, paso) -> None:
 def main():
     try:
         session = login_maxinet()
-        df_nuevo = descargar_datos_flota(session)
+        espera = int(os.environ.get("ESPERAR_FOTO_MIN") or 0)
+        df_nuevo, session = descargar_datos_flota_esperando(session, espera)
         df_nuevo = leer_datos(df_nuevo)
 
         # IMPORTANTE: avanzar_columna_formulas() va ANTES de actualizar_sheet().
