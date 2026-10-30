@@ -22,7 +22,7 @@ Horarios en hora de Ciudad de México (UTC-6, sin horario de verano). "Disparo e
 | `maxinet-bitacora-cp.yml` | Bitácora de entregas y recolecciones CP: pestaña `BITACORA CP` del Tablero CP copia con el mes en curso (todas las sucursales; refresca el mes y el mes anterior los primeros 3 días) | 8:30 (reloj de GitHub) | Pendiente (ventana de 8:30 por agregar) | ADR 0020 |
 | `maxinet-frecuentes-activos-cp.yml` | Clientes frecuentes activos (semana más reciente) | 8:10 | Sí (ventana de 8:10) | ADR 0008 |
 | `tablero-cp-cierre-diario.yml` | Cierre diario de las columnas por día del Tablero CP copia: congela el día anterior, deja vivas las fórmulas del día nuevo y reconstruye desde Maxinet los días que falten | En cuanto termina con éxito `Maxinet Sync` (8:00 y 8:10); por la mañana espera hasta 25 min a que FLOTA CP cargue y cierra en cuanto cambia la fecha. Cada hora al :27 (seguro) | Sí (opcional: ventana de 8:00 y cada hora al :27) | ADR 0014 |
-| `guardia-actualizacion.yml` | Segundo corte después del matutino: comprueba que la información de CP realmente se actualizó y relanza lo que falte | 10:30 (cron de respaldo a las 10:45) | Sí (ventana de 10:30) | ADR 0015 |
+| `guardia-actualizacion.yml` | Segundo corte después del matutino: comprueba que la información de CP (incluidas MKT Leads y Bitácora CP) realmente se actualizó y relanza lo que falte | 10:30 (cron de respaldo a las 10:45) | Sí (ventana de 10:30) | ADR 0015 |
 | `pruebas.yml` | Pruebas automáticas en cada PR y en cada integración a `main` | Al abrir un PR | No aplica | ADR 0011 |
 
 Los horarios que aparecen en los ADR 0007, 0008 y 0009 (9:30 y 9:45) son los de cuando se escribieron; los vigentes son los de esta tabla.

@@ -123,8 +123,9 @@ def test_una_salida_que_no_se_entiende_no_se_da_por_buena():
 
 def test_cada_automatizacion_tiene_su_lector_y_su_workflow():
     nombres = [r.nombre for r in g.REVISIONES]
-    assert nombres == ["Clientes Nuevos", "Clientes Potenciales", "Encuestas", "Entregas", "Frecuentes Activos"]
+    assert nombres == ["Clientes Nuevos", "Clientes Potenciales", "Encuestas", "Entregas", "Frecuentes Activos", "MKT Leads", "Bitácora CP"]
     assert all(r.workflow.endswith(".yml") and (g.RAIZ / r.directorio / r.script).exists() for r in g.REVISIONES + (g.CIERRE,))
+    assert all((g.RAIZ.parent / ".github" / "workflows" / r.workflow).exists() for r in g.REVISIONES + (g.CIERRE,))
 
 
 # ---------------------------------------------------------------- el Tablero
@@ -157,8 +158,63 @@ def test_tablero_con_salida_ilegible():
 # ---------------------------------------------------------------- errores en pestañas
 def test_errores_en_el_tablero():
     assert g.revisar_errores(lambda: {}).estado == "ok"
-    r = g.revisar_errores(lambda: {"MKT": 2, "GRAFICAS": 1})
-    assert r.estado == "pendiente" and "MKT: 2" in r.detalle and "GRAFICAS: 1" in r.detalle
+    r = g.revisar_errores(lambda: {"BITACORA CP": 2, "GRAFICAS": 1})
+    assert r.estado == "pendiente" and "BITACORA CP: 2" in r.detalle and "GRAFICAS: 1" in r.detalle
+
+
+def test_una_pestana_opcional_que_nuvia_elimino_se_anota_y_no_falla():
+    r = g.revisar_errores(lambda: {"Ticket Sac/Maxiemergencia": g.NO_ENCONTRADA, "DETALLE": g.NO_ENCONTRADA})
+    assert r.estado == "ok" and "sin encontrar (opcionales): Ticket Sac/Maxiemergencia, DETALLE" in r.detalle
+    assert str(len(g.PESTANAS_SIN_ERRORES) - 2) in r.detalle
+
+
+def test_una_pestana_critica_que_falta_si_hace_fallar():
+    r = g.revisar_errores(lambda: {"UTILIZACION TODOS LOS GRUPO": g.NO_ENCONTRADA, "GRAFICAS": g.NO_ENCONTRADA})
+    assert r.estado == "pendiente" and "UTILIZACION TODOS LOS GRUPO: no se encontró" in r.detalle
+    assert "sin encontrar (opcionales): GRAFICAS" in r.detalle and "GRAFICAS: no se encontró" not in r.detalle
+
+
+def test_una_pestana_opcional_con_celdas_con_error_si_hace_fallar():
+    r = g.revisar_errores(lambda: {"Ticket Sac/Maxiemergencia": 1})
+    assert r.estado == "pendiente" and "Ticket Sac/Maxiemergencia: 1" in r.detalle
+
+
+def test_las_criticas_incluyen_lo_que_usan_las_automatizaciones_y_no_hay_repetidas():
+    assert {"FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "BITACORA CP"} <= set(g.PESTANAS_CRITICAS)
+    assert len(set(g.PESTANAS_SIN_ERRORES)) == len(g.PESTANAS_SIN_ERRORES)
+    assert not set(g.PESTANAS_CRITICAS) & set(g.PESTANAS_OPCIONALES)
+
+
+# ---------------------------------------------------------------- MKT Leads y Bitácora CP (bloque del mes)
+BLOQUE_AL_DIA = """2026-10-30 08:20:05,123 INFO Bloque desde 2026-10-01: filas 1994 -> 1994 | nuevas 0
+2026-10-30 08:20:05,124 INFO DRY_RUN: se reescribirían A2:AN1995 (1994 filas) (no se escribió nada).
+2026-10-30 08:20:05,125 INFO Automatización completada con éxito (bloque de 1994 leads desde 2026-10-01)"""
+BLOQUE_FALTAN_38 = BLOQUE_AL_DIA.replace("filas 1994 -> 1994 | nuevas 0", "filas 962 -> 1000 | nuevas 38")
+DOS_BLOQUES = ("2026-11-02 INFO Bloque desde 2026-10-01: filas 900 -> 905 | nuevas 5\n"
+               "2026-11-02 INFO Bloque desde 2026-11-01: filas 10 -> 13 | nuevas 3\n"
+               "2026-11-02 INFO Automatización completada con éxito (bloque de 918 servicios desde 2026-10-01)")
+
+
+def test_el_bloque_al_dia_no_tiene_pendientes():
+    assert g.pendientes_bloque(BLOQUE_AL_DIA) == 0
+
+
+def test_el_bloque_cuenta_las_filas_nuevas_y_suma_los_dos_meses():
+    assert g.pendientes_bloque(BLOQUE_FALTAN_38) == 38
+    assert g.pendientes_bloque(DOS_BLOQUES) == 8
+
+
+def test_el_bloque_sin_exito_o_sin_su_linea_no_se_da_por_bueno():
+    assert g.pendientes_bloque("Traceback (most recent call last)") is None
+    assert g.pendientes_bloque("2026-10-30 INFO Automatización completada con éxito (0 filas nuevas)") is None
+    assert g.pendientes_bloque(BLOQUE_FALTAN_38.replace("completada con éxito", "terminada")) is None
+
+
+def test_mkt_y_bitacora_se_relanzan_si_faltan_filas_y_se_recuperan():
+    mkt = next(r for r in g.REVISIONES if r.nombre == "MKT Leads")
+    rel = Relanzador("success")
+    out = g.revisar(mkt, Ejecutor(BLOQUE_FALTAN_38, BLOQUE_AL_DIA), rel)
+    assert out.estado == "recuperado" and rel.llamadas == ["maxinet-mkt-leads-cp.yml"] and "faltaban 38" in out.detalle
 
 
 def test_si_no_se_puede_leer_el_tablero_no_se_da_por_bueno():
