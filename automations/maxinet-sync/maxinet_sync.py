@@ -168,6 +168,12 @@ def login_maxinet() -> requests.Session:
     return session
 
 
+class FlotaNoDisponible(RuntimeError):
+    """Maxinet no tiene (todavía) la foto de flota de la fecha pedida: el reporte responde sin filas.
+    El 30-oct-2026 el corte nocturno de Maxinet no generó la del 29 y el sync fallaba con un mensaje
+    engañoso ("trae [] columnas")."""
+
+
 def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     """Pide al endpoint de datos el reporte del día anterior y arma un DataFrame."""
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
@@ -182,6 +188,10 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     # Confirmado contra el servidor real: la clave es "data", y cada fila
     # trae como primer elemento el link HTML del botón de comentarios
     # (checkbox/acciones de la tabla web) -> se descarta antes de armar el DF.
+    if not payload["data"]:
+        raise FlotaNoDisponible(
+            f"Maxinet no tiene la foto de flota del {fecha_ayer} (el reporte responde sin filas): el corte nocturno "
+            "todavía no la genera o falló. No se escribió nada; el sync se puede relanzar cuando exista.")
     filas = [fila[1:] for fila in payload["data"]]
 
     # Si Maxinet vuelve a cambiar el ancho del reporte, fallar con un mensaje
@@ -626,6 +636,28 @@ def _filas_a_congelar(worksheet, col_origen: str, fila_inicio: int, fila_fin: in
     return filas_congelar
 
 
+def _columna_origen_viva(worksheet, idx_destino: int, fila_prueba: int, fecha, max_hueco: int = 7) -> int:
+    """Índice de la última columna ANTERIOR a la del día nuevo que sigue con fórmula viva en `fila_prueba`.
+    Normalmente es la del día anterior. Si Maxinet no generó la foto de un día (30-oct-2026: no existió la del 29),
+    la columna viva se quedó en el último día procesado: se cierra esa con sus propios datos (la base aún los
+    tiene, porque el avance va antes de escribirla) y las columnas de los días sin foto quedan vacías, en vez de
+    copiar una columna vacía al día nuevo y dejar la viva sin cerrar para siempre. Si no hay ninguna viva en
+    `max_hueco` columnas, falla sin escribir: el avance se hace a mano."""
+    fila = worksheet.row_values(fila_prueba, value_render_option="FORMULA")
+    for idx in range(idx_destino - 1, max(idx_destino - 1 - max_hueco, 0), -1):
+        valor = fila[idx] if idx < len(fila) else ""
+        if isinstance(valor, str) and valor.startswith("="):
+            saltados = idx_destino - idx - 1
+            if saltados:
+                log.warning(
+                    "%s: no hay columna viva el día anterior a %s; la última es %s, así que %d día(s) sin foto de flota "
+                    "quedan vacíos (sin dato).", worksheet.title, fecha, _indice_a_col_letra(idx), saltados)
+            return idx
+    raise RuntimeError(
+        f"{worksheet.title}: ninguna de las {max_hueco} columnas anteriores a la del {fecha} tiene fórmula viva en la "
+        f"fila {fila_prueba}; no se avanzó nada (hay que avanzar la hoja a mano antes de escribir la base).")
+
+
 def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=None):
     """
     Cada día: encuentra la columna correspondiente a 'ayer' (columna destino),
@@ -645,8 +677,6 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     """
     fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
-    idx_origen = idx_destino - 1
-    col_origen = _indice_a_col_letra(idx_origen)
     col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: si la columna destino ya tiene contenido, probablemente ya
@@ -662,6 +692,8 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
         )
         return
 
+    idx_origen = _columna_origen_viva(worksheet, idx_destino, FILA_FORMULA_INICIO, fecha_ayer)
+    col_origen = _indice_a_col_letra(idx_origen)
     filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_FORMULA_INICIO, FILA_FORMULA_FIN)
 
     sheet_id = worksheet.id
@@ -734,8 +766,6 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
     """
     fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
-    idx_origen = idx_destino - 1
-    col_origen = _indice_a_col_letra(idx_origen)
     col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: misma razón que en avanzar_columna_formulas -- si la
@@ -749,6 +779,8 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
         )
         return
 
+    idx_origen = _columna_origen_viva(worksheet, idx_destino, FILA_GRUPO_METRICAS_INICIO, fecha_ayer)
+    col_origen = _indice_a_col_letra(idx_origen)
     filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_RATIOS_FIN)
 
     sheet_id = worksheet.id
@@ -2305,6 +2337,24 @@ VENTANA_REVISION_DIAS = 10
 TOLERANCIA_REVISION = 0.00005  # el Sheet guarda la fracción con 4 decimales
 
 
+INTERVALO_ESPERA_FLOTA_SEG = 120
+
+
+def descargar_datos_flota_con_espera(session: requests.Session) -> pd.DataFrame:
+    """Como descargar_datos_flota, pero si Maxinet aún no tiene la foto de ayer vuelve a preguntar cada 2 minutos
+    hasta ESPERA_FLOTA_MIN minutos (por defecto 0: no espera). El corte nocturno de Maxinet suele terminar entre
+    las 7:00 y las 7:30, y a veces tarda más; esperar evita que el Vigilante agote sus tres intentos en 10 minutos."""
+    limite = time.monotonic() + float(os.environ.get("ESPERA_FLOTA_MIN") or 0) * 60
+    while True:
+        try:
+            return descargar_datos_flota(session)
+        except FlotaNoDisponible as e:
+            if time.monotonic() + INTERVALO_ESPERA_FLOTA_SEG > limite:
+                raise
+            log.warning("%s Se vuelve a preguntar en %d s.", e, INTERVALO_ESPERA_FLOTA_SEG)
+            time.sleep(INTERVALO_ESPERA_FLOTA_SEG)
+
+
 def _post_con_reintentos(session: requests.Session, url: str, data: dict, intentos: int = 3):
     """Maxinet a veces corta la conexión (ConnectionResetError, visto el
     2026-10-02); un reintento corto suele bastar."""
@@ -2568,7 +2618,7 @@ def _paso_auxiliar(nombre: str, paso) -> None:
 def main():
     try:
         session = login_maxinet()
-        df_nuevo = descargar_datos_flota(session)
+        df_nuevo = descargar_datos_flota_con_espera(session)
         df_nuevo = leer_datos(df_nuevo)
 
         # IMPORTANTE: avanzar_columna_formulas() va ANTES de actualizar_sheet().

@@ -40,7 +40,7 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: automations/maxinet-sync
@@ -77,6 +77,8 @@ jobs:
           WORKSHEET_DURACION_RETORNOS: ${{ secrets.WORKSHEET_DURACION_RETORNOS }}
           EVENTO_SCHEDULE: ${{ github.event.schedule }}
           MODO: ${{ inputs.modo }}
+          # Si Maxinet aún no tiene la foto de flota de ayer, vuelve a preguntar cada 2 min hasta este tope
+          ESPERA_FLOTA_MIN: "25"
         # El cron de las 8:10 am ("10 14 * * *") o un disparo manual con
         # modo = solo_proyeccion_mtto solo actualizan "Proyección de
         # Mantenimientos"; el de las 8:00 am (y un disparo manual completo)

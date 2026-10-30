@@ -238,3 +238,16 @@ La ventana de las 9:50 del apartado anterior no llegó al Apps Script que está 
 - El workflow agrega un cron a las 9:00 y conserva el de las 10:00 como segundo respaldo, que cubre las importaciones de las 9:40. La automatización sólo agrega filas nuevas y valida duplicados, por lo que repetir la corrida es inocuo.
 - Mientras el cron de GitHub siga llegando con retraso, la forma de garantizar la hora es la ventana de las 9:50 en el Vigilante descrita arriba.
 
+### Maxinet sin foto de flota (2026-10-30)
+
+El 30-oct el sync completo falló tres veces seguidas (8:04, 8:09 y 8:14, los intentos del Vigilante) con "El reporte de flota trae [] columnas y el script espera 41". La causa no era un cambio de estructura: el reporte de flota de Maxinet (`reporte-flota-maxirent.php`) respondió sin filas para el 29-oct. Maxinet seguía arriba (el login funcionaba y devolvía todas las fechas hasta el 28), pero su corte nocturno no generó la foto del 29, y la del 30 tampoco existe antes del corte siguiente. El sync falló antes de escribir nada, así que la base, `FLOTA LP` y las columnas del tablero quedaron intactas en el 28. El cierre diario del Tablero CP falló también porque esperó 25 minutos a que `FLOTA CP` cargara el 29.
+
+Revisando el código aparecieron dos riesgos para el día siguiente, y se corrigieron:
+
+- **El mensaje engañaba.** Un reporte sin filas se trataba como cambio de ancho. Ahora es `FlotaNoDisponible`, con el día que falta.
+- **Un día sin foto corrompía la cadena de columnas.** El avance diario de `REPORTE DE FLOTA` y `FLOTA POR GRUPO` copiaba siempre desde la columna del día anterior. Con el 29 sin foto, la del 29 estaría vacía: se habría copiado una columna vacía al 30 y la del 28 se habría quedado como "viva" para siempre, con fórmulas que dan cero en cuanto cambia la fecha de `FLOTA LP`. Ahora el origen es la última columna viva dentro de los 7 días anteriores: se cierra esa con sus propios datos (la base aún los tiene, porque el avance va antes de escribirla), las columnas de los días sin foto quedan vacías (sin dato, no ceros) y se avisa en el log. Si no hay ninguna columna viva en esa ventana, falla sin escribir nada.
+- **Espera.** Con `ESPERA_FLOTA_MIN` (25 en el workflow) el sync vuelve a preguntar cada 2 minutos antes de fallar, para que el Vigilante no agote sus tres intentos en diez minutos cuando el corte sólo se retrasa. El tiempo máximo del workflow sube de 20 a 45 minutos.
+
+Comprobado en seco sobre las hojas reales (sin escribir): pidiendo el 30-oct, el avance toma `BAS` y `YQ` (28-oct) y escribe en `BAU` y `YS`, sin tocar `BAT` ni `YR` (29-oct); pidiendo el 29, hace el avance normal de `BAS` a `BAT`.
+
+Pendiente fuera de este cambio: el cierre diario del Tablero CP (`tablero-cp-cierre-diario`) trata los días faltantes por su cuenta y reconstruye desde este mismo reporte, que para el 29 no existe; hay que revisar cómo se comporta con ese día vacío.
