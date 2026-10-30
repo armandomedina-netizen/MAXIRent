@@ -17,13 +17,16 @@ pestañas del BALANCE.
     PRONÓSTICO ENTREGAS: entregas y recolecciones de los próximos 7 días
                         (fórmulas de Nuvia sobre SOLICITUDES); se crea si
                         falta y se corrigen sus fórmulas si alguien las cambia.
-    P:R de ONHIRE y RETORNOS: fórmulas STATUS MAXINET, FLOTA MES ANTERIOR y
-                        COMPARATIVO, extendidas hasta la última fila.
+    P:R de ONHIRE y RETORNOS: STATUS MAXINET, FLOTA MES ANTERIOR y COMPARATIVO con
+                        las reglas que Nuvia fijó el 30-oct. P y R son fórmulas
+                        matriciales de una sola celda (ONHIRE: P2 y R2; RETORNOS:
+                        R2) y RETORNOS!P va por fila; Q y S por fila.
     S de ONHIRE y RETORNOS: EJECUTIVO REAL (columna H de EJECUTIVOS buscada
                         por cliente en la pestaña EJECUTIVO), como en el archivo
                         de Nuvia.
-    BALANCE: dos bloques (entregas nuevas y recolecciones por ejecutivo y día)
-                        con la estructura que Nuvia dejó el 6-oct.
+    BALANCE: dos bloques (entregas nuevas y recolecciones por ejecutivo y día,
+                        contados por la columna R) y, desde la fila 21, el resumen
+                        ejecutivo | entregas | retornos del mes.
 
 Endpoints (confirmados contra el HTML real de cada página):
     POST {MAXINET_BASE_URL}/includes/reportesLP/reporte-entregas-retornos.php
@@ -56,6 +59,7 @@ import sys
 import json
 import time
 import logging
+from collections import Counter
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -128,19 +132,65 @@ RT_FORMATOS = [
     (RT_ENTEROS, {"type": "NUMBER", "pattern": "0"}),
 ]
 
-FORMULA_P = "=XLOOKUP(C{r},'SOLICITUDES ENTREGAS / RECOLECCIONES'!$I:$I,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E:$E,\"\")"
-FORMULA_Q = "=XLOOKUP(M{r},'FLOTA MES ANTERIOR'!$C:$C,'FLOTA MES ANTERIOR'!$J:$J,\"\")"
-# Nuvia guarda R distinto en cada pestaña: en ONHIRE vacía si no hay flota
-# anterior (Q) y en RETORNOS vacía si no hay placa (M).
-FORMULA_R = {
-    "ONHIRE": '=IF(Q{r}="","",IF(B{r}=Q{r},"CAMBIO DE RESERVA","POSIBLE ENTREGA"))',
-    "RETORNOS": '=IF(M{r}="","",IF(B{r}=Q{r},"CAMBIO DE RESERVA","POSIBLE ENTREGA"))',
+_SOL = "'SOLICITUDES ENTREGAS / RECOLECCIONES'"
+_FLOTA = "'FLOTA MES ANTERIOR'"
+FORMULA_Q = "=XLOOKUP(M{r}," + _FLOTA + "!$C:$C," + _FLOTA + '!$J:$J,"")'
+
+# Reglas de Nuvia del 30-oct (su archivo, transcritas sin cambios).
+#
+# P (STATUS MAXINET) ya no busca la solicitud sólo por reserva: toma el tipo de
+# la solicitud MÁS RECIENTE (SORT descendente por Fecha Solicitud) que coincide
+# por placa (o placa de reemplazo) y # cliente; si no hay, por reserva.
+#   ONHIRE:   una sola fórmula matricial (MAP) en P2, que se derrama.
+#   RETORNOS: una fórmula por fila, sobre las solicitudes RECOLECCION.
+FORMULA_P_ONHIRE = (
+    "=MAP(A2:A,C2:C,M2:M,LAMBDA(cli,res,pla,IF(pla=\"\",\"\",IFERROR(INDEX(SORT(FILTER(HSTACK("
+    + _SOL + "!$C$2:$C," + _SOL + "!$E$2:$E),LEFT(" + _SOL + "!$E$2:$E,7)=\"ENTREGA\",((" + _SOL + "!$M$2:$M=pla)+("
+    + _SOL + "!$O$2:$O=pla))>0," + _SOL + "!$J$2:$J=cli),1,FALSE),1,2),IFERROR(INDEX(SORT(FILTER(HSTACK("
+    + _SOL + "!$C$2:$C," + _SOL + "!$E$2:$E),LEFT(" + _SOL + "!$E$2:$E,7)=\"ENTREGA\"," + _SOL
+    + "!$I$2:$I=res),1,FALSE),1,2),\"\")))))"
+)
+FORMULA_P_RETORNOS = (
+    '=IF(M{r}="","",IFERROR(INDEX(SORT(FILTER({' + _SOL + "!$C$2:$C," + _SOL + "!$E$2:$E}," + _SOL
+    + '!$E$2:$E="RECOLECCION",((' + _SOL + "!$I$2:$I=C{r})+((" + _SOL + "!$M$2:$M=M{r})*(" + _SOL
+    + '!$J$2:$J=A{r})))>0),1,FALSE),1,2),""))'
+)
+# R (COMPARATIVO) es ahora la clasificación que cuenta el BALANCE, en una sola
+# fórmula matricial en R2:
+#   ONHIRE:   CAMBIO DE RESERVA si la placa ya estaba con ese cliente en la flota
+#             del mes anterior; si no, el tipo de solicitud (P) o SIN SOLICITUD.
+#   RETORNOS: RECOLECCION si hay solicitud de recolección y la placa no sigue con
+#             ese cliente en otra reserva de ONHIRE; CAMBIO DE RESERVA o SIN
+#             SOLICITUD en los demás casos.
+_EN_FLOTA = (
+    "COUNTIFS(" + _FLOTA + "!$C:$C,M2:M," + _FLOTA + "!$L:$L,A2:A)+COUNTIFS(" + _FLOTA + "!$C:$C,M2:M," + _FLOTA + "!$J:$J,B2:B)>0"
+)
+FORMULA_R_ONHIRE = '=ARRAYFORMULA(IF(M2:M="","",IF(' + _EN_FLOTA + ',"CAMBIO DE RESERVA",IF(P2:P="","SIN SOLICITUD",P2:P))))'
+FORMULA_R_RETORNOS = (
+    '=ARRAYFORMULA(IF(M2:M="","",IF((P2:P<>"")*((COUNTIFS(ONHIRE!$M:$M,M2:M,ONHIRE!$A:$A,A2:A,ONHIRE!$C:$C,"<>"&C2:C)'
+    '+COUNTIFS(ONHIRE!$C:$C,C2:C,ONHIRE!$M:$M,"<>"&M2:M))=0),"RECOLECCION",IF(' + _EN_FLOTA
+    + ',"CAMBIO DE RESERVA",IF(P2:P="","SIN SOLICITUD","CAMBIO DE RESERVA")))))'
+)
+# Columnas que son UNA fórmula matricial (en la fila 2) y por eso nada puede
+# escribirse debajo de ellas; el resto de P:S va fórmula por fila.
+FORMULAS_MATRICIALES = {
+    "ONHIRE": {"P": FORMULA_P_ONHIRE, "R": FORMULA_R_ONHIRE},
+    "RETORNOS": {"R": FORMULA_R_RETORNOS},
 }
 # Ejecutivo de la cuenta: columna H ("EJECUTIVO KAM") del libro DATA EJECUTIVOS DE
 # CUENTAS, pestaña EJECUTIVOS, que la pestaña EJECUTIVO del BALANCE importa con
 # IMPORTRANGE. Nuvia la llama EJECUTIVO REAL; ni EJECUTIVO ni EJECUTIVO PROHIRE
 # del reporte de Maxinet sirven para el BALANCE.
 FORMULA_S = '=IF(M{r}="","",XLOOKUP(B{r},EJECUTIVO!$B:$B,EJECUTIVO!$H:$H,"SIN ASIGNACIÓN"))'
+FORMULAS_POR_FILA = {
+    "ONHIRE": {"Q": FORMULA_Q, "S": FORMULA_S},
+    "RETORNOS": {"P": FORMULA_P_RETORNOS, "Q": FORMULA_Q, "S": FORMULA_S},
+}
+
+
+def _con_fila(formula: str, fila: int) -> str:
+    """Sustituye {r}; no se usa str.format porque RETORNOS!P lleva llaves de matriz."""
+    return formula.replace("{r}", str(fila))
 
 # Pestaña BALANCE (estructura de Nuvia del 6-oct): dos bloques, cada uno con la
 # lista de ejecutivos (UNIQUE) y una columna por día del mes.
@@ -416,10 +466,28 @@ def _asegurar_tamano(hoja, filas: int, columnas: int) -> None:
         hoja.add_cols(columnas - hoja.col_count)
 
 
+def _asegurar_formulas_matriciales(hoja, nombre_hoja: str) -> None:
+    """P2 y R2 de ONHIRE (y R2 de RETORNOS) son una sola fórmula matricial que se
+    derrama hacia abajo, como en el archivo de Nuvia. Si la celda tiene otra
+    cosa (el diseño anterior las escribía por fila) se limpia toda la columna,
+    porque cualquier valor debajo bloquearía el derrame con #REF!, y se escribe
+    la fórmula. Si ya es la correcta no se toca nada."""
+    for col, formula in FORMULAS_MATRICIALES.get(nombre_hoja, {}).items():
+        actual = hoja.get(f"{col}2", value_render_option="FORMULA")
+        actual = actual[0][0] if actual and actual[0] else ""
+        if actual == formula:
+            continue
+        hoja.batch_clear([f"{col}2:{col}{hoja.row_count}"])
+        hoja.update(values=[[formula]], range_name=f"{col}2", value_input_option="USER_ENTERED")
+        log.info("%s: fórmula matricial de %s2 repuesta", nombre_hoja, col)
+
+
 def cargar_entregas_retornos(libro, nombre_hoja: str, filas: list) -> None:
-    """Reemplaza A2:O de ONHIRE o RETORNOS y extiende P:R. Primero escribe
-    y luego limpia lo que sobre, para que la hoja nunca quede vacía a media
-    corrida; el encabezado de la fila 1 se respeta si ya existe."""
+    """Reemplaza A2:O de ONHIRE o RETORNOS y mantiene P:S con las reglas de
+    Nuvia: las columnas matriciales (ver FORMULAS_MATRICIALES) se aseguran una
+    vez en la fila 2 y las demás (Q, S y, en RETORNOS, P) se extienden por fila.
+    Primero escribe y luego limpia lo que sobre, para que la hoja nunca quede
+    vacía a media corrida; el encabezado de la fila 1 se respeta si ya existe."""
     hoja = _hoja_o_crear(libro, nombre_hoja, 1000, len(ENCABEZADO_ER))
     _asegurar_tamano(hoja, len(filas) + 2, len(ENCABEZADO_ER))
     if hoja.row_values(1)[:len(ENCABEZADO_ER)] != ENCABEZADO_ER:
@@ -437,16 +505,20 @@ def cargar_entregas_retornos(libro, nombre_hoja: str, filas: list) -> None:
     # lo convierte.
     _quitar_tipos_de_tabla(libro, hoja)
     libro.batch_update({"requests": _peticiones_formato(hoja, ER_FORMATOS, ultima)})
+    _asegurar_formulas_matriciales(hoja, nombre_hoja)
+    por_fila = FORMULAS_POR_FILA[nombre_hoja]
     if valores:
         hoja.update(values=valores, range_name=f"A2:O{ultima}", value_input_option="RAW")
-        formulas = [
-            [FORMULA_P.format(r=r), FORMULA_Q.format(r=r), FORMULA_R[nombre_hoja].format(r=r), FORMULA_S.format(r=r)]
-            for r in range(2, ultima + 1)
-        ]
-        hoja.update(values=formulas, range_name=f"P2:S{ultima}", value_input_option="USER_ENTERED")
+        hoja.batch_update(
+            [{"range": f"{col}2:{col}{ultima}", "values": [[_con_fila(f, r)] for r in range(2, ultima + 1)]}
+             for col, f in por_fila.items()],
+            value_input_option="USER_ENTERED")
     if previas > len(valores):
-        hoja.batch_clear([f"A{ultima + 1}:S{hoja.row_count}"])
-    log.info("%s: %d filas escritas en A2:O%d (P:S extendidas; antes había %d)", nombre_hoja, len(valores), ultima, previas)
+        # Sólo lo que se escribe fila por fila: la columna matricial no se limpia
+        # (borraría la fórmula de la fila 2 y con ella todo el derrame).
+        sobrante = [f"A{ultima + 1}:O{hoja.row_count}"] + [f"{col}{ultima + 1}:{col}{hoja.row_count}" for col in por_fila]
+        hoja.batch_clear(sobrante)
+    log.info("%s: %d filas escritas en A2:O%d (P:S al día; antes había %d)", nombre_hoja, len(valores), ultima, previas)
 
 
 def cargar_reporte_maxinet(libro, entregas: list, recolecciones: list) -> None:
@@ -552,14 +624,20 @@ def rotar_flota_mes_anterior(libro, libro_query, hoy: date) -> None:
     log.info("FLOTA ACTUAL: %d placas ON HIRE (mes %s)", len(flota), mes_actual)
 
 
+BALANCE_FILA_RESUMEN = 21         # encabezado del resumen por ejecutivo (como en el de Nuvia)
+BALANCE_FILAS_RESUMEN = 16        # filas de ejecutivos del resumen (22-37)
+
+
 def _formulas_balance(hoy: date) -> tuple:
-    """Valores y fórmulas de BALANCE A1:AG18 como las tiene Nuvia: la lista de
+    """Valores y fórmulas de BALANCE como las tiene Nuvia: la lista de
     ejecutivos sale de UNIQUE sobre la columna S ("EJECUTIVO REAL") de ONHIRE
-    y RETORNOS; cada celda cuenta las entregas nuevas (ONHIRE, STATUS MAXINET
-    = ENTREGA (NUEVO)) o las recolecciones (RETORNOS, STATUS MAXINET =
-    RECOLECCION) de ese ejecutivo ese día. Las filas de ejecutivos que sobran
-    quedan vacías (IF sobre la columna A) para que un COUNTIFS con criterio
-    vacío no cuente celdas en blanco."""
+    y RETORNOS; cada celda cuenta las entregas nuevas (ONHIRE, COMPARATIVO =
+    ENTREGA (NUEVO)) o las recolecciones (RETORNOS, COMPARATIVO = RECOLECCION)
+    de ese ejecutivo ese día. Desde el 30-oct Nuvia cuenta por la columna R y
+    no por la P. Las filas de ejecutivos que sobran quedan vacías (IF sobre la
+    columna A) para que un COUNTIFS con criterio vacío no cuente celdas en
+    blanco. Debajo, desde la fila 21, el resumen ejecutivo | entregas |
+    retornos del mes."""
     columnas = BALANCE_COL_INICIO + BALANCE_DIAS - 1
     primer_dia = (hoy.replace(day=1) - EPOCH_SHEETS).days
     letra = lambda n: gspread.utils.rowcol_to_a1(1, n)[:-1]
@@ -572,7 +650,7 @@ def _formulas_balance(hoy: date) -> tuple:
         fila = [None, f'=IF($A{r}="","",SUM({primera}{r}:{ultima}{r}))']
         for c in range(BALANCE_COL_INICIO, columnas + 1):
             col = letra(c)
-            fila.append(f'=IF($A{r}="","",COUNTIFS(ONHIRE!$S:$S,$A{r},ONHIRE!$E:$E,{col}$1,ONHIRE!$P:$P,"ENTREGA (NUEVO)"))')
+            fila.append(f'=IF($A{r}="","",COUNTIFS(ONHIRE!$S:$S,$A{r},ONHIRE!$E:$E,{col}$1,ONHIRE!$R:$R,"ENTREGA (NUEVO)"))')
         filas[r] = fila
     h = BALANCE_FILA_RETORNOS
     filas[h] = ["=UNIQUE(RETORNOS!S:S)", "TOTAL DE RETORNOS"] + [f"={letra(c)}1" for c in range(BALANCE_COL_INICIO, columnas + 1)]
@@ -580,33 +658,47 @@ def _formulas_balance(hoy: date) -> tuple:
         fila = [None, f'=IF($A{r}="","",SUM({primera}{r}:{ultima}{r}))']
         for c in range(BALANCE_COL_INICIO, columnas + 1):
             col = letra(c)
-            fila.append(f'=IF($A{r}="","",COUNTIFS(RETORNOS!$S:$S,$A{r},RETORNOS!$F:$F,{col}${h},RETORNOS!$P:$P,"RECOLECCION"))')
+            fila.append(f'=IF($A{r}="","",COUNTIFS(RETORNOS!$S:$S,$A{r},RETORNOS!$F:$F,{col}${h},RETORNOS!$R:$R,"RECOLECCION"))')
         filas[r] = fila
+    # Resumen: A es el UNIQUE de las dos listas (sin vacíos); B y C buscan el total de cada bloque.
+    e0, e1 = 2, 1 + BALANCE_FILAS_EJEC
+    r0, r1 = h + 1, h + BALANCE_FILAS_EJEC
+    fin_bloques = r1
+    f0 = BALANCE_FILA_RESUMEN
+    filas[f0] = [f'=UNIQUE(FILTER(A1:A{fin_bloques},A1:A{fin_bloques}<>""))', "ENTREGAS", "RETORNOS"]
+    for r in range(f0 + 1, f0 + 1 + BALANCE_FILAS_RESUMEN):
+        filas[r] = [
+            None,
+            f'=IF($A{r}="","",XLOOKUP($A{r},$A${e0}:$A${e1},$B${e0}:$B${e1},0))',
+            f'=IF($A{r}="","",XLOOKUP($A{r},$A${r0}:$A${r1},$B${r0}:$B${r1},0))',
+        ]
     return filas, columnas
 
 
 def actualizar_balance(libro, hoy: date) -> None:
     """Deja la pestaña BALANCE con la estructura de Nuvia y los días del mes
     en curso (C1 es el día 1). Cada corrida sólo reescribe si la estructura
-    cambió o si cambió el mes; si la pestaña está protegida sólo avisa."""
+    cambió (fórmulas de conteo o resumen) o si cambió el mes; si la pestaña
+    está protegida sólo avisa."""
     try:
         hoja = libro.worksheet(HOJA_BALANCE)
         filas, columnas = _formulas_balance(hoy)
-        actual = hoja.get("A1:C1", value_render_option="FORMULA")
-        actual = actual[0] if actual else []
-        esperado = [filas[1][0], filas[1][1], filas[1][2]]
-        if actual[:3] == esperado:
+        f0 = BALANCE_FILA_RESUMEN
+        actual = hoja.batch_get(["A1:C2", f"A{f0}:C{f0 + 1}"], value_render_option="FORMULA")
+        fila1 = (actual[0][0] if actual[0] else []) + [""] * 3
+        fila2 = (actual[0][1] if len(actual[0]) > 1 else []) + [""] * 3
+        resumen = (actual[1][0] if actual[1] else []) + [""] * 3
+        if (fila1[:3] == filas[1][:3] and fila2[2] == filas[2][2] and resumen[:3] == filas[f0][:3]):
             return
-        _asegurar_tamano(hoja, 2 + 2 * (BALANCE_FILAS_EJEC + 1), columnas)
+        _asegurar_tamano(hoja, f0 + BALANCE_FILAS_RESUMEN + 2, columnas)
         hoja.batch_clear([f"A1:AH{hoja.row_count}"])
         _resetear_formato(libro, hoja, hoja.row_count, hoja.col_count)
         # fila 1 y fila 10 primero (UNIQUE), luego el resto
-        valores = []
-        for r in sorted(filas):
-            valores.append([("" if v is None else v) for v in filas[r]])
-        # el bloque 1 ocupa filas 1-9 y el de retornos empieza en la fila 10
-        hoja.update(values=valores[:1 + BALANCE_FILAS_EJEC], range_name="A1", value_input_option="USER_ENTERED")
-        hoja.update(values=valores[1 + BALANCE_FILAS_EJEC:], range_name=f"A{BALANCE_FILA_RETORNOS}", value_input_option="USER_ENTERED")
+        valores = {r: [("" if v is None else v) for v in filas[r]] for r in filas}
+        hoja.update(values=[valores[r] for r in range(1, 2 + BALANCE_FILAS_EJEC)], range_name="A1", value_input_option="USER_ENTERED")
+        hoja.update(values=[valores[r] for r in range(BALANCE_FILA_RETORNOS, BALANCE_FILA_RETORNOS + 1 + BALANCE_FILAS_EJEC)],
+                    range_name=f"A{BALANCE_FILA_RETORNOS}", value_input_option="USER_ENTERED")
+        hoja.update(values=[valores[r] for r in range(f0, f0 + 1 + BALANCE_FILAS_RESUMEN)], range_name=f"A{f0}", value_input_option="USER_ENTERED")
         fmt_fecha = {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}, "textFormat": {"bold": True}}
         fmt_negrita = {"textFormat": {"bold": True}}
         peticiones = []
@@ -619,6 +711,9 @@ def actualizar_balance(libro, hoy: date) -> None:
                 "range": {"sheetId": hoja.id, "startRowIndex": fila_idx, "endRowIndex": fila_idx + 1,
                           "startColumnIndex": 0, "endColumnIndex": 2},
                 "cell": {"userEnteredFormat": fmt_negrita}, "fields": "userEnteredFormat.textFormat"}})
+        peticiones.append({"repeatCell": {
+            "range": {"sheetId": hoja.id, "startRowIndex": f0 - 1, "endRowIndex": f0, "startColumnIndex": 0, "endColumnIndex": 3},
+            "cell": {"userEnteredFormat": fmt_negrita}, "fields": "userEnteredFormat.textFormat"}})
         libro.batch_update({"requests": peticiones})
         log.info("BALANCE: estructura reconstruida para %s", hoy.strftime("%Y-%m"))
     except (gspread.WorksheetNotFound, APIError) as e:
@@ -724,14 +819,12 @@ def verificar_errores(libro) -> None:
         valores = hoja.get("P2:S", value_render_option="FORMATTED_VALUE")
         malas = sum(1 for fila in valores for c in fila if c in errores)
         sin_kam = sum(1 for fila in valores if len(fila) < 4 or fila[3] in ("", "PENDIENTE", "SIN ASIGNACIÓN"))
-        sin_solicitud = sum(1 for fila in valores if fila and fila[0] == "")
-        cambios = sum(1 for fila in valores if len(fila) > 2 and fila[2] == "CAMBIO DE RESERVA")
-        posibles = sum(1 for fila in valores if len(fila) > 2 and fila[2] == "POSIBLE ENTREGA")
-        log.info("%s: %d CAMBIO DE RESERVA, %d POSIBLE ENTREGA, %d reservas sin solicitud de traslado, %d sin ejecutivo, %d errores en P:S",
-                 nombre, cambios, posibles, sin_solicitud, sin_kam, malas)
+        por_tipo = Counter(fila[2] for fila in valores if len(fila) > 2 and fila[2])
+        resumen = ", ".join(f"{n} {k}" for k, n in sorted(por_tipo.items()))
+        log.info("%s: COMPARATIVO (R): %s; %d sin ejecutivo, %d errores en P:S", nombre, resumen or "sin filas", sin_kam, malas)
     # BALANCE (p. ej. un UNIQUE de ejecutivos que ya no cabe en su bloque) y
     # el derrame del pronóstico.
-    for rango in (f"{HOJA_BALANCE}!A1:AG18", f"'{HOJA_PRONOSTICO}'!A1:I1000"):
+    for rango in (f"{HOJA_BALANCE}!A1:AG{BALANCE_FILA_RESUMEN + BALANCE_FILAS_RESUMEN}", f"'{HOJA_PRONOSTICO}'!A1:I1000"):
         try:
             valores = libro.values_get(rango, params={"valueRenderOption": "FORMATTED_VALUE"}).get("values", [])
         except APIError:
