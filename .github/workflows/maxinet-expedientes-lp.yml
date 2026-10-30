@@ -1,0 +1,47 @@
+name: Maxinet Expedientes LP Sync
+
+on:
+  schedule:
+    # 8:30, 9:30 y 10:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022): de las 8:30 a las
+    # 10:30 como máximo. La tabla es chica: la corrida tarda unos 20 segundos.
+    - cron: "30 14-16 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maxinet-expedientes-lp
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: automations/maxinet-expedientes-lp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Ejecutar sincronización
+        env:
+          MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
+          MAXINET_USER: ${{ secrets.MAXINET_USER }}
+          MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-expedientes-lp/google-creds.json
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          WORKSHEET_EXPEDIENTES_LP: ${{ secrets.WORKSHEET_EXPEDIENTES_LP }}
+        run: python maxinet_expedientes_lp.py
