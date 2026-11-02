@@ -1,0 +1,48 @@
+name: Maxinet Seminuevos LP Sync
+
+on:
+  schedule:
+    # 8:30 AM hora Ciudad de México (UTC-6, sin horario de verano desde 2022), una vez al día. Es el respaldo del disparo
+    # del Vigilante (ventana de 8:30): el reloj de GitHub llega con horas de retraso. La consulta de Maxinet tarda ~90
+    # segundos y la corrida completa unos 2 minutos y medio.
+    - cron: "30 14 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maxinet-seminuevos-lp
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: automations/maxinet-seminuevos-lp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Ejecutar sincronización
+        env:
+          MAXINET_BASE_URL: ${{ secrets.MAXINET_BASE_URL }}
+          MAXINET_USER: ${{ secrets.MAXINET_USER }}
+          MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-seminuevos-lp/google-creds.json
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          WORKSHEET_SEMINUEVOS_LP: ${{ secrets.WORKSHEET_SEMINUEVOS_LP }}
+        run: python maxinet_seminuevos_lp.py
