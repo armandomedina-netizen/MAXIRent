@@ -1,4 +1,4 @@
-# ADR 0020: Leads recibidos y calificados de monday en la pestaña MKT del tablero LP
+# ADR 0023: Leads recibidos y calificados de monday en la pestaña MKT del tablero LP
 
 Fecha: 2026-10-28
 

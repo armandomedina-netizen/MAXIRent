@@ -78,6 +78,13 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("maxinet_encuestas_cp")
 
+# Tolerancia a filtros activos en las hojas (módulo común, ver automations/_comun): si Sheets rechaza una copia porque la
+# fila modelo está oculta por un filtro, se reintenta con una fila visible o con el filtro suspendido y restaurado.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_comun", "lib"))
+import filtros_sheets  # noqa: E402
+
+filtros_sheets.instalar()
+
 PAGINA = "mk-reporte-encuestas-satisfaccion-cp.php"
 ENDPOINT = "includes/encuestasCP/esatisfaccion2026_data.php"
 # Columnas requeridas, en el orden actual de la hoja (C:Z)
@@ -98,6 +105,8 @@ REINTENTOS = 5
 FECHA_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 BASE_SERIAL = dt.date(1899, 12, 30)
 COL_FORMULAS = ("PERIODO", "RECLASIFICACION")
+# Filas recientes que se revisan en cada corrida para completar fórmulas y formato que hayan quedado a medias.
+VENTANA_REPARACION = 60
 
 
 # ---------------------------------------------------------------- Maxinet
@@ -236,12 +245,23 @@ def _col(n: int) -> str:
     return gspread.utils.rowcol_to_a1(1, n).rstrip("1")
 
 
+def resolver_pestana(libro, referencia: str):
+    """La pestaña del libro por gid (si la referencia es un número) o por nombre. Nuvia renombra pestañas;
+    el gid no cambia. Los logs son públicos: si falta, el error sólo dice cuántas pestañas tiene el libro."""
+    referencia = str(referencia).strip()
+    try:
+        return libro.get_worksheet_by_id(int(referencia)) if referencia.isdigit() else libro.worksheet(referencia)
+    except gspread.exceptions.WorksheetNotFound:
+        raise gspread.exceptions.WorksheetNotFound(
+            f"{referencia} (el libro tiene {len(libro.worksheets())} pestañas; si la renombraron, usa su gid en el secret)") from None
+
+
 def conectar_sheet():
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"], scopes=["https://www.googleapis.com/auth/spreadsheets"])
     sh = gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
     nombre = (os.environ.get("WORKSHEET_ENCUESTAS_NAME") or "").strip().strip("\"'").strip() or "ENCUESTAS"
-    return sh.worksheet(nombre)
+    return resolver_pestana(sh, nombre)
 
 
 def mapear_columnas(ws) -> dict:
@@ -283,6 +303,7 @@ def agregar_encuestas(ws, filas_mx: list[dict], desde: str) -> int:
     col = ws.col_values(c_fecha)
     ultima = max((i for i, v in enumerate(col, start=1) if i >= FILA_INICIO_DATOS and str(v).strip()),
                  default=FILA_INICIO_DATOS - 1)
+    reparar_filas_recientes(ws, mp, col, ultima)
     claves, ult_fecha = leer_existentes(ws, mp, ultima, desde) if ultima >= FILA_INICIO_DATOS else (set(), "")
 
     nuevas, ya, vistos = [], 0, set()
@@ -337,6 +358,7 @@ def asegurar_formulas_y_formato(ws, mp, fila_ini, fila_fin, fila_modelo):
     def rango(c1, c2, r1, r2):
         return {"sheetId": sid, "startRowIndex": r1 - 1, "endRowIndex": r2, "startColumnIndex": c1 - 1, "endColumnIndex": c2}
 
+    copiadas = []
     pedidos = [{"copyPaste": {"source": rango(mp["ini"], mp["fin"], fila_modelo, fila_modelo),
                                "destination": rango(mp["ini"], mp["fin"], fila_ini, fila_fin), "pasteType": "PASTE_FORMAT"}}]
     for nombre in COL_FORMULAS:
@@ -351,8 +373,68 @@ def asegurar_formulas_y_formato(ws, mp, fila_ini, fila_fin, fila_modelo):
             pedidos.append({"copyPaste": {"source": rango(c, c, fila_modelo, fila_modelo),
                                           "destination": rango(c, c, fila, fila), "pasteType": "PASTE_FORMULA"}})
         if faltan:
-            log.info("Fórmula %s: se copió a %d filas que no la tenían.", nombre, len(faltan))
+            copiadas.append((nombre, len(faltan)))
     ws.spreadsheet.batch_update({"requests": pedidos})
+    for nombre, n in copiadas:                     # se avisa hasta que Sheets aceptó la copia
+        log.info("Fórmula %s: se copió a %d filas que no la tenían.", nombre, n)
+
+
+def _filas_con_formulas(ws, mp, fila_ini, fila_fin) -> dict:
+    """{fila: True si todas las columnas de fórmulas (PERIODO, RECLASIFICACION) la tienen} para [fila_ini, fila_fin]."""
+    completas = {fila: True for fila in range(fila_ini, fila_fin + 1)}
+    for nombre in COL_FORMULAS:
+        if nombre not in mp["enc"]:
+            continue
+        letra = _col(mp["enc"].index(nombre) + 1)
+        actuales = ws.get(f"{letra}{fila_ini}:{letra}{fila_fin}", value_render_option="FORMULA")
+        for i, fila in enumerate(range(fila_ini, fila_fin + 1)):
+            if i >= len(actuales) or not actuales[i] or not str(actuales[i][0]).startswith("="):
+                completas[fila] = False
+    return completas
+
+
+def _tramos(filas: list[int]) -> list[tuple[int, int]]:
+    """Agrupa filas ordenadas en tramos contiguos [(inicio, fin), ...]."""
+    tramos: list[tuple[int, int]] = []
+    for f in filas:
+        if tramos and f == tramos[-1][1] + 1:
+            tramos[-1] = (tramos[-1][0], f)
+        else:
+            tramos.append((f, f))
+    return tramos
+
+
+def reparar_filas_recientes(ws, mp, col_fecha: list, ultima: int) -> int:
+    """Completa fórmulas y formato en las filas recientes que quedaron sin ellos. Corre en CADA ejecución, haya o no
+    encuestas nuevas: si una corrida escribió los datos y falló antes de copiar fórmulas y formato (por ejemplo, por un
+    rechazo de Google Sheets), su reintento ya no encuentra nada que agregar y la hoja se quedaría a medias con la
+    corrida en verde. Sólo toca filas con fecha dentro de las últimas VENTANA_REPARACION y copia desde la fila completa
+    más reciente."""
+    if ultima < FILA_INICIO_DATOS:
+        return 0
+    ini = max(FILA_INICIO_DATOS, ultima - VENTANA_REPARACION + 1)
+    completas = _filas_con_formulas(ws, mp, ini, ultima)
+    con_dato = [i for i, v in enumerate(col_fecha, start=1) if ini <= i <= ultima and str(v).strip()]
+    incompletas = [f for f in con_dato if not completas[f]]
+    if not incompletas:
+        return 0
+    modelos = [f for f in con_dato if completas[f]]
+    if not modelos:
+        log.warning("%d filas recientes sin fórmulas y ninguna fila completa en las últimas %d para copiarlas; "
+                    "no se reparó nada.", len(incompletas), VENTANA_REPARACION)
+        return 0
+    tramos = _tramos(incompletas)
+    descripcion = ", ".join(f"{a}-{b}" if a != b else str(a) for a, b in tramos)
+    if os.environ.get("DRY_RUN"):
+        log.info("DRY_RUN: se completarían fórmulas y formato en %d filas recientes (%s); no se escribió nada.",
+                 len(incompletas), descripcion)
+        return 0
+    modelo = max(modelos)
+    for a, b in tramos:
+        asegurar_formulas_y_formato(ws, mp, a, b, modelo)
+    log.warning("Se completaron fórmulas y formato en %d filas recientes que habían quedado a medias (%s).",
+                len(incompletas), descripcion)
+    return len(incompletas)
 
 
 def validar_sin_repetidos(ws, mp):

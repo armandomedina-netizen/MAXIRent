@@ -71,6 +71,13 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("maxinet_entregas_cp")
 
+# Tolerancia a filtros activos en las hojas (módulo común, ver automations/_comun): si Sheets rechaza una copia porque la
+# fila modelo está oculta por un filtro, se reintenta con una fila visible o con el filtro suspendido y restaurado.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_comun", "lib"))
+import filtros_sheets  # noqa: E402
+
+filtros_sheets.instalar()
+
 # Orden confirmado en el HTML real de cp-reporte-entregas-diarias-mensual.php
 COLUMNAS = [
     "Fecha", "Hr.Entrega", "# Cliente", "Cliente", "Sucursal", "Asesor",
@@ -192,12 +199,23 @@ def descargar_entregas(desde: str, hasta: str) -> list[list]:
 
 
 # ------------------------------------------------------------------ Sheet
+def resolver_pestana(libro, referencia: str):
+    """La pestaña del libro por gid (si la referencia es un número) o por nombre. Nuvia renombra pestañas;
+    el gid no cambia. Los logs son públicos: si falta, el error sólo dice cuántas pestañas tiene el libro."""
+    referencia = str(referencia).strip()
+    try:
+        return libro.get_worksheet_by_id(int(referencia)) if referencia.isdigit() else libro.worksheet(referencia)
+    except gspread.exceptions.WorksheetNotFound:
+        raise gspread.exceptions.WorksheetNotFound(
+            f"{referencia} (el libro tiene {len(libro.worksheets())} pestañas; si la renombraron, usa su gid en el secret)") from None
+
+
 def conectar_sheet():
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"], scopes=["https://www.googleapis.com/auth/spreadsheets"])
     sh = gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
     nombre = (os.environ.get("WORKSHEET_ENTREGAS_NAME") or "").strip().strip("\"'").strip() or "ENTREGAS"
-    return sh.worksheet(nombre)
+    return resolver_pestana(sh, nombre)
 
 
 def _fecha_hora_hoja(fila: list) -> tuple[str, str]:

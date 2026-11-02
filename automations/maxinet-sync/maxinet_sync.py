@@ -86,6 +86,13 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("maxinet_sync")
 
+# Tolerancia a filtros activos en las hojas (módulo común, ver automations/_comun): si Sheets rechaza una copia porque la
+# fila modelo está oculta por un filtro, se reintenta con una fila visible o con el filtro suspendido y restaurado.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_comun", "lib"))
+import filtros_sheets  # noqa: E402
+
+filtros_sheets.instalar()
+
 # Mismo orden de columnas confirmado en el HTML y en el Excel de ejemplo
 # (la columna vacía inicial del reporte -checkbox/acciones- se descarta).
 # El 9-oct-2026 Maxinet agregó VIN y EntryDate al final del reporte (41
@@ -168,6 +175,13 @@ def login_maxinet() -> requests.Session:
     return session
 
 
+class FotoFlotaVacia(RuntimeError):
+    """Maxinet todavía no publicó la foto de flota del día: su corte nocturno no la generó (no es un cambio de estructura)."""
+
+
+SONDEO_FOTO_SEG = 120      # cada cuánto se vuelve a pedir la foto de flota mientras Maxinet no la publica
+
+
 def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     """Pide al endpoint de datos el reporte del día anterior y arma un DataFrame."""
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
@@ -184,6 +198,13 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     # (checkbox/acciones de la tabla web) -> se descarta antes de armar el DF.
     filas = [fila[1:] for fila in payload["data"]]
 
+    # Sin filas no es un cambio de estructura: Maxinet no ha generado la foto de ese día
+    # (visto el 2026-10-30, cuando su corte nocturno no corrió). No se escribe nada.
+    if not filas:
+        raise FotoFlotaVacia(
+            f"Maxinet todavía no publica la foto de flota del {fecha_ayer}: el reporte trae 0 filas. "
+            "Su corte nocturno no generó ese día; no es un cambio de estructura. No se escribió nada.")
+
     # Si Maxinet vuelve a cambiar el ancho del reporte, fallar con un mensaje
     # claro (y sin escribir nada) en vez de pegar columnas corridas.
     anchos = {len(fila) for fila in filas}
@@ -196,6 +217,22 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     df = pd.DataFrame(filas, columns=COLUMNAS)
     log.info("Datos descargados de Maxinet: %d filas (fecha %s)", len(df), fecha_ayer)
     return df
+
+
+def descargar_datos_flota_esperando(session: requests.Session, espera_min: int, reloj=time.monotonic, dormir=time.sleep):
+    """(DataFrame, sesión) con la foto de flota de ayer. Si Maxinet todavía no la publica (0 filas) y espera_min > 0,
+    la vuelve a pedir cada SONDEO_FOTO_SEG segundos, con una sesión nueva, hasta que aparezca o se agote el tiempo
+    (entonces falla con FotoFlotaVacia). Es lo primero que hace el sync: mientras espera no se ha escrito nada."""
+    limite = reloj() + espera_min * 60
+    while True:
+        try:
+            return descargar_datos_flota(session), session
+        except FotoFlotaVacia as e:
+            if reloj() >= limite:
+                raise
+            log.warning("%s Se vuelve a consultar en %d s (espera máxima: %d min).", e, SONDEO_FOTO_SEG, espera_min)
+            dormir(SONDEO_FOTO_SEG)
+            session = login_maxinet()
 
 
 def _leer_tarifa_detalle(rango: str = "A:U") -> list:
@@ -626,6 +663,28 @@ def _filas_a_congelar(worksheet, col_origen: str, fila_inicio: int, fila_fin: in
     return filas_congelar
 
 
+def _columna_origen_viva(worksheet, idx_destino: int, fila_prueba: int, fecha, max_hueco: int = 7) -> int:
+    """Índice de la última columna ANTERIOR a la del día nuevo que sigue con fórmula viva en `fila_prueba`.
+    Normalmente es la del día anterior. Si Maxinet no generó la foto de un día (30-oct-2026: no existió la del 29),
+    la columna viva se quedó en el último día procesado: se cierra esa con sus propios datos (la base aún los
+    tiene, porque el avance va antes de escribirla) y las columnas de los días sin foto quedan vacías, en vez de
+    copiar una columna vacía al día nuevo y dejar la viva sin cerrar para siempre. Si no hay ninguna viva en
+    `max_hueco` columnas, falla sin escribir: el avance se hace a mano."""
+    fila = worksheet.row_values(fila_prueba, value_render_option="FORMULA")
+    for idx in range(idx_destino - 1, max(idx_destino - 1 - max_hueco, 0), -1):
+        valor = fila[idx] if idx < len(fila) else ""
+        if isinstance(valor, str) and valor.startswith("="):
+            saltados = idx_destino - idx - 1
+            if saltados:
+                log.warning(
+                    "%s: no hay columna viva el día anterior a %s; la última es %s, así que %d día(s) sin foto de flota "
+                    "quedan vacíos (sin dato).", worksheet.title, fecha, _indice_a_col_letra(idx), saltados)
+            return idx
+    raise RuntimeError(
+        f"{worksheet.title}: ninguna de las {max_hueco} columnas anteriores a la del {fecha} tiene fórmula viva en la "
+        f"fila {fila_prueba}; no se avanzó nada (hay que avanzar la hoja a mano antes de escribir la base).")
+
+
 def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=None):
     """
     Cada día: encuentra la columna correspondiente a 'ayer' (columna destino),
@@ -645,8 +704,6 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
     """
     fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
-    idx_origen = idx_destino - 1
-    col_origen = _indice_a_col_letra(idx_origen)
     col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: si la columna destino ya tiene contenido, probablemente ya
@@ -662,6 +719,8 @@ def avanzar_columna_formulas(worksheet, col_referencia="AYT", fecha_objetivo=Non
         )
         return
 
+    idx_origen = _columna_origen_viva(worksheet, idx_destino, FILA_FORMULA_INICIO, fecha_ayer)
+    col_origen = _indice_a_col_letra(idx_origen)
     filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_FORMULA_INICIO, FILA_FORMULA_FIN)
 
     sheet_id = worksheet.id
@@ -734,8 +793,6 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
     """
     fecha_ayer = fecha_objetivo or (_hoy_cdmx() - timedelta(days=1))
     idx_destino = _encontrar_columna_por_fecha(worksheet, fecha_ayer, col_referencia=col_referencia)
-    idx_origen = idx_destino - 1
-    col_origen = _indice_a_col_letra(idx_origen)
     col_destino = _indice_a_col_letra(idx_destino)
 
     # Salvaguarda: misma razón que en avanzar_columna_formulas -- si la
@@ -749,6 +806,8 @@ def avanzar_columna_grupo_autos(worksheet, col_referencia="WX", fecha_objetivo=N
         )
         return
 
+    idx_origen = _columna_origen_viva(worksheet, idx_destino, FILA_GRUPO_METRICAS_INICIO, fecha_ayer)
+    col_origen = _indice_a_col_letra(idx_origen)
     filas_congelar = _filas_a_congelar(worksheet, col_origen, FILA_GRUPO_METRICAS_INICIO, FILA_GRUPO_RATIOS_FIN)
 
     sheet_id = worksheet.id
@@ -2568,7 +2627,8 @@ def _paso_auxiliar(nombre: str, paso) -> None:
 def main():
     try:
         session = login_maxinet()
-        df_nuevo = descargar_datos_flota(session)
+        espera = int(os.environ.get("ESPERAR_FOTO_MIN") or 0)
+        df_nuevo, session = descargar_datos_flota_esperando(session, espera)
         df_nuevo = leer_datos(df_nuevo)
 
         # IMPORTANTE: avanzar_columna_formulas() va ANTES de actualizar_sheet().
