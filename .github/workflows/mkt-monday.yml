@@ -1,0 +1,44 @@
+name: MKT Monday
+
+on:
+  schedule:
+    # Una corrida al día a las 9:00 hora CDMX (UTC-6).
+    - cron: "0 15 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: mkt-monday
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: automations/MKT Monday
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Escribir credenciales de Google a archivo temporal
+        run: echo "$GOOGLE_CREDS_JSON" > google-creds.json
+        env:
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+
+      - name: Actualizar leads del mes en la hoja MKT
+        env:
+          MONDAY_TOKEN: ${{ secrets.MONDAY_TOKEN }}
+          GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/MKT Monday/google-creds.json
+          SPREADSHEET_ID_MKT: ${{ secrets.SPREADSHEET_ID_SECUNDARIO }}
+          MKT_MONDAY_CONFIG_JSON: ${{ secrets.MKT_MONDAY_CONFIG_JSON }}
+        run: python mkt_monday_sync.py
