@@ -86,6 +86,13 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("maxinet_sync")
 
+# Tolerancia a filtros activos en las hojas (módulo común, ver automations/_comun): si Sheets rechaza una copia porque la
+# fila modelo está oculta por un filtro, se reintenta con una fila visible o con el filtro suspendido y restaurado.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_comun", "lib"))
+import filtros_sheets  # noqa: E402
+
+filtros_sheets.instalar()
+
 # Mismo orden de columnas confirmado en el HTML y en el Excel de ejemplo
 # (la columna vacía inicial del reporte -checkbox/acciones- se descarta).
 # El 9-oct-2026 Maxinet agregó VIN y EntryDate al final del reporte (41
