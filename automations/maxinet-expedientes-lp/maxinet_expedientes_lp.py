@@ -1,6 +1,6 @@
 """
 Automatización: login + lectura de la tabla "Expedientes LP" (prospección, validaciones por área) desde Maxinet vía
-requests (sin navegador) y reescritura de la pestaña "EXPEDIENTES LP" de la Base LP copia ("Copia de BASE LP_AUTOMATIZADO").
+requests (sin navegador) y reescritura de la pestaña "EXPEDIENTES LP" de la Base LP copia ("BASE LP_AUTOMATIZADO").
 
 Endpoint confirmado a partir del JS real de Maxinet (lp-prospeccion-expedientes.php -> DataTable ajax):
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
