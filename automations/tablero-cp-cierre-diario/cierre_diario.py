@@ -60,6 +60,13 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("tablero_cp_cierre_diario")
 
+# Tolerancia a filtros activos en las hojas (módulo común, ver automations/_comun): si Sheets rechaza una copia porque la
+# fila modelo está oculta por un filtro, se reintenta con una fila visible o con el filtro suspendido y restaurado.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_comun", "lib"))
+import filtros_sheets  # noqa: E402
+
+filtros_sheets.instalar()
+
 HOJA_FLOTA = "FLOTA CP"
 HOJA_FOTOS = "_CIERRE_DIARIO"
 PESTANAS = ("UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO")

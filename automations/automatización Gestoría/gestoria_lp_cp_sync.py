@@ -149,6 +149,13 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("gestoria_lp_cp_sync")
 
+# Tolerancia a filtros activos en las hojas (módulo común, ver automations/_comun): si Sheets rechaza una copia porque la
+# fila modelo está oculta por un filtro, se reintenta con una fila visible o con el filtro suspendido y restaurado.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_comun", "lib"))
+import filtros_sheets  # noqa: E402
+
+filtros_sheets.instalar()
+
 # Orden de columnas del Sheet, A -> AI (35 columnas), y su campo equivalente
 # en la respuesta de Maxinet. Confirmado 1 a 1 contra el `columns:` real del
 # DataTable y contra una fila real de la API (folio 1623, 2026-09-28).

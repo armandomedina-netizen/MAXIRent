@@ -102,6 +102,13 @@ def _instalar_reintentos_gspread(cliente=HTTPClient) -> None:
 
 _instalar_reintentos_gspread()
 
+# Tolerancia a filtros activos en las hojas (módulo común, ver automations/_comun): si Sheets rechaza una copia porque la
+# fila modelo está oculta por un filtro, se reintenta con una fila visible o con el filtro suspendido y restaurado.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_comun", "lib"))
+import filtros_sheets  # noqa: E402
+
+filtros_sheets.instalar()
+
 PAGINA = "cp-reporte-clientes-frecuentes-activos-v2.php"
 ENDPOINT = "json/cp-frecuentes-activos-data-v2.php"
 COLUMNAS_FIJAS = ["Sucursal", "Asesor", "Tipo", "No. Cliente", "Nombre", "Cumpleaños",
