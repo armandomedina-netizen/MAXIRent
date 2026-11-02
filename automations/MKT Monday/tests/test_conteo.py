@@ -1,4 +1,6 @@
-from mkt_sync.conteo import contar_mes, mes_de_creacion
+from datetime import datetime
+
+from mkt_sync.conteo import ZONA, contar_mes, mes_de_creacion, periodos_a_actualizar
 
 ESTADO = "col_estado"
 
@@ -32,3 +34,22 @@ def test_lead_sin_estado_cuenta_como_recibido_y_no_como_calificado():
 
 def test_mes_sin_leads():
     assert contar_mes([], ESTADO, "Califica", 2026, 10) == (0, 0)
+
+
+def hora(anio, mes, dia):
+    """Las 9:00 hora de Ciudad de México del día indicado."""
+    return datetime(anio, mes, dia, 9, 0, tzinfo=ZONA)
+
+
+def test_los_primeros_tres_dias_se_actualiza_tambien_el_mes_anterior():
+    assert periodos_a_actualizar(hora(2026, 11, 1)) == [(2026, 10), (2026, 11)]
+    assert periodos_a_actualizar(hora(2026, 11, 3)) == [(2026, 10), (2026, 11)]
+
+
+def test_despues_del_tercer_dia_solo_el_mes_en_curso():
+    assert periodos_a_actualizar(hora(2026, 11, 4)) == [(2026, 11)]
+    assert periodos_a_actualizar(hora(2026, 10, 31)) == [(2026, 10)]
+
+
+def test_en_enero_el_mes_anterior_es_diciembre_del_anio_anterior():
+    assert periodos_a_actualizar(hora(2027, 1, 2)) == [(2026, 12), (2027, 1)]

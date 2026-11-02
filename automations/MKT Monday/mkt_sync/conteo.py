@@ -5,12 +5,24 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 ZONA = ZoneInfo("America/Mexico_City")
+DIAS_CIERRE_MES_ANTERIOR = 3
 
 
 def mes_de_creacion(creado: str) -> tuple[int, int]:
     """(año, mes) en hora de Ciudad de México de la fecha de creación que monday entrega en UTC."""
     momento = datetime.fromisoformat(creado.replace("Z", "+00:00")).astimezone(ZONA)
     return momento.year, momento.month
+
+
+def periodos_a_actualizar(ahora: datetime) -> list[tuple[int, int]]:
+    """Mes en curso y, durante los primeros días del mes, también el anterior (que va primero), para que
+    el cierre de un mes incluya los leads de sus últimos días y los que se calificaron después de la
+    última corrida."""
+    actual = (ahora.year, ahora.month)
+    if ahora.day > DIAS_CIERRE_MES_ANTERIOR:
+        return [actual]
+    anterior = (ahora.year - 1, 12) if ahora.month == 1 else (ahora.year, ahora.month - 1)
+    return [anterior, actual]
 
 
 def contar_mes(leads: list[dict], columna_estado: str, etiqueta_califica: str, anio: int, mes: int) -> tuple[int, int]:

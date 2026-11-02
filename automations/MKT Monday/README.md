@@ -8,7 +8,7 @@ Actualiza en la pestaña **MKT** del libro del tablero LP los **leads recibidos*
 2. Cuenta los creados en el mes en curso (hora de Ciudad de México): el total es *recibidos* y los que tienen la etiqueta de calificado son *calificados*.
 3. Busca en la columna F de la hoja la fila de ese mes (la celda es una fecha; también acepta texto como `oct 2026`) y escribe solo G y H de esa fila.
 
-No toca ninguna otra celda: la columna de cierres, las fórmulas y los meses anteriores quedan como están.
+No toca ninguna otra celda: la columna de cierres y las fórmulas quedan como están. Los meses anteriores tampoco, salvo durante los primeros 3 días de cada mes, cuando también se refresca el mes que acaba de cerrar (con los leads de sus últimos días y los que se calificaron después).
 
 ## Estructura
 
@@ -54,7 +54,7 @@ python -m venv .venv
 .venv\Scripts\python mkt_monday_sync.py --mes 2026-09
 ```
 
-`--mes AAAA-MM` actualiza otro periodo; sin él se usa el mes en curso. `--forzar` permite escribir 0 recibidos sobre un total mayor que cero.
+`--mes AAAA-MM` actualiza solo ese periodo; sin él se usa el mes en curso y, los primeros 3 días del mes, también el anterior. `--forzar` permite escribir 0 recibidos sobre un total mayor que cero.
 
 ## Programación
 
@@ -63,7 +63,7 @@ python -m venv .venv
 ## Salvaguardas
 
 - Valida la configuración contra el tablero real y se detiene si falta una columna o una etiqueta.
-- Falla si la hoja no tiene la fila del mes o la tiene repetida.
+- Falla si la hoja no tiene la fila del mes o la tiene repetida; si eso pasa con uno de los dos periodos del cambio de mes, el otro se escribe igual y la corrida termina con error.
 - No sobrescribe una celda con fórmula.
 - No baja a cero un total que ya tiene leads, porque suele ser una lectura fallida.
 - Es idempotente: una segunda corrida sin cambios en monday no escribe nada.
@@ -72,7 +72,7 @@ python -m venv .venv
 ## Mantenimiento
 
 - Al empezar un año hay que agregar en la hoja las filas de los 12 meses; mientras no existan el script se detiene con un mensaje claro.
-- Cada mes se actualiza solo mientras es el mes en curso. Si se necesita cerrar el mes anterior después del cambio de mes, se corre con `--mes`.
+- Un mes se actualiza mientras es el mes en curso y durante los primeros 3 días del mes siguiente, que sirven para cerrarlo. Para corregir un mes más viejo se corre con `--mes`.
 
 ## Pruebas
 
