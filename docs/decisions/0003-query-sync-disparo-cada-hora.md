@@ -136,6 +136,8 @@ Principio: ningún proceso ni tablero nuestro lee fórmulas o datos del archivo 
 
 ### UBICACIONES de la base mantenida por el sync (2026-10-12)
 
+> Retirado el 2026-11-03: la pestaña se eliminó a propósito y el sync ya no la escribe (ADR 0025).
+
 La pestaña `UBICACIONES` de la base (que importa la copia del Query en `ESTADOS` para el ESTADO de cada renta) ya no se pega a mano: el sync completo la actualiza con el reporte de flota y un glosario propio sembrado una vez con la tabla de Nuvia. Detalle y pendientes en `0006-ubicaciones-glosario-hibrido-e-independencia-rentas-activas.md`.
 
 ### Lista de rentas activas desde TARIFA DETALLE (2026-10-19)
