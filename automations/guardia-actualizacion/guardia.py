@@ -43,6 +43,7 @@ log = logging.getLogger("guardia_actualizacion")
 RAIZ = Path(__file__).resolve().parents[1]
 ZONA = ZoneInfo("America/Mexico_City")
 TIMEOUT_SECO = 900
+LINEAS_ERROR = 12                  # líneas finales de una corrida en seco fallida que se copian al log
 ESPERA_MAX_RELANZAR = 900
 SONDEO_SEG = 15
 # Nuvia renombra pestañas de nuestro Tablero: se acepta el nombre de siempre o el que ya se le conoce
@@ -144,6 +145,11 @@ def ejecutar_en_seco(rev: Revision) -> tuple:
     try:
         r = subprocess.run([sys.executable, rev.script], cwd=RAIZ / rev.directorio, capture_output=True, text=True,
                            env={**os.environ, "DRY_RUN": "1"}, timeout=TIMEOUT_SECO)
+        if r.returncode != 0:
+            # Sin esto el resumen sólo dice "código 1" y no hay cómo saber por qué falló la corrida en seco
+            cola = (r.stdout + r.stderr).strip().splitlines()[-LINEAS_ERROR:]
+            log.warning("%s: la corrida en seco terminó con código %d. Últimas líneas de su salida:\n%s",
+                        rev.nombre, r.returncode, "\n".join(linea[:300] for linea in cola))
         return r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired:
         return 124, ""
