@@ -44,6 +44,8 @@ RAIZ = Path(__file__).resolve().parents[1]
 ZONA = ZoneInfo("America/Mexico_City")
 TIMEOUT_SECO = 900
 LINEAS_ERROR = 12                  # líneas finales de una corrida en seco fallida que se copian al log
+INTENTOS_EN_SECO = 2                # una corrida en seco que falla se repite una vez
+PAUSA_ENTRE_INTENTOS_SEG = 30
 ESPERA_MAX_RELANZAR = 900
 SONDEO_SEG = 15
 # Nuvia renombra pestañas de nuestro Tablero: se acepta el nombre de siempre o el que ya se le conoce
@@ -140,19 +142,30 @@ class Resultado:
 
 
 # ---------------------------------------------------------------- ejecución real
-def ejecutar_en_seco(rev: Revision) -> tuple:
-    """(código, salida) de la corrida en seco de la automatización; no escribe en ninguna hoja."""
+def _correr_en_seco(rev: Revision) -> tuple:
+    """(código, salida) de una corrida en seco del script; 124 si se agota el tiempo."""
     try:
         r = subprocess.run([sys.executable, rev.script], cwd=RAIZ / rev.directorio, capture_output=True, text=True,
                            env={**os.environ, "DRY_RUN": "1"}, timeout=TIMEOUT_SECO)
-        if r.returncode != 0:
-            # Sin esto el resumen sólo dice "código 1" y no hay cómo saber por qué falló la corrida en seco
-            cola = (r.stdout + r.stderr).strip().splitlines()[-LINEAS_ERROR:]
-            log.warning("%s: la corrida en seco terminó con código %d. Últimas líneas de su salida:\n%s",
-                        rev.nombre, r.returncode, "\n".join(linea[:300] for linea in cola))
         return r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired:
         return 124, ""
+
+
+def ejecutar_en_seco(rev: Revision, correr=_correr_en_seco, dormir=time.sleep) -> tuple:
+    """(código, salida) de la corrida en seco de la automatización; no escribe en ninguna hoja. Si falla, copia al log
+    las últimas líneas de su salida (sin eso el resumen sólo dice "código 1") y la repite una vez tras una pausa: un
+    corte de Maxinet o de Google no debe dejar la revisión en "no verificado"."""
+    for intento in range(1, INTENTOS_EN_SECO + 1):
+        codigo, salida = correr(rev)
+        if codigo == 0:
+            return codigo, salida
+        cola = salida.strip().splitlines()[-LINEAS_ERROR:]
+        log.warning("%s: la corrida en seco terminó con código %d (intento %d de %d). Últimas líneas de su salida:\n%s",
+                    rev.nombre, codigo, intento, INTENTOS_EN_SECO, "\n".join(linea[:300] for linea in cola))
+        if intento < INTENTOS_EN_SECO:
+            dormir(PAUSA_ENTRE_INTENTOS_SEG)
+    return codigo, salida
 
 
 def relanzar_workflow(archivo: str) -> str:
