@@ -27,5 +27,6 @@ Una automatización nueva, `automations/MKT Monday`, con su propio workflow `mkt
 ## Consecuencias
 
 - Un mes se cierra con la corrida de las 9:00 del último día y se vuelve a refrescar en los primeros 3 días del mes siguiente, así que quedan incluidos los leads de sus últimos días y los que se calificaron después. Si la fila de uno de los dos periodos falla, el otro se escribe igual y la corrida termina con error.
+- El reloj de GitHub no garantiza la hora: el 3-nov-2026 la corrida pedida a las 9:00 no había salido a las 9:30. Por eso el workflow se pide al :07 (el :00 es la hora con más disparos saltados) y se repite cada hora hasta las 12:07; como una corrida sin cambios no escribe nada, las repeticiones son inofensivas. La hora exacta de las 9:00 la da una ventana en el Vigilante, pendiente de agregar.
 - Al empezar un año hay que agregar en la hoja las filas de los 12 meses; mientras no existan, el proceso se detiene sin escribir.
 - El registro de Actions es público: no imprime cifras ni nombres de columnas o etiquetas.

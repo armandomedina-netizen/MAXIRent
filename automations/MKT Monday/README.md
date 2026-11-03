@@ -58,7 +58,7 @@ python -m venv .venv
 
 ## Programación
 
-`.github/workflows/mkt-monday.yml` corre todos los días a las 9:00 (hora CDMX) y se puede lanzar a mano desde la pestaña Actions. Secrets que usa: `MONDAY_TOKEN`, `GOOGLE_CREDS_JSON`, `SPREADSHEET_ID_SECUNDARIO` y `MKT_MONDAY_CONFIG_JSON`.
+`.github/workflows/mkt-monday.yml` corre todos los días desde las 9:07 (hora CDMX) y se repite cada hora hasta las 12:07 como respaldo, porque el reloj de GitHub salta o retrasa horas los disparos que caen al :00. Las repeticiones son seguras: sin cambios en monday no escriben nada. Para que arranque a las 9:00 exactas hace falta una ventana en el Vigilante (ver `docs/automatizaciones.md`). También se puede lanzar a mano desde la pestaña Actions. Secrets que usa: `MONDAY_TOKEN`, `GOOGLE_CREDS_JSON`, `SPREADSHEET_ID_SECUNDARIO` y `MKT_MONDAY_CONFIG_JSON`.
 
 ## Salvaguardas
 

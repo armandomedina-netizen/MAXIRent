@@ -2,8 +2,10 @@ name: MKT Monday
 
 on:
   schedule:
-    # Una corrida al día a las 9:00 hora CDMX (UTC-6).
-    - cron: "0 15 * * *"
+    # La corrida de las 9:00 hora CDMX (UTC-6) se pide al :07 porque el reloj de GitHub salta o
+    # retrasa horas los disparos que caen al :00, y se repite cada hora hasta las 12:00 como respaldo.
+    # Una corrida sin cambios en monday no escribe nada en la hoja.
+    - cron: "7 15-18 * * *"
   workflow_dispatch: {}
 
 concurrency:
