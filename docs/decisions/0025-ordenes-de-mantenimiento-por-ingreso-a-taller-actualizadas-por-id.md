@@ -13,15 +13,26 @@ Ya existe `maxinet-mtto-ordenes` (ADR 0017), que lee el mismo reporte, pero con 
 - `POST json/lp-mtto-ordenes.php` con `Criterio=INGRESO`, `Desde` y `Hasta` entrega las 62 celdas del reporte. Del 1 de enero a hoy son 6,187 órdenes (una sola consulta de unos 10 segundos), con Id únicos y todas con fecha de ingreso; la de hoy ya aparece.
 - `Estatus` debe ir con valor, pero con `INGRESO` devuelve exactamente las mismas órdenes con `1` que con `0`.
 - El filtro por ingreso deja fuera las órdenes que todavía no entran a taller (hoy, 92 de las 240 abiertas: citas por aprobar y órdenes en revisión). Entran a la hoja el día que ingresan.
-- 41 celdas de fecha del año (Fecha Promesa, Fecha Cita, Fecha Prop.Cita, Fecha Entrega Cliente) traen años tecleados mal; se conservan como texto, igual que en ADR 0017.
+- 41 celdas de fecha del año (Fecha Promesa, Fecha Cita, Fecha Prop.Cita, Fecha Entrega Cliente) traen años tecleados mal (0026, 2206, 3026...). Ver abajo cómo las guarda el archivo y cómo se igualan.
+
+## Hallazgos del archivo real (2026-11-04)
+
+La pestaña de órdenes tiene 6,178 órdenes y el encabezado idéntico; el archivo trae otra pestaña ajena, así que `WORKSHEET_MTTO_TALLER` es obligatorio. La primera comparación contra Maxinet marcó 2,577 filas como distintas (42%) y la salvaguarda de cambio masivo detuvo la corrida sin escribir. Casi todo era forma, no dato:
+
+- **Texto**: el archivo guarda los textos de una línea (modelo, nombres, taller) con los espacios repetidos colapsados, y los de varias líneas (diagnóstico, comentarios) con salto `\n` en lugar del `\r\n` de Maxinet.
+- **Teléfonos**: donde no hay teléfono Maxinet manda `0000000000` y Sheets lo guardó como el número 0.
+- **Fechas con año de dos dígitos**: Sheets leyó `0026-07-15` como 2026-07-15; los demás años raros (2206, 3026, 0206) quedaron como fecha real con ese año, no como texto.
+- **Costos dañados**: 21 celdas de costo y monto traían un número de serie en lugar del importe, porque Sheets leyó `2931.03` como marzo del año 2931 en la carga anterior (importes con centavos entre .01 y .12). Las 21 coinciden exactamente con esa lectura. La corrida las corrige.
+
+Con esos criterios la comparación queda en movimiento real: 156 órdenes con cambios (121 con un día más de taller, 39 con otro estatus, cierres, diagnósticos y costos) y 39 nuevas.
 
 ## Decisión
 
 Una automatización nueva, `automations/maxinet-mtto-taller`, con su propio workflow (`maxinet-mtto-taller.yml`) y sus propios secrets. En cada corrida:
 
 1. Pide a Maxinet las órdenes con ingreso del 1 de enero del año a hoy (hora CDMX). La consulta es completa a propósito: es la única forma de enterarse de que una orden pasó a `CERRADO`, porque deja de aparecer en las abiertas.
-2. Las compara por Id con la hoja. Cada celda se normaliza antes de comparar (fecha, hora, número o texto), de modo que una fecha guardada como texto, un teléfono guardado como número o un error de coma flotante en una hora no cuentan como cambio.
-3. Escribe sólo lo que cambió: actualiza en su lugar las filas distintas (columnas `A:BG` de esa fila) y agrega al final las órdenes nuevas, ordenadas por Id. Todo con `RAW` y valores tipados (fechas y horas como número de serie, costos y días como número, el resto como texto), para que Sheets no reinterprete placas ni folios.
+2. Las compara por Id con la hoja. Cada celda se normaliza antes de comparar (fecha, hora, número o texto), de modo que una fecha guardada como texto, un teléfono guardado como número, espacios o saltos de línea repetidos, `0000000000` contra `0` o un error de coma flotante en una hora no cuentan como cambio.
+3. Escribe sólo lo que cambió: actualiza en su lugar las filas distintas (columnas `A:BG` de esa fila, conservando tal cual las celdas que no cambiaron) y agrega al final las órdenes nuevas, ordenadas por Id. Todo con `RAW` y valores tipados (fechas y horas como número de serie, costos y días como número, el resto como texto en la forma que ya usa el archivo), para que Sheets no reinterprete placas, folios ni importes. Como una celda vacía no tiene formato y un número de serie se vería como `46330`, las fechas y horas de las órdenes nuevas, y las que una orden que ya estaba recibe por primera vez (al cerrarse, por ejemplo), llevan el formato que el archivo ya usa (`yyyy-mm-dd` y `h:mm`); costos, días y teléfonos van sin formato, como están.
 4. No borra ni reordena filas. Una orden que Maxinet deje de mostrar conserva su última versión; el log sólo cuenta cuántas son.
 
 **Ventana.** Empieza el 1 de enero, o antes si la hoja tiene alguna orden sin cerrar con ingreso anterior. Sin esa regla, al cambiar de año las órdenes que quedaron abiertas en diciembre se quedarían con el estatus viejo para siempre.

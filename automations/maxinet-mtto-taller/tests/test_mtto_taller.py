@@ -121,11 +121,23 @@ def test_fechas_horas_y_numeros_se_tipan():
 
 
 @pytest.mark.parametrize("nombre,texto", [
-    ("Fecha Promesa", "0026-07-15"), ("Fecha Cita", "2026-02-30"), ("Hora Alta", "25:99"), ("Costo Total", "N/A"),
+    ("Fecha Cita", "2026-02-30"), ("Hora Alta", "25:99"), ("Costo Total", "N/A"),
     ("# Reserva", "#217079644"), ("Tel. Contacto", "8113279900"), ("Motivo Reingreso", "=SUM(A1)"), ("No.Placa", "1E5"),
 ])
 def test_lo_que_no_tiene_la_forma_esperada_queda_como_texto(nombre, texto):
     assert m._valor(nombre, texto) == texto and isinstance(m._valor(nombre, texto), str)
+
+
+def test_un_anio_de_dos_digitos_se_lee_como_20xx_y_otros_anios_raros_quedan_como_fecha_real():
+    assert m._valor("Fecha Promesa", "0026-07-15") == (dt.date(2026, 7, 15) - dt.date(1899, 12, 30)).days   # 46218, como el archivo
+    assert m._valor("Fecha Promesa", "2206-03-04") == (dt.date(2206, 3, 4) - dt.date(1899, 12, 30)).days
+    assert m._valor("Fecha Cita", "0206-04-01") == (dt.date(206, 4, 1) - dt.date(1899, 12, 30)).days        # tal cual, negativo
+
+
+def test_el_texto_se_guarda_como_en_el_archivo():
+    assert m._valor("Modelo", "2024 NP300  REDILAS") == "2024 NP300 REDILAS"                 # una línea, sin espacios repetidos
+    assert m._valor("Nombre Cliente", "ANA  \t LOPEZ") == "ANA LOPEZ"
+    assert m._valor("Diagnóstico", "revisar\r\nfrenos  y llantas") == "revisar\nfrenos  y llantas"     # CRLF -> LF; el resto igual
 
 
 def test_la_fila_de_la_hoja_incluye_los_datos_de_contacto_pedidos():
@@ -147,6 +159,15 @@ def test_la_fila_de_la_hoja_incluye_los_datos_de_contacto_pedidos():
     ("Costo Total", "3,665.60", 3665.6),
     ("Costo Total", 3665.6, 3665.6),
     ("Motivo Reingreso", None, ""),
+    ("Fecha Promesa", 46218, "0026-07-15"),                                  # año de dos dígitos: Sheets lo guardó como 2026
+    ("Fecha Promesa", (dt.date(2206, 3, 4) - dt.date(1899, 12, 30)).days, "2206-03-04"),   # otros años raros, como fecha real
+    ("Modelo", "2024 NP300 REDILAS", "2024 NP300  REDILAS"),                 # espacios repetidos
+    ("Nombre Cliente", "ANA LOPEZ", "ANA  LOPEZ "),
+    ("Diagnóstico", "revisar\nfrenos", "revisar\r\nfrenos"),                 # CRLF contra LF
+    ("Diagnóstico", "revisar\nfrenos", "revisar \r\n  frenos"),
+    ("Cel. Contacto", 0, "0000000000"),                                      # marcador de Maxinet que Sheets guardó como 0
+    ("Cel. Contacto", "0000000000", 0),
+    ("Cel. Contacto", 8113279900, "8113279900"),
 ])
 def test_canonico_no_cuenta_diferencias_de_formato_como_cambios(nombre, en_hoja, de_maxinet):
     assert m.canonico(nombre, en_hoja) == m.canonico(nombre, de_maxinet)
@@ -156,7 +177,14 @@ def test_canonico_no_cuenta_diferencias_de_formato_como_cambios(nombre, en_hoja,
     ("Estatus", "EN TALLER", "TRABAJO TERMINADO"),
     ("Fecha Cierre", "", SERIE_5_OCT),
     ("Costo Total", 3665.6, 3700.0),
+    ("Costo Total", 376626, 2931.03),                                        # el valor que Sheets leyó como fecha (marzo de 2931)
     ("Hora Alta", "09:28", (9 * 60 + 29) / 1440),
+    ("Cel. Contacto", 0, "8113279900"),
+    ("Cel. Contacto", "", "0000000000"),
+    ("Diagnóstico", "", "falla de frenos"),
+    ("Diagnóstico", "falla de frenos", "falla de llantas"),
+    ("Modelo", "2024 NP300 REDILAS", "2024 NP300 PICK UP"),
+    ("Fecha Promesa", 46218, "2026-07-16"),
 ])
 def test_canonico_si_distingue_cambios_reales(nombre, en_hoja, de_maxinet):
     assert m.canonico(nombre, en_hoja) != m.canonico(nombre, de_maxinet)
@@ -192,6 +220,20 @@ def test_actualiza_en_su_lugar_solo_las_filas_que_cambiaron_y_agrega_las_nuevas_
     assert "A3:BG3" not in rangos and "A4:BG4" not in rangos               # las filas iguales no se tocan
 
 
+def test_al_actualizar_una_fila_las_celdas_que_no_cambiaron_se_quedan_como_estan_en_la_hoja():
+    en_hoja = fila_hoja(10, estatus="EN TALLER")
+    en_hoja[m.ENCABEZADO.index("Cel. Contacto")] = 0                       # Sheets guardó 0000000000 como el número 0
+    en_hoja[m.ENCABEZADO.index("Modelo")] = "2024 NP300 REDILAS"
+    hoja = _hoja_con(en_hoja)
+    nueva = fila_hoja(10, estatus="CERRADO", **{"Cel. Contacto": "0000000000", "Modelo": "2024 NP300  REDILAS"})
+    plan = _correr(hoja, [nueva])
+    assert dict(plan["por_columna"]) == {"Estatus": 1}                     # nada más cuenta como cambio
+    fila = hoja.celdas[1]
+    assert fila[m.COL_ESTATUS] == "CERRADO"
+    assert fila[m.ENCABEZADO.index("Cel. Contacto")] == 0 and isinstance(fila[m.ENCABEZADO.index("Cel. Contacto")], int)
+    assert fila[m.ENCABEZADO.index("Modelo")] == "2024 NP300 REDILAS"
+
+
 def test_una_orden_que_maxinet_ya_no_muestra_conserva_su_ultima_version():
     hoja = _hoja_con(*_filas(1, 2, 3))
     plan = _correr(hoja, _filas(1, 3))
@@ -221,13 +263,30 @@ def test_amplia_la_hoja_si_las_filas_no_caben():
     assert hoja.filas_agregadas > 0 and hoja.row_count >= 5
 
 
-def test_da_formato_de_fecha_hora_y_costo_solo_a_las_filas_nuevas():
+def _formatos_pedidos(hoja):
+    return [p["repeatCell"] for p in hoja.spreadsheet.peticiones if "repeatCell" in p]
+
+
+def test_da_formato_de_fecha_y_hora_solo_a_las_filas_nuevas_y_no_a_los_costos():
     hoja = _hoja_con(*_filas(1))
     _correr(hoja, _filas(1, 2, 3))
-    pedidos = [p["repeatCell"] for p in hoja.spreadsheet.peticiones if "repeatCell" in p]
-    tipos = [p["cell"]["userEnteredFormat"]["numberFormat"]["type"] for p in pedidos]
-    assert tipos.count("DATE") == len(m.FECHAS) and tipos.count("TIME") == len(m.HORAS) and tipos.count("NUMBER") == 3
+    pedidos = _formatos_pedidos(hoja)
+    formatos = [p["cell"]["userEnteredFormat"]["numberFormat"] for p in pedidos]
+    tipos = [f["type"] for f in formatos]
+    assert tipos.count("DATE") == len(m.FECHAS) and tipos.count("TIME") == len(m.HORAS) and len(tipos) == len(pedidos)
+    assert {(f["type"], f["pattern"]) for f in formatos} == {("DATE", "yyyy-mm-dd"), ("TIME", "h:mm")}   # los del archivo
     assert {(p["range"]["startRowIndex"], p["range"]["endRowIndex"]) for p in pedidos} == {(2, 4)}   # filas 3 y 4
+
+
+def test_una_orden_existente_que_recibe_fecha_y_hora_de_cierre_por_primera_vez_lleva_su_formato():
+    hoja = _hoja_con(fila_hoja(10, estatus="EN TALLER"))                  # sin Fecha ni Hora Cierre: celdas vacías, sin formato
+    _correr(hoja, [fila_hoja(10, estatus="CERRADO", **{"Fecha Cierre": "2026-11-03", "Hora Cierre": "17:30"})])
+    esperado = {(1, m.ENCABEZADO.index("Fecha Cierre"), "DATE"), (1, m.ENCABEZADO.index("Hora Cierre"), "TIME")}
+    assert {(p["range"]["startRowIndex"], p["range"]["startColumnIndex"], p["cell"]["userEnteredFormat"]["numberFormat"]["type"])
+            for p in _formatos_pedidos(hoja)} == esperado
+    # si la celda ya tenía una fecha y sólo cambia, conserva el formato que tiene: no se vuelve a pedir
+    _correr(hoja, [fila_hoja(10, estatus="CERRADO", **{"Fecha Cierre": "2026-11-04", "Hora Cierre": "17:30"})])
+    assert len(_formatos_pedidos(hoja)) == 2
 
 
 def test_deja_la_hora_de_actualizacion_en_la_columna_bi_sin_pisar_contenido_ajeno():

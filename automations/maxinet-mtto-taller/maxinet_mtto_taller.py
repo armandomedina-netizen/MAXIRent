@@ -127,6 +127,8 @@ HORAS = {n for n in ENCABEZADO if n.startswith("Hora ")}
 NUMEROS = {"Id", "Km.Actual", "Dias Cte. Entr. Taller", "Dias Taller", "Costo Total", "Monto cliente",
            "Costo Real", "CANTIDAD LLANTAS", "IdApp"}
 COSTOS = ("Costo Total", "Monto cliente", "Costo Real")
+TELEFONOS = {"Tel. Contacto", "Cel. Contacto"}
+MULTILINEA = {"Diagnóstico", "Comentarios Cliente"}          # los únicos textos con saltos de línea; el resto va en una línea
 
 COL_ID = ENCABEZADO.index("Id")
 COL_ESTATUS = ENCABEZADO.index("Estatus")
@@ -248,17 +250,41 @@ def normalizar_filas(filas: list[list]) -> list[list[str]]:
     return out
 
 
+def _serie_fecha(texto: str) -> int | None:
+    """Número de serie de una fecha ISO, o None si no es una fecha válida. Un año de dos dígitos (0026, tecleado sin el
+    '20') se lee como 20xx, igual que lo guardó Sheets en las celdas que ya tenía el archivo; los demás años raros se
+    conservan como lo que son (2206, 3026), también como en el archivo."""
+    if not FECHA_RE.match(texto):
+        return None
+    try:
+        d = dt.date.fromisoformat(texto)
+        if d.year < 100:
+            d = d.replace(year=d.year + 2000)
+    except ValueError:
+        return None
+    return (d - BASE_SERIAL).days
+
+
+def _colapsar(texto: str) -> str:
+    """Espacios, tabuladores y saltos de línea repetidos como un solo espacio, sin espacios en los bordes."""
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _forma_texto(nombre: str, texto: str) -> str:
+    """Texto como lo guarda el archivo: una línea (espacios repetidos colapsados) salvo los campos de varias líneas, que
+    sólo normalizan el salto de línea de Windows (CRLF) al de Sheets (LF)."""
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n")
+    return texto if nombre in MULTILINEA else re.sub(r"\s+", " ", texto)
+
+
 def _valor(nombre: str, texto: str):
     """Valor tipado de una celda: fecha y hora como número de serie, números como número, el resto como texto.
-    Lo que no tenga la forma esperada (por ejemplo una fecha con año 0026 tecleada mal) se conserva como texto."""
+    Lo que no tenga la forma esperada (una fecha que no existe, una hora de 25:99) se conserva como texto."""
     if texto == "":
         return ""
-    if nombre in FECHAS and FECHA_RE.match(texto):
-        try:
-            d = dt.date.fromisoformat(texto)
-        except ValueError:
-            return texto
-        return (d - BASE_SERIAL).days if 2000 <= d.year <= 2100 else texto
+    if nombre in FECHAS:
+        serie = _serie_fecha(texto)
+        return texto if serie is None else serie
     if nombre in HORAS:
         m = HORA_RE.match(texto)
         if m and int(m[1]) < 24 and int(m[2]) < 60 and int(m[3] or 0) < 60:
@@ -268,7 +294,7 @@ def _valor(nombre: str, texto: str):
         t = texto.replace(",", "")
         if NUMERO_RE.match(t):
             return float(t) if "." in t else int(t)
-    return texto
+    return _forma_texto(nombre, texto)
 
 
 def a_fila_hoja(fila: list[str]) -> list:
@@ -282,20 +308,15 @@ def _es_numero(v) -> bool:
 
 def canonico(nombre: str, v):
     """Forma comparable de una celda, sea del reporte o de la hoja: la misma orden con el mismo dato da el mismo valor
-    aunque la hoja guarde la fecha como texto o el teléfono como número."""
+    aunque la hoja guarde la fecha como texto, el teléfono como número o los espacios y saltos de línea de otra forma."""
     if v is None or (isinstance(v, str) and v.strip() == ""):
         return ""
     if nombre in FECHAS:
         if _es_numero(v):
             return int(v)
         t = str(v).strip()
-        if FECHA_RE.match(t):
-            try:
-                d = dt.date.fromisoformat(t)
-                return (d - BASE_SERIAL).days
-            except ValueError:
-                return t
-        return t
+        serie = _serie_fecha(t)
+        return t if serie is None else serie
     if nombre in HORAS:
         if _es_numero(v):
             return round(v * 86400)
@@ -307,9 +328,10 @@ def canonico(nombre: str, v):
             return round(float(v), 4)
         t = str(v).strip().replace(",", "")
         return round(float(t), 4) if NUMERO_RE.match(t) else str(v).strip()
-    if _es_numero(v):
-        return str(int(v)) if float(v).is_integer() else str(v)
-    return str(v).strip()
+    t = str(int(v)) if _es_numero(v) and float(v).is_integer() else _colapsar(str(v))
+    if nombre in TELEFONOS and re.fullmatch(r"[0-9]+", t):
+        return t.lstrip("0") or "0"          # Maxinet manda 0000000000 donde no hay teléfono y Sheets lo guarda como 0
+    return t
 
 
 # ------------------------------------------------------------------ Sheet
@@ -406,7 +428,7 @@ def pendiente_desde(existentes: dict) -> str | None:
 def planear(existentes: dict, nuevas: list[list], desde: str, hasta: str) -> dict:
     """Qué hay que escribir: `cambios` [(fila, valores)] de órdenes ya en la hoja que difieren de Maxinet, `altas`
     [valores] de órdenes que no estaban, y las cuentas para el log y las salvaguardas."""
-    cambios, altas = [], []
+    cambios, altas, formatos = [], [], []
     por_columna = collections.Counter()
     for fila in sorted(nuevas, key=lambda f: f[COL_ID]):
         previo = existentes.get(fila[COL_ID])
@@ -414,11 +436,16 @@ def planear(existentes: dict, nuevas: list[list], desde: str, hasta: str) -> dic
             altas.append(fila)
             continue
         numero, valores = previo
-        distintas = [ENCABEZADO[k] for k in range(len(ENCABEZADO))
+        distintas = [k for k in range(len(ENCABEZADO))
                      if canonico(ENCABEZADO[k], valores[k]) != canonico(ENCABEZADO[k], fila[k])]
         if distintas:
-            cambios.append((numero, fila))
-            por_columna.update(distintas)
+            nueva = list(valores)                         # la celda que no cambió se queda como está en la hoja
+            for k in distintas:
+                nueva[k] = fila[k]
+                if _formato(ENCABEZADO[k]) and _es_numero(fila[k]) and not _es_numero(valores[k]):
+                    formatos.append((numero, k))          # fecha u hora que la orden recibe por primera vez
+            cambios.append((numero, nueva))
+            por_columna.update(ENCABEZADO[k] for k in distintas)
     ids_maxinet = {f[COL_ID] for f in nuevas}
     s_desde = (dt.date.fromisoformat(desde) - BASE_SERIAL).days
     s_hasta = (dt.date.fromisoformat(hasta) - BASE_SERIAL).days
@@ -426,7 +453,7 @@ def planear(existentes: dict, nuevas: list[list], desde: str, hasta: str) -> dic
                 if isinstance(canonico("Fecha Ingreso Taller", v[COL_INGRESO]), int)
                 and s_desde <= canonico("Fecha Ingreso Taller", v[COL_INGRESO]) <= s_hasta]
     return {
-        "cambios": cambios, "altas": altas, "por_columna": por_columna,
+        "cambios": cambios, "altas": altas, "formatos": formatos, "por_columna": por_columna,
         "en_hoja": len(existentes), "en_maxinet": len(nuevas), "iguales": len(nuevas) - len(cambios) - len(altas),
         "en_rango": len(en_rango), "ausentes": sum(1 for i in en_rango if i not in ids_maxinet),
         "fuera_de_maxinet": sum(1 for i in existentes if i not in ids_maxinet),
@@ -448,16 +475,29 @@ def revisar_volumen(plan: dict) -> None:
             f"Revisar con DRY_RUN=1 qué columnas difieren (FORZAR=1 para omitir).")
 
 
+def _formato(nombre: str):
+    """(tipo, patrón) de fecha u hora de una columna, como el que ya usa el archivo; None si no lleva (los costos, los días
+    y los teléfonos están sin formato)."""
+    return ("DATE", "yyyy-mm-dd") if nombre in FECHAS else ("TIME", "h:mm") if nombre in HORAS else None
+
+
+def _pedido_formato(hoja, primera: int, ultima: int, k: int) -> dict:
+    tipo, patron = _formato(ENCABEZADO[k])
+    return {"repeatCell": {"range": {"sheetId": hoja.id, "startRowIndex": primera - 1, "endRowIndex": ultima,
+                                     "startColumnIndex": k, "endColumnIndex": k + 1},
+                           "fields": "userEnteredFormat.numberFormat",
+                           "cell": {"userEnteredFormat": {"numberFormat": {"type": tipo, "pattern": patron}}}}}
+
+
 def _formatos_altas(hoja, primera: int, ultima: int) -> list:
-    """Formato de fecha, hora y costo para las filas agregadas (idempotente; no toca las filas existentes)."""
-    def formato(nombres, tipo, patron):
-        return [{"repeatCell": {"range": {"sheetId": hoja.id, "startRowIndex": primera - 1, "endRowIndex": ultima,
-                                          "startColumnIndex": ENCABEZADO.index(n), "endColumnIndex": ENCABEZADO.index(n) + 1},
-                                "fields": "userEnteredFormat.numberFormat",
-                                "cell": {"userEnteredFormat": {"numberFormat": {"type": tipo, "pattern": patron}}}}}
-                for n in nombres]
-    return (formato(sorted(FECHAS), "DATE", "yyyy-mm-dd") + formato(sorted(HORAS), "TIME", "hh:mm")
-            + formato(COSTOS, "NUMBER", "#,##0.00"))
+    """Formato de fecha y hora para las filas agregadas (idempotente; no toca las filas existentes)."""
+    return [_pedido_formato(hoja, primera, ultima, k) for k, n in enumerate(ENCABEZADO) if _formato(n)]
+
+
+def _formatos_celdas(hoja, celdas: list) -> list:
+    """Formato para las fechas y horas que una orden que ya estaba en la hoja recibe por primera vez (por ejemplo al
+    cerrarse): una celda vacía no tiene formato y el número de serie se vería como 46330."""
+    return [_pedido_formato(hoja, n, n, k) for n, k in celdas]
 
 
 def escribir(hoja, libro, existentes: dict, ultima: int, vacia: bool, plan: dict, desde: str, hasta: str) -> None:
@@ -480,8 +520,10 @@ def escribir(hoja, libro, existentes: dict, ultima: int, vacia: bool, plan: dict
         datos.append({"range": f"A{primera + k}:{ULT_COL}{primera + k + len(bloque) - 1}", "values": bloque})
     for k in range(0, len(datos), TROZO_RANGOS):
         hoja.batch_update(datos[k:k + TROZO_RANGOS], raw=True)
-    if altas:
-        libro.batch_update({"requests": _formatos_altas(hoja, primera, primera + len(altas) - 1)})
+    pedidos = ((_formatos_altas(hoja, primera, primera + len(altas) - 1) if altas else [])
+               + _formatos_celdas(hoja, plan["formatos"]))
+    for k in range(0, len(pedidos), TROZO_RANGOS):
+        libro.batch_update({"requests": pedidos[k:k + TROZO_RANGOS]})
     _marcar_actualizacion(hoja, desde, hasta)
     log.info("Escrito: %d filas actualizadas y %d órdenes nuevas (filas %d a %d)", len(cambios), len(altas),
              primera, primera + len(altas) - 1 if altas else primera - 1)
