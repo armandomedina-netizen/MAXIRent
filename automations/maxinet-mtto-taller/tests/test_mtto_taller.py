@@ -308,6 +308,19 @@ def test_la_hora_de_actualizacion_tampoco_pisa_las_celdas_de_abajo():
 
 
 # ---------------------------------------------------------------- salvaguardas
+def test_si_la_hoja_no_tiene_columnas_a_la_derecha_no_escribe_la_hora_y_lo_demas_sigue(caplog):
+    hoja = _hoja_con(fila_hoja(10, estatus="EN TALLER"))
+    hoja.col_count = len(m.ENCABEZADO)                                     # exactamente las 59 columnas, como el archivo real
+    with caplog.at_level("WARNING"):
+        plan = _correr(hoja, [fila_hoja(10, estatus="CERRADO"), fila_hoja(11)])
+    assert (len(plan["cambios"]), len(plan["altas"])) == (1, 1)
+    assert hoja.celdas[1][m.COL_ESTATUS] == "CERRADO" and hoja.celdas[2][m.COL_ID] == 11
+    assert not any(r.startswith(m.COL_ESTADO) for r, _ in hoja.escrituras)
+    assert hoja.col_count == len(m.ENCABEZADO)                             # no agrega columnas por su cuenta
+    assert "no hay columnas libres" in caplog.text
+    m._marcar_actualizacion(hoja, "2026-01-01", "2026-11-04")              # una corrida sin cambios tampoco falla
+
+
 def test_encabezado_distinto_detiene_sin_escribir():
     hoja = HojaFalsa([["Otra", "cosa"] + m.ENCABEZADO[2:], *_filas(1)])
     with pytest.raises(RuntimeError, match="encabezado distinto"):
