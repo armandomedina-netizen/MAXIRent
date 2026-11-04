@@ -239,3 +239,41 @@ def test_recuperador_cachea_y_carga_hoy_una_sola_vez():
                         descargar=lambda f: descargas.append(f) or [fila_cruda(f.isoformat(), "AAA", "TO", "TO", "EN RENTA CLIENTE CP")])
     rec.flota(D22); rec.flota(D22); rec.flota(D23)
     assert len(cargas) == 1 and descargas == [D22, D23]
+
+
+# ---------------------------------------------------------------- "Meses uso" (4-nov-2026): el reporte trae 42 columnas
+def test_meses_uso_no_se_importa_a_flota_cp_ni_pisa_las_columnas_estaticas():
+    f = fila_cruda("2026-10-22", "AAA", "LT", "TO", "DISPONIBLE")
+    f[40], f[41] = "2020-01-01", "99"                  # EntryDate (AS) y Meses uso (sin columna en FLOTA CP)
+    cols = r.armar_columnas([f], {"G": ["AAA"], "AT": ["OK"], "AU": ["MAXIRENT"], "AW": ["CARGA"]})
+    assert cols["AS"] == ["2020-01-01"]                # la última columna cruda sigue siendo EntryDate
+    assert cols["AT"] == ["OK"] and cols["AU"] == ["MAXIRENT"]   # estáticas por placa, no el valor 99
+    assert all("99" not in v for v in cols.values())
+
+
+class _Sesion:
+    def __init__(self, filas):
+        self.filas = filas
+
+    def post(self, url, data=None, timeout=None):
+        import json
+
+        class _R:
+            pass
+        x = _R()
+        x.content = json.dumps({"respuesta": "ok"} if "AccessValidate" in url else {"data": self.filas}).encode()
+        return x
+
+
+@pytest.mark.parametrize("ancho,ok", [(42, True), (41, False), (43, False)])
+def test_descargar_flota_exige_el_ancho_actual_del_reporte(monkeypatch, ancho, ok):
+    monkeypatch.setenv("MAXINET_BASE_URL", "http://maxinet.prueba")
+    monkeypatch.setenv("MAXINET_USER", "u")
+    monkeypatch.setenv("MAXINET_PASS", "p")
+    fila = ["<a>"] + ["2026-10-22"] + [f"v{i}" for i in range(ancho - 1)]
+    monkeypatch.setattr(r, "_sesion", lambda: _Sesion([fila]))
+    if ok:
+        assert len(r.descargar_flota(D22)[0]) == 42
+    else:
+        with pytest.raises(RuntimeError, match="se esperaban 42"):
+            r.descargar_flota(D22)
