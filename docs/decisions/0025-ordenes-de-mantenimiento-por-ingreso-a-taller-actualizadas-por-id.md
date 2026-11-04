@@ -37,7 +37,7 @@ Una automatización nueva, `automations/maxinet-mtto-taller`, con su propio work
 
 **Ventana.** Empieza el 1 de enero, o antes si la hoja tiene alguna orden sin cerrar con ingreso anterior. Sin esa regla, al cambiar de año las órdenes que quedaron abiertas en diciembre se quedarían con el estatus viejo para siempre.
 
-**Filas ajenas.** Una fila sin Id numérico (un total al pie, por ejemplo) no es una orden y cuenta como ocupada: las altas se agregan después de ella. Las columnas a la derecha de `BG` no se tocan, salvo `BI1:BI4`, donde queda la hora de la última corrida y la ventana, y sólo si esas celdas están vacías o ya son de esta automatización.
+**Filas ajenas.** Una fila sin Id numérico (un total al pie, por ejemplo) no es una orden y cuenta como ocupada: las altas se agregan después de ella. Las columnas a la derecha de `BG` no se tocan, salvo `BI1:BI4`, donde queda la hora de la última corrida y la ventana, y sólo si esas celdas están vacías o ya son de esta automatización. La automatización no agrega columnas: el archivo real tiene exactamente las 59 columnas de datos, y la primera corrida real (2026-11-04) escribió los datos pero falló al intentar dejar esa hora, porque la API rechaza escribir fuera de la cuadrícula. Si la pestaña no tiene columnas libres a la derecha, ahora se omite la hora con un aviso en el log y la corrida sigue y valida; para verla, basta agregar columnas a la pestaña.
 
 **Salvaguardas** (`FORZAR=1` omite las de volumen; las de estructura siempre aplican). La corrida se detiene sin escribir si:
 

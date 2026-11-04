@@ -539,7 +539,12 @@ def escribir(hoja, libro, existentes: dict, ultima: int, vacia: bool, plan: dict
 
 def _marcar_actualizacion(hoja, desde: str, hasta: str) -> None:
     """Hora de la última corrida y ventana, fuera de los datos. Sólo escribe si esas cuatro celdas están vacías o ya
-    son las de esta automatización (la primera lleva la marca); si hay otra cosa, no la pisa."""
+    son las de esta automatización (la primera lleva la marca); si hay otra cosa, no la pisa. Si la cuadrícula no llega
+    hasta esa columna (la API rechaza leer o escribir fuera de ella), no agrega columnas: avisa y sigue."""
+    if hoja.col_count < len(ENCABEZADO) + 2:
+        log.warning("La hoja tiene %d columnas y no hay columnas libres a la derecha de los datos; no se escribió la "
+                    "hora de actualización (agregar columnas si se quiere verla)", hoja.col_count)
+        return
     rango = f"{COL_ESTADO}1:{COL_ESTADO}4"
     filas = hoja.get(rango)
     con_algo = any(str(c).strip() for f in filas for c in f)

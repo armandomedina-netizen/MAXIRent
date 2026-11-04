@@ -74,7 +74,14 @@ class HojaFalsa:
         mm = re.fullmatch(r"([A-Z]+)(\d+):([A-Z]+)(\d*)", rango)
         return _col(mm[1]), int(mm[2]), _col(mm[3]), int(mm[4]) if mm[4] else None
 
+    def _dentro_de_la_cuadricula(self, rango):
+        """Como la API real: leer o escribir fuera de las columnas de la pestaña es un error."""
+        if self._rango(rango)[2] >= self.col_count:
+            raise RuntimeError(f"APIError: [400]: Range ({self.title}!{rango}) exceeds grid limits. "
+                               f"Max rows: {self.row_count}, max columns: {self.col_count}")
+
     def get(self, rango, value_render_option=None):
+        self._dentro_de_la_cuadricula(rango)
         c1, r1, c2, r2 = self._rango(rango)
         r2 = r2 or len(self.celdas)
         out = []
@@ -93,6 +100,7 @@ class HojaFalsa:
             self.alterar_antes_de_escribir()
             self.alterar_antes_de_escribir = None
         for d in datos:
+            self._dentro_de_la_cuadricula(d["range"])
             self.escrituras.append((d["range"], d["values"]))
             c1, r1, _, _ = self._rango(d["range"])
             for i, fila in enumerate(d["values"]):
