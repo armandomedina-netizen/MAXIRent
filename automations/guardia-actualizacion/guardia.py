@@ -6,13 +6,15 @@ de las 8:18 de Clientes Nuevos terminó bien con 0 filas porque Maxinet aún no 
 La guardia comprueba el resultado, no la corrida:
 
 1. Para cada automatización del Tablero CP (Clientes Nuevos, Clientes Potenciales, Encuestas, Entregas,
-   Frecuentes Activos y el cierre diario del Tablero) corre su modo DRY_RUN, que calcula qué le falta a
+   Frecuentes Activos, MKT Leads, Bitácora CP y el cierre diario del Tablero) corre su modo DRY_RUN, que calcula qué le falta a
    la hoja frente a Maxinet sin escribir nada, y lee cuántas filas, columnas o semanas faltan.
 2. Si falta algo, relanza el workflow de esa automatización (así se serializa con su grupo de
    concurrencia y nunca hay dos procesos agregando filas al mismo tiempo), espera a que termine y
    vuelve a comprobar.
 3. Comprueba que los datos del día lleguen al Tablero (FLOTA CP trae la fecha de ayer) y que las
-   pestañas clave del Tablero no tengan celdas con error.
+   pestañas clave del Tablero no tengan celdas con error. Si Nuvia elimina o renombra una pestaña que sólo
+   vigilamos por cortesía (PESTANAS_OPCIONALES) se anota; si falta una de las que usan las automatizaciones
+   (PESTANAS_CRITICAS) la guardia falla.
 
 Termina con código 1 si al final algo sigue sin actualizarse o no se pudo verificar: el Vigilante de
 Apps Script lo avisa por correo. No escribe en las hojas por su cuenta y no registra datos de
@@ -45,11 +47,12 @@ ESPERA_MAX_RELANZAR = 900
 SONDEO_SEG = 15
 # Nuvia renombra pestañas de nuestro Tablero: se acepta el nombre de siempre o el que ya se le conoce
 ALIAS_PESTANAS = {"UNIDADES CP": ("REPORTE FLOTA CP",), "DETALLE": ("GRAFICOS",)}
-PESTANAS_SIN_ERRORES = (
-    "FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "DETALLE", "GRAFICAS", "MKT",
-    "Bitácora Entregas / Recolecciones CP", "INDICADOR DE GASOLINA",
-    "CLIENTES NUEVOS & POTENCIAL", "Ticket Sac/Maxiemergencia", "POR ASESOR", "KADEX EJECUTIVOS",
-)
+# Pestañas de las que dependen nuestras automatizaciones: si ya no existen o traen celdas con error, la guardia falla
+PESTANAS_CRITICAS = ("FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "BITACORA CP")
+# Pestañas de Nuvia que sólo se vigilan por si traen errores: si ella las elimina o renombra, se anota y no falla
+PESTANAS_OPCIONALES = ("DETALLE", "GRAFICAS", "Bitácora Entregas / Recolecciones CP", "Ticket Sac/Maxiemergencia")
+PESTANAS_SIN_ERRORES = PESTANAS_CRITICAS + PESTANAS_OPCIONALES
+NO_ENCONTRADA = "no se encontró la pestaña (¿la renombraron?)"
 ERROR_CELDA = re.compile(r"^#(REF!|N/A|VALUE!|NAME\?|ERROR!|DIV/0!)|^Please use")
 
 
@@ -73,6 +76,16 @@ def pendientes_entregas(salida: str):
     if not bloques:
         return None
     return sum(int(a) + int(b) for a, b in bloques)
+
+
+def pendientes_bloque(salida: str):
+    """MKT Leads y Bitácora CP: filas que el bloque del mes tendría de más (la línea "Bloque desde ... nuevas N"). None si no terminó bien."""
+    if not _termino_bien(salida):
+        return None
+    bloques = re.findall(r"Bloque desde \S+: filas \d+ -> \d+ \| nuevas (\d+)", salida)
+    if not bloques:
+        return None
+    return sum(int(n) for n in bloques)
 
 
 def pendientes_frecuentes(salida: str):
@@ -108,6 +121,8 @@ REVISIONES = (
     Revision("Encuestas", "maxinet-encuestas-cp", "maxinet_encuestas_cp.py", "maxinet-encuestas-cp.yml", pendientes_filas),
     Revision("Entregas", "maxinet-entregas-cp", "maxinet_entregas_cp.py", "maxinet-entregas-cp.yml", pendientes_entregas),
     Revision("Frecuentes Activos", "maxinet-frecuentes-activos-cp", "maxinet_frecuentes_activos_cp.py", "maxinet-frecuentes-activos-cp.yml", pendientes_frecuentes),
+    Revision("MKT Leads", "maxinet-mkt-leads-cp", "maxinet_mkt_leads_cp.py", "maxinet-mkt-leads-cp.yml", pendientes_bloque),
+    Revision("Bitácora CP", "maxinet-bitacora-cp", "maxinet_bitacora_cp.py", "maxinet-bitacora-cp.yml", pendientes_bloque),
 )
 CIERRE = Revision("Cierre diario del Tablero", "tablero-cp-cierre-diario", "cierre_diario.py", "tablero-cp-cierre-diario.yml", None)
 
@@ -181,7 +196,7 @@ def contar_errores_tablero() -> dict:
     for nombre in PESTANAS_SIN_ERRORES:
         ws = next((existentes[n] for n in (nombre,) + ALIAS_PESTANAS.get(nombre, ()) if n in existentes), None)
         if ws is None:
-            con_error[nombre] = "no se encontró la pestaña (¿la renombraron?)"
+            con_error[nombre] = NO_ENCONTRADA
             continue
         valores = con_reintentos(ws.get_all_values)
         n = sum(1 for fila in valores for x in fila if ERROR_CELDA.match(x))
@@ -230,13 +245,18 @@ def revisar_tablero(ayer: dt.date, ejecutar=ejecutar_en_seco, relanzar=relanzar_
 
 
 def revisar_errores(contar=contar_errores_tablero) -> Resultado:
+    """Celdas con error en las pestañas vigiladas. Una pestaña opcional que ya no se encuentra (Nuvia la eliminó o renombró)
+    sólo se anota; una crítica que falta, o cualquier pestaña con celdas con error, hace fallar la revisión."""
     try:
         con_error = contar()
     except Exception as e:                                       # hoja renombrada, cuota o permisos
         return Resultado("Errores en el Tablero", "no verificado", f"{type(e).__name__}")
-    if con_error:
-        return Resultado("Errores en el Tablero", "pendiente", ", ".join(f"{k}: {v}" for k, v in con_error.items()))
-    return Resultado("Errores en el Tablero", "ok", f"{len(PESTANAS_SIN_ERRORES)} pestañas sin celdas con error")
+    ausentes = [k for k, v in con_error.items() if v == NO_ENCONTRADA and k in PESTANAS_OPCIONALES]
+    graves = {k: v for k, v in con_error.items() if k not in ausentes}
+    nota = f"; sin encontrar (opcionales): {', '.join(ausentes)}" if ausentes else ""
+    if graves:
+        return Resultado("Errores en el Tablero", "pendiente", ", ".join(f"{k}: {v}" for k, v in graves.items()) + nota)
+    return Resultado("Errores en el Tablero", "ok", f"{len(PESTANAS_SIN_ERRORES) - len(ausentes)} pestañas sin celdas con error{nota}")
 
 
 def resumen(resultados: list) -> str:

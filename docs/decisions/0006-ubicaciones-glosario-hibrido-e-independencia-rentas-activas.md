@@ -2,7 +2,7 @@
 
 Fecha: 2026-10-12
 
-> Nota (2026-11-03): la pestaña `UBICACIONES` de la base se eliminó a propósito y `actualizar_ubicaciones()` se retiró del sync; `ESTADOS` de la copia del Query ya no importa de esa pestaña. Ver ADR 0025. El resto del documento queda como contexto histórico.
+> Nota (2026-11-03): la pestaña `UBICACIONES` de la base se eliminó a propósito y `actualizar_ubicaciones()` se retiró del sync; `ESTADOS` de la copia del Query ya no importa de esa pestaña. Ver ADR 0026. El resto del documento queda como contexto histórico.
 
 ## Contexto
 

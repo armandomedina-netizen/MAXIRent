@@ -34,3 +34,10 @@ Cubre la familia de CP y el cierre del Tablero. No cubre todavía Tablero LP, BA
 - La guardia corre los scripts en seco y puede relanzar hasta seis workflows: son unos minutos de Actions por día en un repositorio público.
 - Encuestas, Clientes Potenciales y Entregas pueden aparecer como `RECUPERADO` casi todos los días, porque llegan encuestas, clientes y cambios después del corte de la mañana. No es una falla.
 - Si Maxinet no publica un reporte a las 10:30, la guardia lo marca `PENDIENTE` y avisa; mañana a las 8:00 corre el corte normal.
+
+## Revisión 2026-10-30: pestañas críticas y opcionales, MKT Leads y Bitácora CP
+
+- Nuvia quitó 11 pestañas más del Tablero (32 a 24) y la guardia, que vigilaba 13 por nombre, quedó en rojo por cinco que ya no existen. Ahora distingue dos grupos: `PESTANAS_CRITICAS` (`FLOTA CP`, `UNIDADES CP`, `UTILIZACION TODOS LOS GRUPO`, `UTILIZACION POR GRUPO` y `BITACORA CP`, de las que dependen nuestras automatizaciones) y `PESTANAS_OPCIONALES` (`DETALLE`, `GRAFICAS`, `Bitácora Entregas / Recolecciones CP` y `Ticket Sac/Maxiemergencia`, de Nuvia). Una opcional que ya no se encuentra sólo se anota en el resumen; una crítica que falta, o cualquier pestaña con celdas con error, hace fallar la revisión. Se quitaron de la lista `MKT`, `INDICADOR DE GASOLINA`, `CLIENTES NUEVOS & POTENCIAL`, `POR ASESOR` y `KADEX EJECUTIVOS`.
+- Se agregan las revisiones de `MKT Leads` y `Bitácora CP` (ADR 0019 y 0020): corre su `DRY_RUN`, suma las filas que el bloque del mes tendría de más (línea `Bloque desde ... nuevas N`, la suma de los dos meses los primeros 3 días) y, si faltan, relanza su workflow. El workflow de la guardia recibe `WORKSHEET_MKT_NAME` y `WORKSHEET_BITACORA_NAME`.
+- Probada contra datos reales el 2026-10-30 con `SIN_RELANZAR=1`: las nueve revisiones en OK.
+

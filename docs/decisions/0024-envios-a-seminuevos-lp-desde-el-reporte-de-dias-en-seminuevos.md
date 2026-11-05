@@ -44,4 +44,4 @@ La hora de actualización queda en `AF1:AF2`, con una columna libre de por medio
 
 ## Nota (2026-11-03)
 
-La pestaña `GRAFICO` de la Base se eliminó a propósito (ADR 0025), así que ya no hay cuentas que dependan de esta hoja dentro de ese libro. El filtro `TODAS` se mantiene: la hoja conserva el historial de unidades vendidas y `MES` y `AÑO` (`AC:AD`) siguen extendiéndose con sus fórmulas.
+La pestaña `GRAFICO` de la Base se eliminó a propósito (ADR 0026), así que ya no hay cuentas que dependan de esta hoja dentro de ese libro. El filtro `TODAS` se mantiene: la hoja conserva el historial de unidades vendidas y `MES` y `AÑO` (`AC:AD`) siguen extendiéndose con sus fórmulas.

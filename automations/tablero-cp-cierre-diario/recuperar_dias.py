@@ -6,7 +6,7 @@ las columnas de esos días quedan vacías y "FLOTA CP" sólo conserva la foto de
 Maxinet, en cambio, devuelve el reporte de flota de cualquier fecha (mismo endpoint que usa el sync,
 con Desde = Hasta = la fecha), así que el día se reconstruye con el mismo proceso de cada día:
 
-1. Se descarga el reporte de flota de la fecha (41 columnas crudas, E:AS de "FLOTA CP").
+1. Se descarga el reporte de flota de la fecha (42 columnas; las 41 primeras son las crudas, E:AS de "FLOTA CP").
 2. Se arman las columnas de "FLOTA CP" de ese día: las crudas vienen del reporte; las derivadas por
    fila (TODO LO DISPONIBLE, PRESTAMOS, BSITE CP, DISPONIBLES DE PRESTAMOS) se calculan con las mismas
    reglas de las fórmulas de la hoja; las que no cambian entre días (GRUPO, STATUS DISPONIBLE,
@@ -30,7 +30,8 @@ from urllib3.util.retry import Retry
 
 log = logging.getLogger("tablero_cp_cierre_diario")
 
-ANCHO_REPORTE = 41            # Fecha ... EntryDate; el reporte trae antes una columna de acciones
+ANCHO_REPORTE = 42            # Fecha ... Meses uso; el reporte trae antes una columna de acciones
+ANCHO_FLOTA_CP = 41           # Fecha ... EntryDate: lo que importa FLOTA CP (E:AS). "Meses uso" (4-nov-2026) no se importa
 PRIMERA_CRUDA = 5             # columna E de FLOTA CP
 ESTATICAS = ("D", "AT", "AU", "AW")           # por placa, no cambian entre días
 LATERAL = ("AX", "AY", "AZ", "BA")            # tabla lateral de antigüedad: se toma tal cual de hoy
@@ -97,7 +98,7 @@ def _sesion() -> requests.Session:
 
 
 def descargar_flota(fecha: dt.date) -> list:
-    """Filas crudas (41 valores) del reporte de flota de Maxinet para la fecha."""
+    """Filas del reporte de flota de Maxinet para la fecha (42 valores; armar_columnas usa los 41 primeros)."""
     base = os.environ["MAXINET_BASE_URL"].rstrip("/")
     s = _sesion()
     r = s.post(f"{base}/includes/users/AccessValidate.php",
@@ -120,10 +121,10 @@ def descargar_flota(fecha: dt.date) -> list:
 # ---------------------------------------------------------------- columnas de FLOTA CP de un día
 def armar_columnas(filas: list, hoy: dict) -> dict:
     """
-    filas: filas crudas del reporte (41 valores). hoy: {letra: [valores]} de FLOTA CP de hoy, filas desde la 2.
+    filas: filas del reporte (42 valores; sólo los 41 primeros son columnas de FLOTA CP). hoy: {letra: [valores]} de FLOTA CP de hoy, filas desde la 2.
     Devuelve {letra: [valores]} con las columnas de FLOTA CP de ese día (una lista por columna).
     """
-    cols = {letras(PRIMERA_CRUDA + i): [("" if f[i] is None else f[i]) for f in filas] for i in range(ANCHO_REPORTE)}
+    cols = {letras(PRIMERA_CRUDA + i): [("" if f[i] is None else f[i]) for f in filas] for i in range(ANCHO_FLOTA_CP)}
     h, i_, j = cols["H"], cols["I"], cols["J"]
     cols["B"] = ["PRESTAMO" if texto(x).upper() in SEDES_PRESTAMO else "NA" for x in i_]
     cols["A"] = ["OK" if b == "PRESTAMO" or texto(x).upper() == "TO" else "NG" for b, x in zip(cols["B"], h)]
