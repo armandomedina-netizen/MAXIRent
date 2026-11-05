@@ -98,6 +98,10 @@ filtros_sheets.instalar()
 # El 9-oct-2026 Maxinet agregó VIN y EntryDate al final del reporte (41
 # columnas, antes 39): el sync completo falló con "39 columns passed, passed
 # data had 41 columns" hasta que se agregaron aquí y el rango pasó a B:AP.
+# El 4-nov-2026 agregó "Meses uso" (42 columnas): el sync falló con "trae [42]
+# columnas y el script espera 41". Esa columna no cabe en el bloque B:AP (a su
+# derecha están las fórmulas de la base: AQ:AS) y no se escribe en él: ver
+# COLUMNAS_FUERA_DE_BLOQUE.
 COLUMNAS = [
     "Fecha", "Estado", "Placa", "BSite", "CurrentSite", "Segmento",
     "Estatus Vehiculo", "Geocerca", "Odometro", "Km", "Nombre Geocerca",
@@ -108,8 +112,16 @@ COLUMNAS = [
     "Reserva Ult. Renta", "Cliente Ult. Renta", "PUDate Ult. Renta",
     "Proxima Reserva", "Cliente Prox. Reserva", "PUDate Prox. Reserva",
     "Memo Reserva actual", "Comentario", "Fecha Ult.Coment.",
-    "Responsable Ult.Coment.", "VIN", "EntryDate",
+    "Responsable Ult.Coment.", "VIN", "EntryDate", "Meses uso",
 ]
+
+# Columnas del reporte que NO van en el bloque contiguo B:AP de la base: se
+# escriben cada una en la columna de la base cuyo encabezado (fila 1) se llama
+# igual, para no pisar las fórmulas de la derecha (ver
+# actualizar_columnas_fuera_del_bloque). El resto, en el orden del reporte, es
+# el bloque B:AP (COL_INICIO:COL_FIN).
+COLUMNAS_FUERA_DE_BLOQUE = ("Meses uso",)
+COLUMNAS_BLOQUE = [c for c in COLUMNAS if c not in COLUMNAS_FUERA_DE_BLOQUE]
 
 
 ZONA_CDMX = ZoneInfo("America/Mexico_City")
@@ -211,7 +223,7 @@ def descargar_datos_flota(session: requests.Session) -> pd.DataFrame:
     if anchos != {len(COLUMNAS)}:
         raise RuntimeError(
             f"El reporte de flota trae {sorted(anchos)} columnas y el script espera {len(COLUMNAS)}: "
-            "Maxinet cambió la estructura; revisar COLUMNAS, COL_FIN y las columnas de la base antes de correr."
+            "Maxinet cambió la estructura; revisar COLUMNAS, COLUMNAS_FUERA_DE_BLOQUE, COL_FIN y las columnas de la base antes de correr."
         )
 
     df = pd.DataFrame(filas, columns=COLUMNAS)
@@ -368,9 +380,57 @@ def actualizar_sheet(worksheet, df_nuevo: pd.DataFrame):
     # rechaza la petición (confirmado contra los datos reales).
     fila_final = FILA_INICIO_DATOS + n_filas - 1
     rango_datos = f"{COL_INICIO}{FILA_INICIO_DATOS}:{COL_FIN}{fila_final}"
-    worksheet.update(values=df_nuevo.fillna("").astype(str).values.tolist(), range_name=rango_datos)
+    worksheet.update(values=df_nuevo[COLUMNAS_BLOQUE].fillna("").astype(str).values.tolist(), range_name=rango_datos)
 
     log.info("Sheet actualizado: %d filas escritas en %s", n_filas, rango_datos)
+
+
+def _letra_de_encabezado(encabezados: list, nombre: str) -> str:
+    """Letra de la columna cuyo encabezado es `nombre` (sin importar mayúsculas ni espacios), o None."""
+    for i, h in enumerate(encabezados):
+        if str(h).strip().lower() == nombre.lower():
+            return _indice_a_col_letra(i)
+    return None
+
+
+def _numero_o_texto(valor):
+    """Número si el valor lo es ("159" -> 159, "12.5" -> 12.5); si no, el texto tal cual. Las columnas fuera del
+    bloque son medidas (se suman, promedian o comparan), así que se guardan como número; el bloque B:AP guarda
+    todo como texto, igual que el reporte."""
+    texto = "" if valor is None or valor != valor else str(valor).strip()
+    try:
+        numero = float(texto)
+    except ValueError:
+        return texto
+    return int(numero) if numero.is_integer() else numero
+
+
+def actualizar_columnas_fuera_del_bloque(worksheet, df_nuevo: pd.DataFrame):
+    """Escribe las columnas del reporte que no caben en el bloque B:AP (hoy sólo
+    "Meses uso") en la columna de la base con ese encabezado, en el mismo orden
+    de filas que el bloque, de modo que cada placa queda alineada con su fila, y
+    como número. Se detiene sin escribir nada si el encabezado no existe, si cae dentro de A:AP
+    (ahí manda el bloque) o si la columna ya trae fórmulas: nunca se pisan.
+    Es un paso auxiliar: la base ya está al día cuando corre."""
+    encabezados = worksheet.row_values(1)
+    limite = _col_letra_a_indice(COL_FIN)
+    for nombre in COLUMNAS_FUERA_DE_BLOQUE:
+        letra = _letra_de_encabezado(encabezados, nombre)
+        if letra is None:
+            raise RuntimeError(
+                f"la base no tiene una columna con el encabezado '{nombre}' en la fila 1: se agrega a la "
+                f"derecha de la tabla (después de TIPO DE CUENTA LP) y el siguiente sync la llena")
+        if _col_letra_a_indice(letra) <= limite:
+            raise RuntimeError(f"'{nombre}' está en la columna {letra}, dentro de A:{COL_FIN} (el bloque del reporte)")
+        existentes = worksheet.get(
+            f"{letra}{FILA_INICIO_DATOS}:{letra}{FILA_INICIO_DATOS + MAX_FILAS_BUFFER}", value_render_option="FORMULA")
+        if any(str(f[0]).startswith("=") for f in existentes if f):
+            raise RuntimeError(f"la columna {letra} ('{nombre}') tiene fórmulas: no se sobrescribe")
+        n_filas = len(df_nuevo)
+        worksheet.batch_clear([f"{letra}{FILA_INICIO_DATOS}:{letra}{FILA_INICIO_DATOS + MAX_FILAS_BUFFER}"])
+        valores = [[_numero_o_texto(v)] for v in df_nuevo[nombre].tolist()]
+        worksheet.update(values=valores, range_name=f"{letra}{FILA_INICIO_DATOS}:{letra}{FILA_INICIO_DATOS + n_filas - 1}")
+        log.info("'%s': %d filas escritas en la columna %s", nombre, n_filas, letra)
 
 
 # SEGUNDO ARCHIVO DE GOOGLE SHEETS
@@ -466,7 +526,7 @@ def actualizar_sheet_flota_lp(worksheet, df_nuevo: pd.DataFrame):
     """
     # La columna A del reporte original viene vacía (placeholder de
     # checkbox/acciones en la tabla web) -> la reproducimos aquí tal cual.
-    df_con_columna_a = df_nuevo.copy()
+    df_con_columna_a = df_nuevo[COLUMNAS_BLOQUE].copy()
     df_con_columna_a.insert(0, "", "")
 
     n_filas = len(df_con_columna_a)
@@ -2651,6 +2711,7 @@ def main():
         # depender de que las hojas auxiliares de abajo estén como se esperaba.
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
+        _paso_auxiliar("Meses uso (base)", lambda: actualizar_columnas_fuera_del_bloque(worksheet, df_nuevo))
 
         # Fórmulas por fila de la base (GRUPO en RESERVAS CP&LP): después de
         # reescribir el bloque de datos, para cubrir las filas de hoy. No debe
