@@ -4,7 +4,7 @@ Fecha: 2026-10-30
 
 ## Contexto
 
-La página `lp-prospeccion-expedientes.php` de Maxinet lista los expedientes de prospección de largo plazo con la validación de cada área (CXC, mantenimiento, postventa, comercial y gerencia) y los datos del cliente. Se pidió llevar esa tabla completa a la Base LP copia ("Copia de BASE LP_AUTOMATIZADO") y mantenerla al día, sin filtros: la tabla tal como viene en Maxinet.
+La página `lp-prospeccion-expedientes.php` de Maxinet lista los expedientes de prospección de largo plazo con la validación de cada área (CXC, mantenimiento, postventa, comercial y gerencia) y los datos del cliente. Se pidió llevar esa tabla completa a la Base LP copia ("BASE LP_AUTOMATIZADO", antes "Copia de BASE LP_AUTOMATIZADO") y mantenerla al día, sin filtros: la tabla tal como viene en Maxinet.
 
 ## Decisión
 

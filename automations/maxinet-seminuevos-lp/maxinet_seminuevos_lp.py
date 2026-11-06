@@ -1,6 +1,6 @@
 """
 Automatización: login + lectura del reporte "Días en Seminuevos" desde Maxinet vía requests (sin navegador ni Excel) y
-reemplazo de las columnas A:AB de la pestaña "ENVIOS SEMINUEVOS" de la Base LP copia ("Copia de BASE LP_AUTOMATIZADO").
+reemplazo de las columnas A:AB de la pestaña "ENVIOS SEMINUEVOS" de la Base LP copia ("BASE LP_AUTOMATIZADO").
 
 Endpoint confirmado a partir del JS real de Maxinet (reporte-dias-seminuevos.php -> DataTable ajax):
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php

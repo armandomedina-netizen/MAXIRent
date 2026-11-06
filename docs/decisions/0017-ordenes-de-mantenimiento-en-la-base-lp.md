@@ -4,7 +4,7 @@ Fecha: 2026-10-27
 
 ## Contexto
 
-El reporte `lp-mtto-ordenes.php` de Maxinet lista las órdenes de mantenimiento (una fila por orden, 62 columnas). Se pidió llevarlo a la Base LP copia ("Copia de BASE LP_AUTOMATIZADO", la misma que alimenta el tablero LP) y mantenerlo al día, con prioridad en que la información sea la más reciente y en que la hoja no se llene.
+El reporte `lp-mtto-ordenes.php` de Maxinet lista las órdenes de mantenimiento (una fila por orden, 62 columnas). Se pidió llevarlo a la Base LP copia ("BASE LP_AUTOMATIZADO", antes "Copia de BASE LP_AUTOMATIZADO", la misma que alimenta el tablero LP) y mantenerlo al día, con prioridad en que la información sea la más reciente y en que la hoja no se llene.
 
 Antes de construirlo se revisó si ese reporte podía alimentar la pestaña `ENVIOS SEMINUEVOS` de la misma base (1,199 filas, 28 columnas, todo constantes, sin una sola fórmula):
 
