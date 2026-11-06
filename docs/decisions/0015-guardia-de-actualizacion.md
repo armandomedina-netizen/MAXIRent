@@ -41,3 +41,7 @@ Cubre la familia de CP y el cierre del Tablero. No cubre todavía Tablero LP, BA
 - Se agregan las revisiones de `MKT Leads` y `Bitácora CP` (ADR 0019 y 0020): corre su `DRY_RUN`, suma las filas que el bloque del mes tendría de más (línea `Bloque desde ... nuevas N`, la suma de los dos meses los primeros 3 días) y, si faltan, relanza su workflow. El workflow de la guardia recibe `WORKSHEET_MKT_NAME` y `WORKSHEET_BITACORA_NAME`.
 - Probada contra datos reales el 2026-10-30 con `SIN_RELANZAR=1`: las nueve revisiones en OK.
 
+## Revisión 2026-11-03: la corrida en seco se repite y deja rastro
+
+- Dos corridas de la guardia (10:32 y 10:42) dejaron `Bitácora CP` en "no verificado (código 1)" mientras su workflow y su corrida en seco local funcionaban, y el log no decía por qué porque la salida de la corrida en seco no se registraba. Ahora, si una corrida en seco termina con código distinto de 0, la guardia copia al log las últimas 12 líneas de su salida (sólo conteos, fechas y mensajes de error; nunca datos de clientes) y la repite una vez tras 30 segundos. Si falla las dos veces la revisión sigue siendo "no verificado" y el log tiene la causa de las dos.
+

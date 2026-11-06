@@ -312,3 +312,42 @@ def test_errores_avisa_si_una_pestana_ya_no_se_encuentra(monkeypatch):
     monkeypatch.setenv("GOOGLE_CREDS_PATH", "x"); monkeypatch.setenv("SPREADSHEET_ID_TABLERO_CP", "y")
     r = g.contar_errores_tablero()
     assert len(r) == len(g.PESTANAS_SIN_ERRORES) and all("renombraron" in v for v in r.values())
+
+
+# ---------------------------------------------------------------- la corrida en seco se repite y deja rastro
+class _Corredor:
+    def __init__(self, *respuestas):
+        self.respuestas, self.llamadas = list(respuestas), 0
+
+    def __call__(self, rev):
+        self.llamadas += 1
+        return self.respuestas.pop(0) if len(self.respuestas) > 1 else self.respuestas[0]
+
+
+def test_una_corrida_en_seco_que_funciona_no_se_repite():
+    corredor, pausas = _Corredor((0, "salida buena")), []
+    assert g.ejecutar_en_seco(NUEVOS, corredor, pausas.append) == (0, "salida buena")
+    assert corredor.llamadas == 1 and pausas == []
+
+
+def test_un_fallo_aislado_se_repite_una_vez_y_se_registra_su_causa(caplog):
+    import logging
+    corredor, pausas = _Corredor((1, "linea 1\nTraceback\nConnectionResetError: corte"), (0, "salida buena")), []
+    with caplog.at_level(logging.WARNING):
+        assert g.ejecutar_en_seco(NUEVOS, corredor, pausas.append) == (0, "salida buena")
+    assert corredor.llamadas == 2 and pausas == [g.PAUSA_ENTRE_INTENTOS_SEG]
+    assert "ConnectionResetError: corte" in caplog.text and "intento 1 de 2" in caplog.text and NUEVOS.nombre in caplog.text
+
+
+def test_si_falla_las_dos_veces_devuelve_el_ultimo_resultado_y_la_revision_queda_no_verificada():
+    corredor = _Corredor((1, "primero"), (124, ""))
+    assert g.ejecutar_en_seco(NUEVOS, corredor, lambda s: None) == (124, "") and corredor.llamadas == 2
+    assert g.revisar(NUEVOS, lambda rev: g.ejecutar_en_seco(rev, _Corredor((1, "x")), lambda s: None), Relanzador()).estado == "no verificado"
+
+
+def test_el_log_de_un_fallo_copia_solo_las_ultimas_lineas(caplog):
+    import logging
+    salida = "\n".join(f"linea {i}" for i in range(40))
+    with caplog.at_level(logging.WARNING):
+        g.ejecutar_en_seco(NUEVOS, _Corredor((1, salida)), lambda s: None)
+    assert "linea 39" in caplog.text and "linea 28" in caplog.text and "linea 27" not in caplog.text      # las últimas 12 de 40
