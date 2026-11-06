@@ -26,6 +26,14 @@ mes): puede ir más adelantada que él y eso es correcto. La semana cargada qued
 en una celda bajo el enlace del encabezado ("Semana cargada: 193 (2026-10-10)") para saber
 a qué corte corresponde la hoja. PERIODO=<id> fija una semana (pruebas).
 
+Modo "semana N del mes" (SEMANA_DEL_MES=3): para la pestaña "Clientes frecuentes Semana 3", que sirve para las nóminas
+y bonos del mes. En vez de la semana más reciente toma la más reciente del selector que sea el N-ésimo sábado de su
+mes (la 3: octubre 2026 = 17-oct, es decir, los cortes del 3, 10 y 17), la carga UNA vez y ya no la toca: queda
+congelada hasta que Maxinet publique la del mes siguiente. Maxinet publica cada semana siete días después de su
+fecha (la del 17-oct apareció el sábado 24-oct), así que la carga ocurre sola el día en que aparece. Sin cambios
+no escribe; FORZAR=1 la refresca y PERIODO=<id> fija otra semana. Como el nombre por defecto de la pestaña en este
+modo es "Clientes frecuentes Semana 3", nunca escribe en "Clientes Frecuentes Activos 35".
+
 Columnas: A:AH hoy (Sucursal ... Sem 24). El reporte crece por semanas: si
 Maxinet agrega "Sem 25", se inserta la columna antes de "Comentario" (las
 columnas manuales se recorren hacia la derecha) y se escribe su encabezado.
@@ -280,8 +288,25 @@ def _cliente():
     return gspread.authorize(creds)
 
 
+PESTANA_SEMANA_N = "Clientes frecuentes Semana {n}"
+
+
+def semana_del_mes() -> int | None:
+    """N de SEMANA_DEL_MES (1 a 5), o None en el modo normal (semana más reciente)."""
+    v = (os.environ.get("SEMANA_DEL_MES") or "").strip()
+    if not v:
+        return None
+    if not v.isdigit() or not 1 <= int(v) <= 5:
+        raise RuntimeError(f"SEMANA_DEL_MES debe ser un número de 1 a 5, no {v[:10]!r}")
+    return int(v)
+
+
 def _nombre_pestana(var: str) -> str:
-    return (os.environ.get(var) or "").strip().strip("\"'").strip() or "Clientes Frecuentes Activos 35"
+    """Nombre o gid de la pestaña. Por defecto la normal; en el modo semana N, la de esa semana, para que un secret
+    faltante nunca haga escribir la semana N sobre la pestaña de la semana más reciente."""
+    n = semana_del_mes()
+    defecto = PESTANA_SEMANA_N.format(n=n) if n else "Clientes Frecuentes Activos 35"
+    return (os.environ.get(var) or "").strip().strip("\"'").strip() or defecto
 
 
 def resolver_pestana(libro, referencia: str):
@@ -508,7 +533,35 @@ def sincronizar(ws, datos_mx: list[str], filas_mx: list[list], periodo: str, eti
     return True
 
 
-def elegir_semana():
+def semana_n_del_mes(semanas: list[tuple[str, str]], n: int):
+    """(periodo, etiqueta) de la semana más reciente del selector cuya fecha es el N-ésimo sábado de su mes (día 7(n-1)+1 a
+    7n), o None si no hay. Se ignoran las etiquetas que no son sábado (cortes de fin de mes como 08-31 o 09-04)."""
+    candidatas = []
+    for periodo, etiqueta in semanas:
+        f = dt.date.fromisoformat(etiqueta)
+        if f.weekday() == 5 and 7 * (n - 1) < f.day <= 7 * n:
+            candidatas.append((periodo, etiqueta))
+    return max(candidatas, key=lambda s: s[1]) if candidatas else None
+
+
+def elegir_semana(ws=None):
+    """(datos, filas, periodo, etiqueta): la semana más reciente del selector, o la fija PERIODO=<id> (pruebas). En el modo
+    SEMANA_DEL_MES devuelve None si esa semana ya está cargada (queda congelada) y FORZAR no está puesto."""
+    n = semana_del_mes()
+    if n and not os.environ.get("PERIODO"):
+        datos, semanas = info_maxinet()
+        objetivo = semana_n_del_mes(semanas, n)
+        if not objetivo:
+            raise RuntimeError(f"El selector de Maxinet no tiene ninguna semana {n} del mes (sábado entre el día {7 * (n - 1) + 1} y el {7 * n}).")
+        periodo, etiqueta = objetivo
+        log.info("Semana %d del mes más reciente: Periodo=%s (%s)", n, periodo, etiqueta)
+        if ws is not None and leer_estado(ws) == (periodo, etiqueta) and not os.environ.get("FORZAR"):
+            return None
+        return datos, descargar_semana(periodo, len(datos)), periodo, etiqueta
+    return _elegir_semana_reciente()
+
+
+def _elegir_semana_reciente():
     """(datos, filas, periodo, etiqueta): la semana más reciente del selector, o la fija PERIODO=<id> (pruebas)."""
     datos, semanas = info_maxinet()
     etiquetas = dict(semanas)
@@ -525,7 +578,13 @@ def elegir_semana():
 def main():
     try:
         ws = conectar_sheet()
-        datos, filas, periodo, etiqueta = elegir_semana()
+        elegida = elegir_semana(ws)
+        if elegida is None:
+            periodo, etiqueta = leer_estado(ws)
+            log.info("Sin cambios: la semana %d del mes (%s) ya está cargada y congelada. Revisión completada con éxito (semana %s, %s)",
+                     semana_del_mes(), etiqueta, periodo, etiqueta)
+            return
+        datos, filas, periodo, etiqueta = elegida
         cambio = sincronizar(ws, datos, filas, periodo, etiqueta)
         if cambio:
             validar_sin_repetidos(ws)
