@@ -41,3 +41,7 @@ La hora de actualización queda en `AF1:AF2`, con una columna libre de por medio
 - Si Maxinet cambia el reporte (ancho, orden o forma de las columnas), la corrida se detiene sin escribir y el error dice qué cambió; hay que ajustar `COLUMNAS` en el código.
 - `MES` y `AÑO` salen de la fórmula que ya tiene la hoja: una unidad sin fecha de ingreso a seminuevos (hoy, 9 recién asignadas) muestra el mes y el año de la fecha cero de Sheets, que no coinciden con ningún mes de `GRAFICO`. Cambiar esa fórmula para que quede vacía en ese caso es una decisión de quien mantiene la hoja.
 - No hay cobertura de la guardia de actualización (que revisa las pestañas del Tablero CP); la ventana del Vigilante avisa si la corrida no tuvo éxito.
+
+## Nota (2026-11-03)
+
+La pestaña `GRAFICO` de la Base se eliminó a propósito (ADR 0026), así que ya no hay cuentas que dependan de esta hoja dentro de ese libro. El filtro `TODAS` se mantiene: la hoja conserva el historial de unidades vendidas y `MES` y `AÑO` (`AC:AD`) siguen extendiéndose con sus fórmulas.
