@@ -20,10 +20,12 @@ Los expedientes "Cerrados" (`Estatus=0`) sólo salen con un rango de fechas y no
 
 **Datos personales.** La tabla trae nombres, correos y teléfonos de prospectos y de contactos de compras; se copian porque se pidieron como columnas de la hoja. Los logs sólo llevan conteos y las pruebas usan datos ficticios.
 
-**Horario.** A las 8:30, 9:30 y 10:30 (reloj de GitHub): de las 8:30 a las 10:30 como máximo, por decisión de quien pidió la hoja. La consulta tarda unos 3 segundos y la corrida completa unos 20. El reloj de GitHub a veces llega con horas de retraso; si se necesita que las corridas caigan en esa franja con puntualidad, hace falta una ventana en el Vigilante (cambio aparte).
+**Horario.** Cada hora. La primera corrida del día es la ventana de las 8:30 del Vigilante (hasta 3 reintentos, y entra en el resumen de las 8:45); después el Vigilante dispara el workflow cada hora al :17, de lunes a sábado hasta las 19:00, y avisa si pasan más de 3 horas sin una corrida exitosa. El reloj de GitHub queda de respaldo, cada hora al :45 (a veces llega con horas de retraso, por eso no es el disparo principal). La consulta tarda unos 3 segundos y la corrida completa unos 20; cada corrida reescribe la pestaña completa, así que más corridas no acumulan nada. En el día son unas once corridas del Vigilante (la de las 8:30 y de las 9:17 a las 18:17); el sync del tablero escribe mucho en la misma Base a las 8:00 y 8:10, y la primera corrida horaria ya cae fuera de ese pico.
+
+*Historia del horario:* la hoja nació con corridas a las 8:30, 9:30 y 10:30 en el reloj de GitHub (de las 8:30 a las 10:30 como máximo, por decisión de quien la pidió); el 2-nov-2026 se agregó la ventana de 8:30 del Vigilante, porque el reloj de GitHub llegaba entre las 12:40 y las 16:50, muy fuera de la franja pedida; el 6-nov-2026 se pidió que se actualizara una vez por hora.
 
 ## Consecuencias
 
 - La pestaña se crea sola en la primera corrida (por eso el secret `WORKSHEET_EXPEDIENTES_LP` es opcional y sólo acepta el nombre).
-- No hay ventana en el Vigilante ni cobertura de la guardia de actualización: agregarlas es un cambio aparte.
+- La ventana de 8:30 y el disparo cada hora están en el Vigilante; la guardia de actualización no cubre esta pestaña (cambio aparte).
 - Para conservar también los cerrados habría que pedir `Estatus=0` con un rango de fechas y unirlos a la tabla; no se hizo porque la vista pedida es la activa.
