@@ -2,8 +2,10 @@
 import maxinet_balance as mb
 from tests.fakes import HojaFalsa, LibroFalso
 
-# Fórmulas tal como están en el archivo de Nuvia el 2026-10-30 (fila 2).
-NUVIA_ONHIRE_P2 = "=MAP(A2:A,C2:C,M2:M,LAMBDA(cli,res,pla,IF(pla=\"\",\"\",IFERROR(INDEX(SORT(FILTER(HSTACK('SOLICITUDES ENTREGAS / RECOLECCIONES'!$C$2:$C,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E),LEFT('SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E,7)=\"ENTREGA\",(('SOLICITUDES ENTREGAS / RECOLECCIONES'!$M$2:$M=pla)+('SOLICITUDES ENTREGAS / RECOLECCIONES'!$O$2:$O=pla))>0,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$J$2:$J=cli),1,FALSE),1,2),IFERROR(INDEX(SORT(FILTER(HSTACK('SOLICITUDES ENTREGAS / RECOLECCIONES'!$C$2:$C,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E),LEFT('SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E,7)=\"ENTREGA\",'SOLICITUDES ENTREGAS / RECOLECCIONES'!$I$2:$I=res),1,FALSE),1,2),\"\")))))"
+# Fórmulas tal como están en el archivo de Nuvia (fila 2): las del 2026-10-30 y la de P2 con la regla de reemplazo.
+NUVIA_ONHIRE_P2_30_OCT = "=MAP(A2:A,C2:C,M2:M,LAMBDA(cli,res,pla,IF(pla=\"\",\"\",IFERROR(INDEX(SORT(FILTER(HSTACK('SOLICITUDES ENTREGAS / RECOLECCIONES'!$C$2:$C,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E),LEFT('SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E,7)=\"ENTREGA\",(('SOLICITUDES ENTREGAS / RECOLECCIONES'!$M$2:$M=pla)+('SOLICITUDES ENTREGAS / RECOLECCIONES'!$O$2:$O=pla))>0,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$J$2:$J=cli),1,FALSE),1,2),IFERROR(INDEX(SORT(FILTER(HSTACK('SOLICITUDES ENTREGAS / RECOLECCIONES'!$C$2:$C,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E),LEFT('SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E,7)=\"ENTREGA\",'SOLICITUDES ENTREGAS / RECOLECCIONES'!$I$2:$I=res),1,FALSE),1,2),\"\")))))"
+# Con la regla de reemplazo (CAMBIO -> NUEVO), tal como está en su archivo.
+NUVIA_ONHIRE_P2 = "=MAP(A2:A,C2:C,M2:M,LAMBDA(cli,res,pla,IF(pla=\"\",\"\",LET(sFec,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$C$2:$C,sEst,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$H$2:$H,sTip,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E,sRes,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$I$2:$I,sCli,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$J$2:$J,sPla,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$M$2:$M,sRem,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$O$2:$O,vacio,HSTACK(\"\",\"\",\"\",\"\"),porPlaca,IFERROR(CHOOSEROWS(SORT(FILTER(HSTACK(sFec,sTip,sRes,sRem),LEFT(sTip,7)=\"ENTREGA\",((sPla=pla)+(sRem=pla))>0,sCli=cli),1,FALSE),1),vacio),mejor,IF(INDEX(porPlaca,1,2)=\"\",IFERROR(CHOOSEROWS(SORT(FILTER(HSTACK(sFec,sTip,sRes,sRem),LEFT(sTip,7)=\"ENTREGA\",sRes=res),1,FALSE),1),vacio),porPlaca),tipoSol,INDEX(mejor,1,2),IF(tipoSol=\"\",\"\",IF(AND(tipoSol=\"ENTREGA (CAMBIO)\",UPPER(INDEX(mejor,1,4))=UPPER(pla),COUNTIFS(sRes,INDEX(mejor,1,3),sTip,\"ENTREGA (NUEVO)\",sEst,\"<>TRASLADO CANCELADO\")>0,COUNTIF('FLOTA MES ANTERIOR'!$K:$K,INDEX(mejor,1,3))=0),\"ENTREGA (NUEVO)\",tipoSol))))))"
 NUVIA_ONHIRE_R2 = "=ARRAYFORMULA(IF(M2:M=\"\",\"\",IF(COUNTIFS('FLOTA MES ANTERIOR'!$C:$C,M2:M,'FLOTA MES ANTERIOR'!$L:$L,A2:A)+COUNTIFS('FLOTA MES ANTERIOR'!$C:$C,M2:M,'FLOTA MES ANTERIOR'!$J:$J,B2:B)>0,\"CAMBIO DE RESERVA\",IF(P2:P=\"\",\"SIN SOLICITUD\",P2:P))))"
 NUVIA_RETORNOS_P2 = "=IF(M2=\"\",\"\",IFERROR(INDEX(SORT(FILTER({'SOLICITUDES ENTREGAS / RECOLECCIONES'!$C$2:$C,'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E},'SOLICITUDES ENTREGAS / RECOLECCIONES'!$E$2:$E=\"RECOLECCION\",(('SOLICITUDES ENTREGAS / RECOLECCIONES'!$I$2:$I=C2)+(('SOLICITUDES ENTREGAS / RECOLECCIONES'!$M$2:$M=M2)*('SOLICITUDES ENTREGAS / RECOLECCIONES'!$J$2:$J=A2)))>0),1,FALSE),1,2),\"\"))"
 NUVIA_RETORNOS_R2 = "=ARRAYFORMULA(IF(M2:M=\"\",\"\",IF((P2:P<>\"\")*((COUNTIFS(ONHIRE!$M:$M,M2:M,ONHIRE!$A:$A,A2:A,ONHIRE!$C:$C,\"<>\"&C2:C)+COUNTIFS(ONHIRE!$C:$C,C2:C,ONHIRE!$M:$M,\"<>\"&M2:M))=0),\"RECOLECCION\",IF(COUNTIFS('FLOTA MES ANTERIOR'!$C:$C,M2:M,'FLOTA MES ANTERIOR'!$L:$L,A2:A)+COUNTIFS('FLOTA MES ANTERIOR'!$C:$C,M2:M,'FLOTA MES ANTERIOR'!$J:$J,B2:B)>0,\"CAMBIO DE RESERVA\",IF(P2:P=\"\",\"SIN SOLICITUD\",\"CAMBIO DE RESERVA\")))))"
@@ -99,3 +101,46 @@ def test_el_resumen_por_ejecutivo_empieza_en_la_fila_21():
     assert "XLOOKUP($A22,$A$2:$A$9,$B$2:$B$9,0)" in filas[22][1]
     assert "XLOOKUP($A22,$A$11:$A$18,$B$11:$B$18,0)" in filas[22][2]
     assert max(k for k in filas if k > 21) == 21 + mb.BALANCE_FILAS_RESUMEN
+
+
+# ---------------------------------------------------------------- regla de reemplazo (CAMBIO -> NUEVO) en ONHIRE!P2
+def test_p2_ya_no_es_la_formula_del_30_oct():
+    assert mb.FORMULA_P_ONHIRE != NUVIA_ONHIRE_P2_30_OCT
+    assert mb.FORMULA_P_ONHIRE == NUVIA_ONHIRE_P2
+
+
+def test_la_regla_de_reemplazo_pide_las_cuatro_condiciones():
+    f = mb.FORMULA_P_ONHIRE
+    assert 'tipoSol="ENTREGA (CAMBIO)"' in f                              # la solicitud encontrada es un cambio
+    assert "UPPER(INDEX(mejor,1,4))=UPPER(pla)" in f                      # y esta placa es la de reemplazo (no la que falló)
+    assert 'sTip,"ENTREGA (NUEVO)",sEst,"<>TRASLADO CANCELADO")>0' in f   # la reserva tiene una ENTREGA (NUEVO) no cancelada
+    assert "'FLOTA MES ANTERIOR'!$K:$K,INDEX(mejor,1,3))=0" in f          # y no venía del mes anterior
+    assert f.count('"ENTREGA (NUEVO)"') == 2                              # el valor convertido y el criterio de búsqueda
+
+
+def test_r_y_retornos_no_cambian_con_la_regla_de_reemplazo():
+    assert mb.FORMULA_R_ONHIRE == NUVIA_ONHIRE_R2
+    assert mb.FORMULA_R_RETORNOS == NUVIA_RETORNOS_R2
+    assert "reemplazo" not in mb.FORMULA_P_RETORNOS and "CAMBIO" not in mb.FORMULA_P_RETORNOS
+
+
+def test_la_formula_del_30_oct_se_repone_con_la_regla_de_reemplazo_sin_tocar_lo_demas():
+    libro, hoja = _libro("ONHIRE")
+    hoja.poner("P2", NUVIA_ONHIRE_P2_30_OCT)                  # como está hoy el libro real
+    hoja.poner("R2", mb.FORMULA_R_ONHIRE)
+    mb.cargar_entregas_retornos(libro, "ONHIRE", [_fila_reporte(i) for i in range(3)])
+    assert hoja.celda("P2") == mb.FORMULA_P_ONHIRE
+    assert hoja.celda("R2") == mb.FORMULA_R_ONHIRE            # R2 ya era la correcta: no se reescribe
+    assert "R2" not in hoja.escrituras
+    assert all(hoja.celda(f"P{r}") == "" for r in range(3, 8))  # nada debajo: bloquearía el derrame
+
+
+def test_con_la_regla_de_reemplazo_la_segunda_corrida_no_reescribe_p2():
+    libro, hoja = _libro("ONHIRE")
+    hoja.poner("P2", NUVIA_ONHIRE_P2_30_OCT)
+    filas = [_fila_reporte(i) for i in range(3)]
+    mb.cargar_entregas_retornos(libro, "ONHIRE", filas)
+    hoja.escrituras.clear()
+    mb.cargar_entregas_retornos(libro, "ONHIRE", filas)
+    assert "P2" not in hoja.escrituras and not any(e.startswith("clear:P") for e in hoja.escrituras)
+

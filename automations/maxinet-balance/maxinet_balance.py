@@ -18,7 +18,7 @@ pestañas del BALANCE.
                         (fórmulas de Nuvia sobre SOLICITUDES); se crea si
                         falta y se corrigen sus fórmulas si alguien las cambia.
     P:R de ONHIRE y RETORNOS: STATUS MAXINET, FLOTA MES ANTERIOR y COMPARATIVO con
-                        las reglas que Nuvia fijó el 30-oct. P y R son fórmulas
+                        las reglas que Nuvia fijó el 30-oct y su regla de reemplazo (CAMBIO -> NUEVO). P y R son fórmulas
                         matriciales de una sola celda (ONHIRE: P2 y R2; RETORNOS:
                         R2) y RETORNOS!P va por fila; Q y S por fila.
     S de ONHIRE y RETORNOS: EJECUTIVO REAL (columna H de EJECUTIVOS buscada
@@ -136,19 +136,33 @@ _SOL = "'SOLICITUDES ENTREGAS / RECOLECCIONES'"
 _FLOTA = "'FLOTA MES ANTERIOR'"
 FORMULA_Q = "=XLOOKUP(M{r}," + _FLOTA + "!$C:$C," + _FLOTA + '!$J:$J,"")'
 
-# Reglas de Nuvia del 30-oct (su archivo, transcritas sin cambios).
+# Reglas de Nuvia (su archivo, transcritas sin cambios): las del 30-oct y, después, la de
+# reemplazo en ONHIRE!P2.
 #
 # P (STATUS MAXINET) ya no busca la solicitud sólo por reserva: toma el tipo de
 # la solicitud MÁS RECIENTE (SORT descendente por Fecha Solicitud) que coincide
 # por placa (o placa de reemplazo) y # cliente; si no hay, por reserva.
 #   ONHIRE:   una sola fórmula matricial (MAP) en P2, que se derrama.
 #   RETORNOS: una fórmula por fila, sobre las solicitudes RECOLECCION.
+# Regla de reemplazo (sólo ONHIRE): si la solicitud encontrada es ENTREGA (CAMBIO) y la placa de la fila es
+# su placa de reemplazo (la unidad que sustituye a la que falló), y esa misma reserva tiene una
+# ENTREGA (NUEVO) que no está en TRASLADO CANCELADO, la fila cuenta como ENTREGA (NUEVO): el reemplazo es la
+# entrega real de la renta nueva. La unidad que falló conserva ENTREGA (CAMBIO) para no contarla dos veces.
+# Protección: si la reserva ya estaba en FLOTA MES ANTERIOR (columna K, Booking No) no se convierte: un
+# reemplazo de una renta del mes pasado no es una renta nueva.
 FORMULA_P_ONHIRE = (
-    "=MAP(A2:A,C2:C,M2:M,LAMBDA(cli,res,pla,IF(pla=\"\",\"\",IFERROR(INDEX(SORT(FILTER(HSTACK("
-    + _SOL + "!$C$2:$C," + _SOL + "!$E$2:$E),LEFT(" + _SOL + "!$E$2:$E,7)=\"ENTREGA\",((" + _SOL + "!$M$2:$M=pla)+("
-    + _SOL + "!$O$2:$O=pla))>0," + _SOL + "!$J$2:$J=cli),1,FALSE),1,2),IFERROR(INDEX(SORT(FILTER(HSTACK("
-    + _SOL + "!$C$2:$C," + _SOL + "!$E$2:$E),LEFT(" + _SOL + "!$E$2:$E,7)=\"ENTREGA\"," + _SOL
-    + "!$I$2:$I=res),1,FALSE),1,2),\"\")))))"
+    "=MAP(A2:A,C2:C,M2:M,LAMBDA(cli,res,pla,IF(pla=\"\",\"\",LET("
+    "sFec," + _SOL + "!$C$2:$C,sEst," + _SOL + "!$H$2:$H,sTip," + _SOL + "!$E$2:$E,sRes," + _SOL + "!$I$2:$I,"
+    "sCli," + _SOL + "!$J$2:$J,sPla," + _SOL + "!$M$2:$M,sRem," + _SOL + "!$O$2:$O,"
+    "vacio,HSTACK(\"\",\"\",\"\",\"\"),"
+    "porPlaca,IFERROR(CHOOSEROWS(SORT(FILTER(HSTACK(sFec,sTip,sRes,sRem),LEFT(sTip,7)=\"ENTREGA\","
+    "((sPla=pla)+(sRem=pla))>0,sCli=cli),1,FALSE),1),vacio),"
+    "mejor,IF(INDEX(porPlaca,1,2)=\"\",IFERROR(CHOOSEROWS(SORT(FILTER(HSTACK(sFec,sTip,sRes,sRem),"
+    "LEFT(sTip,7)=\"ENTREGA\",sRes=res),1,FALSE),1),vacio),porPlaca),"
+    "tipoSol,INDEX(mejor,1,2),"
+    "IF(tipoSol=\"\",\"\",IF(AND(tipoSol=\"ENTREGA (CAMBIO)\",UPPER(INDEX(mejor,1,4))=UPPER(pla),"
+    "COUNTIFS(sRes,INDEX(mejor,1,3),sTip,\"ENTREGA (NUEVO)\",sEst,\"<>TRASLADO CANCELADO\")>0,"
+    "COUNTIF(" + _FLOTA + "!$K:$K,INDEX(mejor,1,3))=0),\"ENTREGA (NUEVO)\",tipoSol))))))"
 )
 FORMULA_P_RETORNOS = (
     '=IF(M{r}="","",IFERROR(INDEX(SORT(FILTER({' + _SOL + "!$C$2:$C," + _SOL + "!$E$2:$E}," + _SOL
