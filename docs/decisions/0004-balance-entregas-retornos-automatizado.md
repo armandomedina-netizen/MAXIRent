@@ -69,3 +69,25 @@ Nuvia cambió las columnas `P` y `R` de `ONHIRE` y `RETORNOS` y el conteo del `B
 - **Pruebas.** `tests/test_reglas_nuvia.py` (con hojas simuladas) compara las cuatro fórmulas con el texto de su archivo y cubre la migración, la segunda corrida sin reescritura y la corrida sin filas. El proyecto se agregó a `pruebas.yml`.
 
 Verificación sobre una copia del BALANCE (dos corridas con Maxinet real): la primera migró la estructura y la segunda no reescribió nada; 0 errores en `P:S`. Las fórmulas de la hoja coinciden con la reimplementación en Python en 178 de 178 filas de `ONHIRE` y 133 de 133 de `RETORNOS`. Contra Nuvia, `ONHIRE` es idéntico en las 172 filas comunes. En `RETORNOS` difieren 12 filas de `P` y 2 de `R`, todas en filas donde su `P` conserva la fórmula anterior (arrastró la nueva sólo hasta la fila 109, y 24 de sus 132 retornos quedan después). El `BALANCE` coincide día por día; sólo difieren el 30-oct (datos más recientes) y el 1-oct (su `C1`).
+
+## Regla de reemplazo en `ONHIRE!P2` (9-nov)
+
+Después del 30-oct Nuvia agregó una regla a `ONHIRE!P2` (`STATUS MAXINET`), la columna que alimenta `R` (COMPARATIVO) y con ella el `BALANCE`. Su archivo dejó de actualizarse, pero la regla sigue vigente en el nuestro. Se transcribió sin cambios (la constante `FORMULA_P_ONHIRE` es idéntica, carácter por carácter, a la fórmula de su archivo).
+
+**Qué hace.** Cuando una unidad falla en la primera entrega, Maxinet registra una solicitud `ENTREGA (CAMBIO)` con la placa que falló y su placa de reemplazo, sobre la misma reserva de la solicitud `ENTREGA (NUEVO)` original. Antes las dos filas de `ONHIRE` salían como `CAMBIO` y la entrega real de la renta nueva no se contaba. Ahora una fila pasa de `ENTREGA (CAMBIO)` a `ENTREGA (NUEVO)` cuando se cumplen las cuatro condiciones:
+
+1. la solicitud más reciente que le corresponde (por placa y cliente, o por reserva) es `ENTREGA (CAMBIO)`;
+2. la placa de la fila es la **placa de reemplazo** de esa solicitud (la unidad que falló no cambia, para no contar dos veces);
+3. la reserva de la solicitud tiene una `ENTREGA (NUEVO)` cuyo estatus no es `TRASLADO CANCELADO`;
+4. esa reserva **no** estaba en `FLOTA MES ANTERIOR` (columna `K`, Booking No): un reemplazo sobre una renta del mes pasado no es una renta nueva.
+
+`RETORNOS`, `R` y el `BALANCE` no cambian: la regla vive sólo en `P2` y `R` la hereda. Nuvia ofreció algo equivalente del lado de las recolecciones y no se pidió.
+
+**Escritura.** Sin pasos manuales: la primera corrida horaria después de integrar repone `P2` (`_asegurar_formulas_matriciales` compara la fórmula de la celda con la constante, limpia la columna y escribe la nueva) y el derrame se recalcula solo. `R2` ya era la correcta y no se reescribe.
+
+**Verificación (9-nov).** Se reprodujo la regla fuera de Sheets y se comparó con los valores que calcula el archivo de Nuvia (sus datos de octubre): `P` coincide en las 188 filas de `ONHIRE`. La regla nueva cambia exactamente 2 filas respecto de la del 30-oct (dos reemplazos por falla en la primera entrega), y el conteo por ejecutivo pasa de 35 a 36 y de 15 a 16, como el resumen de su `BALANCE` (36 y 16; los demás no cambian). La protección se comprobó con un reemplazo de una renta del mes anterior: se queda como `CAMBIO`, y sin la protección se habría contado como nuevo. Sobre nuestros datos de noviembre, la reimplementación con la regla anterior reproduce las 14 filas de `P` que muestra hoy la hoja, y la regla nueva todavía no cambia ninguna (sólo hay 14 entregas del mes).
+
+**Pruebas.** `tests/test_reglas_nuvia.py` compara la fórmula con el texto de su archivo, comprueba las cuatro condiciones, que `R` y `RETORNOS` no cambian, y que la fórmula del 30-oct se repone con la nueva sin reescribir nada más y sin volver a escribir en la segunda corrida.
+
+**Pendiente, fuera de este cambio.** La copia del Tablero LP (`DETALLE BALANCE` y las gráficas que citan el BALANCE) sigue importando del archivo original de Nuvia, que ya no se actualiza; hay que repuntarla a la copia automatizada.
+
