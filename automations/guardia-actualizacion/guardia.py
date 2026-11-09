@@ -48,9 +48,9 @@ SONDEO_SEG = 15
 # Nuvia renombra pestañas de nuestro Tablero: se acepta el nombre de siempre o el que ya se le conoce
 ALIAS_PESTANAS = {"UNIDADES CP": ("REPORTE FLOTA CP",), "DETALLE": ("GRAFICOS",)}
 # Pestañas de las que dependen nuestras automatizaciones: si ya no existen o traen celdas con error, la guardia falla
-PESTANAS_CRITICAS = ("FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "BITACORA CP")
+PESTANAS_CRITICAS = ("FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "BITACORA CP Mes Corriente")
 # Pestañas de Nuvia que sólo se vigilan por si traen errores: si ella las elimina o renombra, se anota y no falla
-PESTANAS_OPCIONALES = ("DETALLE", "GRAFICAS", "Bitácora Entregas / Recolecciones CP", "Ticket Sac/Maxiemergencia")
+PESTANAS_OPCIONALES = ("DETALLE", "GRAFICAS", "Bitácora Entregas / Recolecciones CP", "Ticket Sac/Maxiemergencia", "BITACORA CP")
 PESTANAS_SIN_ERRORES = PESTANAS_CRITICAS + PESTANAS_OPCIONALES
 NO_ENCONTRADA = "no se encontró la pestaña (¿la renombraron?)"
 ERROR_CELDA = re.compile(r"^#(REF!|N/A|VALUE!|NAME\?|ERROR!|DIV/0!)|^Please use")
@@ -113,6 +113,16 @@ class Revision:
     script: str
     workflow: str
     leer: object          # función salida -> pendientes (int) o None si no se pudo verificar
+    entorno: object = None  # función hoy -> variables de entorno extra para la corrida en seco (opcional)
+
+
+def entorno_bitacora(hoy: dt.date) -> dict:
+    """La Bitácora CP se escribe con el mes hasta HOY, así que durante el día siempre entran servicios nuevos. Para que eso no
+    parezca un faltante, la corrida en seco compara hasta ayer (o hasta hoy el día 1, cuando ayer es del mes anterior), y
+    FORZAR omite su salvaguarda del 80%, que no importa aquí porque la guardia sólo lee conteos."""
+    ayer = hoy - dt.timedelta(days=1)
+    hasta = ayer if ayer.month == hoy.month else hoy
+    return {"FECHA_DESDE": hasta.replace(day=1).isoformat(), "FECHA_HASTA": hasta.isoformat(), "FORZAR": "1"}
 
 
 REVISIONES = (
@@ -122,7 +132,7 @@ REVISIONES = (
     Revision("Entregas", "maxinet-entregas-cp", "maxinet_entregas_cp.py", "maxinet-entregas-cp.yml", pendientes_entregas),
     Revision("Frecuentes Activos", "maxinet-frecuentes-activos-cp", "maxinet_frecuentes_activos_cp.py", "maxinet-frecuentes-activos-cp.yml", pendientes_frecuentes),
     Revision("MKT Leads", "maxinet-mkt-leads-cp", "maxinet_mkt_leads_cp.py", "maxinet-mkt-leads-cp.yml", pendientes_bloque),
-    Revision("Bitácora CP", "maxinet-bitacora-cp", "maxinet_bitacora_cp.py", "maxinet-bitacora-cp.yml", pendientes_bloque),
+    Revision("Bitácora CP", "maxinet-bitacora-cp", "maxinet_bitacora_cp.py", "maxinet-bitacora-cp.yml", pendientes_bloque, entorno_bitacora),
 )
 CIERRE = Revision("Cierre diario del Tablero", "tablero-cp-cierre-diario", "cierre_diario.py", "tablero-cp-cierre-diario.yml", None)
 
@@ -142,8 +152,9 @@ class Resultado:
 def ejecutar_en_seco(rev: Revision) -> tuple:
     """(código, salida) de la corrida en seco de la automatización; no escribe en ninguna hoja."""
     try:
+        extra = rev.entorno(dt.datetime.now(ZONA).date()) if rev.entorno else {}
         r = subprocess.run([sys.executable, rev.script], cwd=RAIZ / rev.directorio, capture_output=True, text=True,
-                           env={**os.environ, "DRY_RUN": "1"}, timeout=TIMEOUT_SECO)
+                           env={**os.environ, "DRY_RUN": "1", **extra}, timeout=TIMEOUT_SECO)
         return r.returncode, r.stdout + r.stderr
     except subprocess.TimeoutExpired:
         return 124, ""
