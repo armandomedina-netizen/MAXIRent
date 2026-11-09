@@ -2,6 +2,8 @@
 
 Fecha: 2026-10-12
 
+> Nota (2026-11-03): la pestaña `UBICACIONES` de la base se eliminó a propósito y `actualizar_ubicaciones()` se retiró del sync; `ESTADOS` de la copia del Query ya no importa de esa pestaña. Ver ADR 0026. El resto del documento queda como contexto histórico.
+
 ## Contexto
 
 La hoja `Rentas activas detalle` del tablero LP es un `IMPORTRANGE` del Query ORIGINAL de Nuvia (`'TARIFA (QUERY)'!A:AB`). La alimentan `RESUMEN DE RENTAS ACTIVAS`, `PROXIMOS RETORNOS`, `Duración rentas` (filas ON HIRE), `HISTORIAL ACTIVAS` y el sync. Si Nuvia deja de actualizar o de compartir ese archivo, el tablero queda con una lista de rentas vieja. El principio fijado es que ningún proceso en producción depende de sus archivos; su versión sólo sirve para comparar.

@@ -8,8 +8,8 @@ Endpoint confirmado a partir del JS real de Maxinet (reporte-dias-seminuevos.php
             respuesta: {"data": [[28 celdas], ...]}
     El botón "Excel" de la página sólo exporta lo que trajo ese mismo POST, así que no se descarga ningún archivo.
     Estatus: 1 = ACTIVAS (102 filas al 2026-11-02), 0 = OFF_FLEET (con filas repetidas), 2 = TODAS (una fila por placa).
-    Se usa TODAS: la hoja guarda el historial de unidades vendidas (OFF_FLEET) y la pestaña GRAFICO cuenta por mes, año y
-    sucursal sobre todo ese historial; con ACTIVAS esas cuentas se perderían.
+    Se usa TODAS: la hoja guarda el historial de unidades vendidas (OFF_FLEET) y las cuentas por mes, año y
+    sucursal (MES y AÑO, AC:AD) se hacen sobre todo ese historial; con ACTIVAS ese historial se perdería.
 
 Qué contiene la pestaña: las 28 columnas del reporte (A:AB) con los mismos nombres y en el mismo orden, en el orden de la
 vista de Maxinet (BOOKED_ON descendente, sin fecha al final). En cada corrida se reemplazan completas: no hay `append`
@@ -259,7 +259,7 @@ def _con_reintento(fn, intentos: int = 5):
 
 
 def obtener_hoja(libro, nombre: str):
-    """La pestaña, o None si no existe. No se crea: tiene formato propio y la usa GRAFICO."""
+    """La pestaña, o None si no existe. No se crea: tiene formato propio."""
     try:
         return _con_reintento(lambda: libro.worksheet(nombre))
     except gspread.exceptions.WorksheetNotFound:
@@ -330,7 +330,7 @@ def refrescar(hoja, libro, nombre: str, filas: list[list]) -> dict:
     """Reemplaza A:AB de la pestaña con la tabla de Maxinet. `hoja` es None si no existe."""
     if hoja is None:
         raise RuntimeError(
-            f"No existe la pestaña {nombre} en el libro; no se creó nada (tiene formato propio y la usa GRAFICO). "
+            f"No existe la pestaña {nombre} en el libro; no se creó nada (tiene formato propio). "
             f"Revisar si alguien la renombró o ajustar WORKSHEET_SEMINUEVOS_LP.")
     encabezado, viejas, ultima_vieja = _leer_hoja(hoja)
     if [str(h).strip() for h in encabezado[:ANCHO]] != COLUMNAS:
@@ -389,7 +389,7 @@ def validar(hoja):
     rango = f"{_col_a1(COL_DERIVADAS_INI + 1)}{ultima}:{_col_a1(COL_DERIVADAS_FIN)}{ultima}"
     derivadas = _con_reintento(lambda: hoja.get(rango, value_render_option="FORMULA"))
     if not derivadas or len(derivadas[0]) < COL_DERIVADAS_FIN - COL_DERIVADAS_INI or not all(str(c).strip() for c in derivadas[0]):
-        raise RuntimeError(f"MES y AÑO (AC:AD) no tienen fórmula en la última fila con datos ({ultima}): GRAFICO no contaría esas unidades.")
+        raise RuntimeError(f"MES y AÑO (AC:AD) no tienen fórmula en la última fila con datos ({ultima}): esas unidades quedarían sin mes ni año.")
     log.info("Validación OK: sin placas repetidas y con MES y AÑO hasta la fila %d", ultima)
 
 
