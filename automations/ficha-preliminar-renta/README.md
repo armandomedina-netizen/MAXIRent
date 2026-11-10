@@ -72,12 +72,24 @@ rojo `#920000`). El logotipo es el del manual de marca.
 | Clientes | Yo | Cualquier persona | El formulario consulta y envía aquí. Esta dirección va en `ENDPOINT`. |
 | Ejecutivos | Yo | Cualquier usuario de la organización | Panel donde se generan los enlaces. Se comparte esta dirección con los ejecutivos. |
 
-**3. Conectar y publicar**
+**3. Publicar el formulario en GitHub Pages**
 
-1. Pegar la dirección `/exec` del despliegue **Clientes** en `ENDPOINT` (inicio del `<script>` de `index.html`).
-2. Publicar `index.html` y `logo.png` juntos en un hosting estático (GitHub Pages, Cloudflare Pages, Netlify, el sitio de la empresa).
-3. En Configuración del proyecto > Propiedades del script, crear `URL_FORMULARIO` con la dirección pública de `index.html`.
-   Opcional: `NOTIFICAR_A` (copia de cada firma a un correo) y `DIAS_VIGENCIA`.
+El workflow `.github/workflows/ficha-preliminar-pages.yml` publica `index.html` y `logo.png`
+desde `main` y escribe la dirección del receptor en la copia publicada; en el repositorio
+`ENDPOINT` se queda vacío.
+
+1. En GitHub: Settings > Pages > Source: **GitHub Actions** (una sola vez).
+2. Settings > Secrets and variables > Actions > pestaña **Variables** > New repository variable:
+   `FICHA_ENDPOINT` = dirección `/exec` del despliegue **Clientes** (debe verse como
+   `https://script.google.com/macros/s/<ID>/exec`; el workflow rechaza cualquier otra forma).
+3. Actions > "Ficha preliminar - publicar formulario" > Run workflow (también corre solo cuando
+   cambian `index.html`, `logo.png` o el workflow en `main`). La dirección queda en el resumen
+   del job: `https://armandomedina-netizen.github.io/MAXIRent/`.
+4. En Apps Script, Configuración del proyecto > Propiedades del script, crear `URL_FORMULARIO`
+   con esa dirección. Opcional: `NOTIFICAR_A` (copia de cada firma a un correo) y `DIAS_VIGENCIA`.
+
+Si se cambia el despliegue de Clientes (dirección nueva), basta actualizar `FICHA_ENDPOINT` y
+volver a correr el workflow.
 
 **4. Probar de punta a punta**
 

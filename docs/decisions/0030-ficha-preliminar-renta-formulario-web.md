@@ -29,6 +29,10 @@ Quien la llena es un cliente externo: no tiene cuenta de monday ni de Google.
   Doc `... - PENDIENTE DE FIRMA - Cliente` en la carpeta `Pendientes` del Drive del ejecutivo. Al firmar
   se completa con los datos y la firma, se renombra a `... - FIRMADA - Razón social - fecha`,
   pasa a `Firmadas` y se guarda su PDF ahí y en `Historial`. El ejecutivo recibe un correo.
+- **Publicación en GitHub Pages** con un workflow que corre sólo desde `main`, copia `index.html` y
+  `logo.png`, y escribe la dirección del receptor desde la variable de repositorio `FICHA_ENDPOINT`
+  (se rechaza cualquier valor que no sea `https://script.google.com/macros/s/<ID>/exec`). El sitio
+  lleva `noindex` y `robots.txt`.
 - **Receptor en Google Apps Script** vinculado a una hoja de Google Sheets: `Enlaces` (control),
   `Fichas` (respuestas, una columna por campo más el JSON) y `Ejecutivos` (altas). Dos
   despliegues del mismo código: uno público para el cliente y otro restringido a la

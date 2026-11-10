@@ -1,0 +1,64 @@
+name: Ficha preliminar - publicar formulario
+
+# Publica automations/ficha-preliminar-renta/index.html y logo.png en GitHub Pages.
+# La dirección del receptor (despliegue público de Apps Script) se inyecta desde la
+# variable de repositorio FICHA_ENDPOINT; en el código versionado ENDPOINT queda vacío
+# (ver docs/decisions/0030). Sólo publica desde main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - automations/ficha-preliminar-renta/index.html
+      - automations/ficha-preliminar-renta/logo.png
+      - .github/workflows/ficha-preliminar-pages.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar el sitio
+        env:
+          FICHA_ENDPOINT: ${{ vars.FICHA_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$FICHA_ENDPOINT" =~ ^https://script\.google\.com/macros/s/[A-Za-z0-9_-]+/exec$ ]]; then
+            echo "::error::Falta la variable de repositorio FICHA_ENDPOINT o no tiene la forma https://script.google.com/macros/s/<ID>/exec"
+            exit 1
+          fi
+          mkdir _site
+          cp automations/ficha-preliminar-renta/index.html automations/ficha-preliminar-renta/logo.png _site/
+          printf 'User-agent: *\nDisallow: /\n' > _site/robots.txt
+          touch _site/.nojekyll
+          python3 - <<'PY'
+          import os
+          p = "_site/index.html"
+          s = open(p, encoding="utf-8").read()
+          old = "var ENDPOINT = '';"
+          assert s.count(old) == 1, "No se encontró ENDPOINT vacío en index.html"
+          open(p, "w", encoding="utf-8").write(s.replace(old, "var ENDPOINT = '" + os.environ["FICHA_ENDPOINT"] + "';"))
+          PY
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
