@@ -1,44 +1,47 @@
 """
-Automatización diaria: login + lectura del reporte "Bitácora Entregas / Recolecciones CP" desde Maxinet vía
-requests (sin navegador) y refresco del bloque del mes en curso en la pestaña "BITACORA CP" del Sheet del
-Tablero CP copia.
+Automatización diaria: login + lectura del reporte "Bitácora Entregas / Recolecciones CP" desde Maxinet vía requests
+(sin navegador) y reemplazo del MES CORRIENTE en la pestaña "BITACORA CP Mes Corriente" del Sheet del Tablero CP copia.
 
 Endpoint confirmado a partir del JS real de Maxinet (cp-bitacora-entregas-recolecciones.php -> DataTable ajax):
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
     Datos:  POST {MAXINET_BASE_URL}/json/entregasRecoleccionesBitacora.php
             body: Desde=YYYY-MM-DD, Hasta=YYYY-MM-DD, Sucursal="" (vacío = todas)
             Desde/Hasta filtran por Fecha Prom. (fecha promesa) y Hasta es inclusive.
-            respuesta: {"data": [[38 valores], ...]}: una columna de acción en HTML (Comentarios) y las 37
-            columnas de datos de la pestaña (A:AK).
+            respuesta: {"data": [[39 valores], ...]}: una columna de acción en HTML (Comentarios) y las 38
+            columnas de datos de la pestaña (A:AL). El 9-nov-2026 Maxinet agregó la última, "Fecha Justificación".
     Tarda ~1 minuto con el mes completo.
 
-Rango de fechas (decidido por el usuario): del primer día del mes a AYER (hora Ciudad de México); si hoy es
-día 1, "ayer" cae en el mes anterior y el rango es ese mes completo. Durante los primeros 3 días del mes se
-vuelve a escribir también el mes anterior, para que sus últimos servicios terminen de cerrar. Cada mes se
-consulta por separado.
+Rango de fechas (decidido por el usuario el 9-nov-2026): del primer día del MES CORRIENTE a HOY (hora Ciudad de
+México). Ejemplo: el 9 de noviembre, del 1 al 9 de noviembre. La pestaña sólo debe tener datos del mes corriente:
+cada corrida reemplaza TODO el contenido por lo que entrega Maxinet para ese rango, ordenado por (Fecha Prom., Hora
+Prom., Reserva, Tipo Serv.), y elimina las filas de meses anteriores para evitar confusiones. Al cambiar de mes la
+pestaña queda con el mes nuevo.
 
-Qué se escribe: se REFRESCA el bloque del mes. Cada corrida reemplaza, desde la primera fila con Fecha Prom. >=
-inicio del bloque hasta el final, las columnas A:AK por lo que entrega Maxinet, ordenado por (Fecha Prom., Hora
-Prom., Reserva, Tipo Serv.). Los estatus, las fechas y horas reales y los motivos de retraso de un servicio cambian
-con los días, por eso se reescribe el mes completo. Las filas anteriores al bloque (meses cerrados) no se tocan.
-Las columnas AL:AO (AÑO, MES, Asesor móvil, PERIODO) son fórmulas: se escriben para las filas del bloque, con las
-mismas de la copia de Nuvia, y nunca se borran. La fila 1 se verifica contra las 41 columnas esperadas; si no
-coincide, la corrida se detiene sin escribir.
+Justificaciones: la columna AI (Justificación retraso) es el detonante. Cuando un servicio con retraso se justifica,
+Maxinet mismo cambia la fila: Semáforo pasa a verde y Estatus Serv. a EN TIEMPO, y se llenan Motivo retraso,
+Responsable justificación y Fecha Justificación (Estatus, la columna K, es el estado de la reserva y no cambia). Como
+cada corrida reescribe el mes completo, esos cambios llegan a la pestaña aunque la justificación se capture días
+después del servicio. Además se valida el resultado: si una fila tiene Justificación retraso pero no quedó en EN
+TIEMPO/verde o le falta el motivo, el responsable o la fecha (o al revés), la corrida lo avisa en el log con conteos.
 
-Tipos de dato (mismos que deja Nuvia al pegar la tabla): fechas y horas reales (fecha como número entero, hora
-como fracción del día), costos y Dif. Dias como números, # Cliente, Reserva y Código Postal como número cuando
-son sólo dígitos, el resto como texto sin espacios sobrantes. Todo se escribe en modo RAW (salvo las fórmulas): lo
-que capturan clientes y ejecutivos (domicilios, comentarios) nunca se interpreta como fórmula.
+Las columnas AM:AP (AÑO, MES, Asesor móvil, PERIODO) son fórmulas: se escriben para las filas del mes, con las mismas
+de la copia de Nuvia, y nunca se borran. La fila 1 se verifica contra las 42 columnas esperadas; si no coincide, la
+corrida se detiene sin escribir.
+
+Tipos de dato (mismos que deja Nuvia al pegar la tabla): fechas y horas reales (fecha como número entero, hora como
+fracción del día, Fecha Justificación como fecha y hora), costos y Dif. Dias como números, # Cliente, Reserva y Código
+Postal como número cuando son sólo dígitos, el resto como texto sin espacios sobrantes. Todo se escribe en modo RAW
+(salvo las fórmulas): lo que capturan clientes y ejecutivos nunca se interpreta como fórmula.
 
 Los logs son públicos: nunca se registran nombres, domicilios ni comentarios, sólo conteos y fechas.
 
-Salvaguarda: si Maxinet trae menos del 80% de las filas actuales del bloque (con 30 o más), la corrida se
-detiene sin escribir (FORZAR=1 la omite).
+Salvaguardas: si Maxinet trae menos del 80% de las filas que la pestaña ya tiene del mes (con 30 o más), o ningún
+servicio cuando la pestaña ya tiene filas del mes, la corrida se detiene sin escribir (FORZAR=1 la omite).
 
 Variables de entorno (ver .env.example):
     MAXINET_BASE_URL, MAXINET_USER, MAXINET_PASS, GOOGLE_CREDS_PATH,
     SPREADSHEET_ID_TABLERO_CP (Sheet del Tablero CP copia),
-    WORKSHEET_BITACORA_NAME (nombre o gid de la pestaña; por defecto "BITACORA CP"),
+    WORKSHEET_BITACORA_NAME (nombre o gid de la pestaña; por defecto "BITACORA CP Mes Corriente"),
     FECHA_DESDE, FECHA_HASTA, DRY_RUN, FORZAR (opcionales)
 """
 
@@ -93,16 +96,16 @@ def _instalar_reintentos_gspread(cliente=HTTPClient) -> None:
 
 _instalar_reintentos_gspread()
 
-# Mismo orden que la tabla de cp-bitacora-entregas-recolecciones.php y que A1:AK1 de la pestaña
+# Mismo orden que la tabla de cp-bitacora-entregas-recolecciones.php y que A1:AL1 de la pestaña
 COLUMNAS = [
     "Tipo Serv.", "Fecha Prom.", "Hora Prom.", "Fecha Real", "Hora Real", "Fecha GPS", "Hora GPS", "Semáforo",
     "Estatus Serv.", "Tiempo Trans.", "Estatus", "Reserva", "Tipo Cliente", "# Cliente", "Cliente", "Sucursal",
     "ReturnSite", "Asesor", "Asesor móvil", "Placa", "Grupo", "Cumpleaños", "Código Postal", "Costo Ent.Dom",
     "Costo Rec.", "Uber", "Order Ref.", "Dif. Dias", "Delivery Details", "Collection Details", "DefField_Text_13",
     "DefField_Text_14", "DefField_Text_15", "Motivo retraso", "Justificación retraso", "Responsable justificación",
-    "Comentarios",
+    "Comentarios", "Fecha Justificación",
 ]
-COLUMNAS_AUX = ["AÑO", "MES", "Asesor móvil", "PERIODO"]            # AL:AO, fórmulas
+COLUMNAS_AUX = ["AÑO", "MES", "Asesor móvil", "PERIODO"]            # AM:AP, fórmulas
 ENCABEZADOS = COLUMNAS + COLUMNAS_AUX
 COLUMNAS_ACCION = 1                    # "Comentarios" (enlace HTML): no va al Sheet
 ANCHO_MAXINET = COLUMNAS_ACCION + len(COLUMNAS)
@@ -110,6 +113,7 @@ IDX = {nombre: i for i, nombre in enumerate(COLUMNAS)}
 IDX_PROMESA, IDX_HORA_PROMESA, IDX_RESERVA, IDX_TIPO = IDX["Fecha Prom."], IDX["Hora Prom."], IDX["Reserva"], IDX["Tipo Serv."]
 FECHAS = [IDX[c] for c in ("Fecha Prom.", "Fecha Real", "Fecha GPS", "Cumpleaños")]
 HORAS = [IDX[c] for c in ("Hora Prom.", "Hora Real", "Hora GPS")]
+IDX_FECHA_JUSTIF = IDX["Fecha Justificación"]        # fecha y hora ("2026-10-15 09:12:03")
 IMPORTES = [IDX[c] for c in ("Costo Ent.Dom", "Costo Rec.", "Uber")]
 IDENTIFICADORES = [IDX[c] for c in ("Reserva", "# Cliente", "Código Postal")]   # número si son sólo dígitos
 IDX_DIF_DIAS = IDX["Dif. Dias"]
@@ -117,26 +121,27 @@ IDX_DIF_DIAS = IDX["Dif. Dias"]
 FORMATOS = {IDX["Fecha Prom."]: "d/M/yyyy", IDX["Fecha Real"]: "d/M/yyyy", IDX["Fecha GPS"]: "yyyy-mm-dd",
             IDX["Cumpleaños"]: "yyyy-mm-dd", IDX["Hora Prom."]: "h:mm:ss", IDX["Hora Real"]: "h:mm:ss",
             IDX["Hora GPS"]: "h:mm:ss", IDX["Costo Ent.Dom"]: '"$"#,##0.00', IDX["Costo Rec."]: '"$"#,##0.00',
-            IDX["Uber"]: '"$"#,##0.00'}
-FORMULAS_AUX = [                                                   # una por columna AL:AO, {r} = fila
+            IDX["Uber"]: '"$"#,##0.00', IDX["Fecha Justificación"]: "yyyy-mm-dd h:mm:ss"}
+FORMULAS_AUX = [                                                   # una por columna AM:AP, {r} = fila
     '=IF(B{r}="","", YEAR(B{r}))',
     '=IF(B{r}="","",TEXT(B{r},"MMMM"))',
     '=IF(B{r}="","", IF(S{r}="","SIN ASESOR",S{r}))',
     '=IF(B{r}="","",TEXT(B{r},"MMMM YYYY"))',
 ]
 ENDPOINT = "json/entregasRecoleccionesBitacora.php"
+PESTANA_POR_DEFECTO = "BITACORA CP Mes Corriente"
 FILA_INICIO_DATOS = 2
 COL_PROMESA = gspread.utils.rowcol_to_a1(1, IDX_PROMESA + 1).rstrip("1")          # "B"
-ULTIMA_COL_DATOS = gspread.utils.rowcol_to_a1(1, len(COLUMNAS)).rstrip("1")       # "AK"
-PRIMERA_COL_AUX = gspread.utils.rowcol_to_a1(1, len(COLUMNAS) + 1).rstrip("1")    # "AL"
-ULTIMA_COL = gspread.utils.rowcol_to_a1(1, len(ENCABEZADOS)).rstrip("1")          # "AO"
+ULTIMA_COL_DATOS = gspread.utils.rowcol_to_a1(1, len(COLUMNAS)).rstrip("1")       # "AL"
+PRIMERA_COL_AUX = gspread.utils.rowcol_to_a1(1, len(COLUMNAS) + 1).rstrip("1")    # "AM"
+ULTIMA_COL = gspread.utils.rowcol_to_a1(1, len(ENCABEZADOS)).rstrip("1")          # "AP"
 ZONA = ZoneInfo("America/Mexico_City")
 TIMEOUT_SEG = 900                      # el mes completo tarda ~1 minuto
 REINTENTOS = 3
-DIAS_MES_ANTERIOR = 3                  # los primeros días del mes se refresca también el mes anterior
 FILAS_POR_ESCRITURA = 800
 BASE_SERIAL = dt.date(1899, 12, 30)
 FECHA_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+FECHA_HORA_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$")
 HORA_RE = re.compile(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?$")
 NUMERO_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
@@ -178,24 +183,13 @@ def login_maxinet() -> requests.Session:
     return session
 
 
-def bloques_a_refrescar() -> list[tuple[str, str]]:
-    """Bloques de fechas (desde, hasta) que se vuelven a escribir en cada corrida, del más antiguo al más reciente.
-
-    Principal: del primer día del mes de 'ayer' a ayer (hora CDMX). Durante los primeros DIAS_MES_ANTERIOR
-    días del mes se refresca además el mes anterior completo. FECHA_DESDE/FECHA_HASTA fijan un solo bloque
-    (pruebas y recuperaciones)."""
-    ayer = dt.datetime.now(ZONA).date() - dt.timedelta(days=1)
-    hasta = os.environ.get("FECHA_HASTA") or ayer.isoformat()
-    h = dt.date.fromisoformat(hasta)
-    if os.environ.get("FECHA_DESDE"):
-        return [(os.environ["FECHA_DESDE"], hasta)]
-    inicio = h.replace(day=1)
-    bloques = []
-    if h.day <= DIAS_MES_ANTERIOR:
-        fin_prev = inicio - dt.timedelta(days=1)
-        bloques.append((fin_prev.replace(day=1).isoformat(), fin_prev.isoformat()))
-    bloques.append((inicio.isoformat(), hasta))
-    return bloques
+def rango_del_mes() -> tuple[str, str]:
+    """(desde, hasta): del primer día del mes corriente a hoy (hora CDMX). FECHA_DESDE/FECHA_HASTA los fijan (pruebas y
+    recuperaciones); "mes corriente" es el de FECHA_DESDE si se fija."""
+    hoy = dt.datetime.now(ZONA).date()
+    hasta = os.environ.get("FECHA_HASTA") or hoy.isoformat()
+    desde = os.environ.get("FECHA_DESDE") or dt.date.fromisoformat(hasta).replace(day=1).isoformat()
+    return desde, hasta
 
 
 def descargar_bitacora(desde: str, hasta: str) -> list[list]:
@@ -218,6 +212,16 @@ def _fecha(texto: str, columna: str) -> int:
         raise RuntimeError(f"La columna '{columna}' de la bitácora ya no trae fechas con la forma esperada "
                            f"({len(texto)} caracteres). No se escribió nada en el Sheet.")
     return (dt.date(int(m[1]), int(m[2]), int(m[3])) - BASE_SERIAL).days
+
+
+def _fecha_hora(texto: str, columna: str) -> float:
+    """'2026-10-15 09:12:03' -> número de serie de Sheets con la hora como fracción."""
+    m = FECHA_HORA_RE.match(texto)
+    if not m:
+        raise RuntimeError(f"La columna '{columna}' de la bitácora ya no trae fecha y hora con la forma esperada "
+                           f"({len(texto)} caracteres). No se escribió nada en el Sheet.")
+    dias = (dt.date(int(m[1]), int(m[2]), int(m[3])) - BASE_SERIAL).days
+    return dias + (int(m[4]) * 3600 + int(m[5]) * 60 + int(m[6] or 0)) / 86400
 
 
 def _hora(texto: str, columna: str) -> float:
@@ -267,6 +271,8 @@ def normalizar_filas(filas: list[list]) -> list[list]:
         for j in HORAS:
             if datos[j]:
                 fila[j] = _hora(datos[j], COLUMNAS[j])
+        if datos[IDX_FECHA_JUSTIF]:
+            fila[IDX_FECHA_JUSTIF] = _fecha_hora(datos[IDX_FECHA_JUSTIF], COLUMNAS[IDX_FECHA_JUSTIF])
         for j in IMPORTES + [IDX_DIF_DIAS]:
             if datos[j]:
                 fila[j] = _numero(datos[j])
@@ -298,7 +304,7 @@ def conectar_sheet():
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"], scopes=["https://www.googleapis.com/auth/spreadsheets"])
     sh = gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_TABLERO_CP"])
-    nombre = (os.environ.get("WORKSHEET_BITACORA_NAME") or "").strip().strip("\"'").strip() or "BITACORA CP"
+    nombre = (os.environ.get("WORKSHEET_BITACORA_NAME") or "").strip().strip("\"'").strip() or PESTANA_POR_DEFECTO
     return resolver_pestana(sh, nombre)
 
 
@@ -319,9 +325,9 @@ def verificar_encabezados(worksheet):
                            f"(difieren las columnas {distintas[:10]}). No se escribió nada.")
 
 
-def refrescar_bloque(worksheet, nuevas: list[list], desde: str) -> dict:
-    """Reemplaza, de la primera fila con Fecha Prom. >= desde hasta el final, el bloque A:AK por lo que entrega Maxinet
-    (ya ordenado) y deja las fórmulas AL:AO en esas filas. Las filas anteriores al bloque (meses cerrados) no se tocan."""
+def reemplazar_mes(worksheet, nuevas: list[list], desde: str) -> dict:
+    """Deja en la pestaña, desde la fila 2, exactamente los servicios del mes que entrega Maxinet (ya ordenados), con las
+    fórmulas AM:AP en esas filas, y elimina cualquier fila de meses anteriores (Fecha Prom. anterior a `desde`)."""
     verificar_encabezados(worksheet)
     ini_serie = (dt.date.fromisoformat(desde) - BASE_SERIAL).days
     col = worksheet.get(f"{COL_PROMESA}{FILA_INICIO_DATOS}:{COL_PROMESA}{worksheet.row_count}", value_render_option="UNFORMATTED_VALUE")
@@ -330,52 +336,77 @@ def refrescar_bloque(worksheet, nuevas: list[list], desde: str) -> dict:
     for i, f in enumerate(fechas):
         if f is not None:
             ultima = FILA_INICIO_DATOS + i
-    inicio = ultima + 1
-    for i, f in enumerate(fechas[:ultima - FILA_INICIO_DATOS + 1]):
-        if f is not None and f >= ini_serie:
-            inicio = FILA_INICIO_DATOS + i
-            break
-    anteriores_en_el_bloque = [f for f in fechas[inicio - FILA_INICIO_DATOS:ultima - FILA_INICIO_DATOS + 1]
-                               if f is not None and f < ini_serie]
-    if anteriores_en_el_bloque:
-        raise RuntimeError(f"Hay {len(anteriores_en_el_bloque)} filas con Fecha Prom. anterior al {desde} después del "
-                           f"inicio del bloque (la pestaña no está ordenada por fecha). No se escribió nada.")
-    viejas = max(0, ultima - inicio + 1)
+    del_mes = sum(1 for f in fechas if f is not None and f >= ini_serie)
+    anteriores = sum(1 for f in fechas if f is not None and f < ini_serie)
 
-    if viejas >= 30 and len(nuevas) < 0.8 * viejas and not os.environ.get("FORZAR"):
-        raise RuntimeError(f"Maxinet trae {len(nuevas)} servicios para el bloque y el Sheet tiene {viejas}: menos del 80%. "
+    if not nuevas and del_mes and not os.environ.get("FORZAR"):
+        raise RuntimeError(f"Maxinet no trae servicios del mes y la pestaña ya tiene {del_mes}: probable respuesta "
+                           f"incompleta; no se escribió nada (FORZAR=1 para omitir esta revisión).")
+    if del_mes >= 30 and len(nuevas) < 0.8 * del_mes and not os.environ.get("FORZAR"):
+        raise RuntimeError(f"Maxinet trae {len(nuevas)} servicios del mes y el Sheet tiene {del_mes}: menos del 80%. "
                            f"Probable respuesta incompleta; no se escribió nada (FORZAR=1 para omitir esta revisión).")
-    log.info("Bloque desde %s: filas %d -> %d | nuevas %d", desde, viejas, len(nuevas), max(0, len(nuevas) - viejas))
+    log.info("Bloque desde %s: filas %d -> %d | nuevas %d", desde, del_mes, len(nuevas), max(0, len(nuevas) - del_mes))
+    if anteriores:
+        log.info("Meses anteriores por eliminar: %d filas", anteriores)
 
-    fila_ini, fila_fin = inicio, inicio + len(nuevas) - 1
-    resumen = {"antes": viejas, "despues": len(nuevas), "nuevas": max(0, len(nuevas) - viejas), "inicio": inicio}
-    if not nuevas:
-        log.info("Maxinet no trae servicios para el bloque; no se escribió nada.")
-        return resumen
+    fila_ini, fila_fin = FILA_INICIO_DATOS, FILA_INICIO_DATOS + len(nuevas) - 1
+    resumen = {"antes": del_mes, "despues": len(nuevas), "nuevas": max(0, len(nuevas) - del_mes), "inicio": fila_ini,
+               "anteriores": anteriores}
     rango = f"A{fila_ini}:{ULTIMA_COL_DATOS}{fila_fin}"
     if os.environ.get("DRY_RUN"):
-        log.info("DRY_RUN: se reescribirían %s (%d filas) (no se escribió nada).", rango, len(nuevas))
+        log.info("DRY_RUN: la pestaña quedaría con %d filas del mes en %s y %d filas de meses anteriores eliminadas "
+                 "(no se escribió nada).", len(nuevas), rango if nuevas else "(vacía)", anteriores)
         return resumen
 
-    if fila_fin > worksheet.row_count:
-        worksheet.add_rows(fila_fin - worksheet.row_count + 200)
-    for k in range(0, len(nuevas), FILAS_POR_ESCRITURA):
-        tanda = nuevas[k:k + FILAS_POR_ESCRITURA]
-        r1, r2 = fila_ini + k, fila_ini + k + len(tanda) - 1
-        worksheet.update(range_name=f"A{r1}:{ULTIMA_COL_DATOS}{r2}", values=tanda, value_input_option="RAW")
-        formulas = [[f.format(r=r) for f in FORMULAS_AUX] for r in range(r1, r2 + 1)]
-        worksheet.update(range_name=f"{PRIMERA_COL_AUX}{r1}:{ULTIMA_COL}{r2}", values=formulas, value_input_option="USER_ENTERED")
-    if ultima > fila_fin:                                   # el bloque quedó más corto: limpiar los datos que sobran
+    if nuevas:
+        if fila_fin > worksheet.row_count:
+            worksheet.add_rows(fila_fin - worksheet.row_count + 200)
+        for k in range(0, len(nuevas), FILAS_POR_ESCRITURA):
+            tanda = nuevas[k:k + FILAS_POR_ESCRITURA]
+            r1, r2 = fila_ini + k, fila_ini + k + len(tanda) - 1
+            worksheet.update(range_name=f"A{r1}:{ULTIMA_COL_DATOS}{r2}", values=tanda, value_input_option="RAW")
+            formulas = [[f.format(r=r) for f in FORMULAS_AUX] for r in range(r1, r2 + 1)]
+            worksheet.update(range_name=f"{PRIMERA_COL_AUX}{r1}:{ULTIMA_COL}{r2}", values=formulas, value_input_option="USER_ENTERED")
+    if ultima > fila_fin:                                   # lo que sobra (meses anteriores y filas de más) se elimina
         worksheet.batch_clear([f"A{fila_fin + 1}:{ULTIMA_COL_DATOS}{ultima}"])
-    dar_formato(worksheet, fila_ini, fila_fin)
-    log.info("Bloque reescrito: %d servicios en %s (última fila anterior: %d)", len(nuevas), rango, ultima)
+    if nuevas:
+        dar_formato(worksheet, fila_ini, fila_fin)
+    log.info("Mes reemplazado: %d servicios en %s; filas eliminadas: %d (última fila anterior: %d)",
+             len(nuevas), rango if nuevas else "(vacía)", max(0, ultima - fila_fin), ultima)
     return resumen
+
+
+def revisar_justificaciones(filas: list[list]) -> dict:
+    """Valida el efecto de la columna Justificación retraso (AI), que es el detonante: cuando un servicio se justifica
+    Maxinet lo deja EN TIEMPO y en verde y llena Motivo retraso, Responsable justificación y Fecha Justificación. Cuenta
+    las filas justificadas y las que no cuadran, en ambos sentidos, y avisa en el log (sólo conteos). No modifica nada:
+    si Maxinet no aplicó el cambio, la pestaña refleja lo que Maxinet entrega y la próxima corrida lo recoge."""
+    j = IDX["Justificación retraso"]
+    dependientes = {"Motivo retraso": IDX["Motivo retraso"], "Responsable justificación": IDX["Responsable justificación"],
+                    "Fecha Justificación": IDX_FECHA_JUSTIF}
+    justificadas = [f for f in filas if f[j] != ""]
+    problemas = {}
+    for f in justificadas:
+        if f[IDX["Estatus Serv."]] != "EN TIEMPO":
+            problemas["Estatus Serv. distinto de EN TIEMPO"] = problemas.get("Estatus Serv. distinto de EN TIEMPO", 0) + 1
+        if str(f[IDX["Semáforo"]]).strip().lower() != "verde":
+            problemas["Semáforo distinto de verde"] = problemas.get("Semáforo distinto de verde", 0) + 1
+        for nombre, idx in dependientes.items():
+            if f[idx] == "":
+                problemas[f"sin {nombre}"] = problemas.get(f"sin {nombre}", 0) + 1
+    huerfanas = sum(1 for f in filas if f[j] == "" and any(f[idx] != "" for idx in dependientes.values()))
+    if huerfanas:
+        problemas["datos de justificación sin Justificación retraso"] = huerfanas
+    log.info("Justificaciones (AI): %d de %d servicios justificados", len(justificadas), len(filas))
+    if problemas:
+        log.warning("Justificaciones que no cuadran: %s", ", ".join(f"{k}: {v}" for k, v in problemas.items()))
+    return {"justificadas": len(justificadas), "problemas": problemas}
 
 
 def dar_formato(worksheet, fila_ini: int, fila_fin: int):
     """Formato de fecha, hora e importe a las columnas con tipo del bloque."""
     def pedido(col, patron):
-        tipo = "CURRENCY" if "$" in patron else ("TIME" if patron.startswith("h") else "DATE")
+        tipo = "CURRENCY" if "$" in patron else ("TIME" if patron.startswith("h") else ("DATE_TIME" if " h:" in patron else "DATE"))
         return {"repeatCell": {
             "range": {"sheetId": worksheet.id, "startRowIndex": fila_ini - 1, "endRowIndex": fila_fin,
                       "startColumnIndex": col, "endColumnIndex": col + 1},
@@ -399,13 +430,11 @@ def validar_orden(worksheet, inicio: int, cantidad: int):
 
 def main():
     try:
-        filas, desde = [], None
-        for d, h in bloques_a_refrescar():
-            filas += descargar_bitacora(d, h)
-            desde = desde or d
-        filas.sort(key=lambda r: r[IDX_PROMESA])
+        desde, hasta = rango_del_mes()
+        filas = descargar_bitacora(desde, hasta)
+        revisar_justificaciones(filas)
         worksheet = conectar_sheet()
-        r = refrescar_bloque(worksheet, filas, desde)
+        r = reemplazar_mes(worksheet, filas, desde)
         if not os.environ.get("DRY_RUN"):
             validar_orden(worksheet, r["inicio"], r["despues"])
         log.info("Automatización completada con éxito (bloque de %d servicios desde %s)", r["despues"], desde)
