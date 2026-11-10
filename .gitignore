@@ -20,6 +20,10 @@ private/
 exports/
 *.monday-export.*
 
+# Credenciales de la cuenta de servicio de Google en cualquier automatización (los workflows las escriben a ese
+# archivo en el runner; una corrida local con el mismo nombre no debe poder versionarse)
+**/google-creds.json
+
 # Maxinet Sync automation: local secrets and runtime artifacts
 automations/maxinet-sync/google-creds.json
 automations/maxinet-sync/*.venv/
