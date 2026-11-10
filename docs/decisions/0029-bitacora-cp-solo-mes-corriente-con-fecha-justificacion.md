@@ -26,7 +26,7 @@ El detonante de los cambios de información es la columna AI, **Justificación r
 - **Salvaguardas:** si Maxinet trae menos del 80% de las filas del mes actual en la pestaña (con 30 o más), o responde vacío cuando ya hay filas del mes, la corrida se detiene sin escribir (`FORZAR=1` la omite). Los datos se escriben en `RAW` en tandas de 800 filas; sólo las fórmulas auxiliares van como `USER_ENTERED`.
 - **Privacidad:** igual que el ADR 0020, los logs sólo llevan conteos y fechas.
 - **Pestaña:** `WORKSHEET_BITACORA_NAME` acepta nombre o gid; si no existe el secret, se usa `BITACORA CP Mes Corriente`. La pestaña `BITACORA CP` anterior deja de actualizarse.
-- **Guardia de actualización:** como Hasta es hoy, la corrida en seco vería filas nuevas todos los días. La guardia compara hasta **ayer** dentro del mismo mes (el día 1, ese mismo día) y fija `FORZAR=1` para que la regla del 80% no dé falsas alarmas al inicio del mes. `BITACORA CP Mes Corriente` es ahora pestaña crítica y `BITACORA CP` sólo opcional.
+- **Sin avisos por correo (pedido del 2026-11-10):** la Bitácora CP sigue corriendo a las 8:35 y se reintenta como las demás, pero no genera correos. En el Vigilante se marca como `silencioso` (sin aviso de "sin actualizar", de "falló 3 veces" ni de error de script, y sin línea en el resumen de las 8:45; el parche vive en la copia privada del Vigilante, no en el repo). La guardia de las 10:30 ya no la revisa: se retira su corrida en seco y las dos pestañas (`BITACORA CP` y `BITACORA CP Mes Corriente`) pasan a opcionales, es decir, sólo se anotan y no hacen fallar la guardia. Con eso desaparece también la necesidad de comparar hasta ayer o de `FORZAR` en la guardia.
 
 ## Consecuencias
 

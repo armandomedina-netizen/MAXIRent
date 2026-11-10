@@ -123,7 +123,7 @@ def test_una_salida_que_no_se_entiende_no_se_da_por_buena():
 
 def test_cada_automatizacion_tiene_su_lector_y_su_workflow():
     nombres = [r.nombre for r in g.REVISIONES]
-    assert nombres == ["Clientes Nuevos", "Clientes Potenciales", "Encuestas", "Entregas", "Frecuentes Activos", "MKT Leads", "Bitácora CP"]
+    assert nombres == ["Clientes Nuevos", "Clientes Potenciales", "Encuestas", "Entregas", "Frecuentes Activos", "MKT Leads"]
     assert all(r.workflow.endswith(".yml") and (g.RAIZ / r.directorio / r.script).exists() for r in g.REVISIONES + (g.CIERRE,))
     assert all((g.RAIZ.parent / ".github" / "workflows" / r.workflow).exists() for r in g.REVISIONES + (g.CIERRE,))
 
@@ -158,8 +158,8 @@ def test_tablero_con_salida_ilegible():
 # ---------------------------------------------------------------- errores en pestañas
 def test_errores_en_el_tablero():
     assert g.revisar_errores(lambda: {}).estado == "ok"
-    r = g.revisar_errores(lambda: {"BITACORA CP": 2, "GRAFICAS": 1})
-    assert r.estado == "pendiente" and "BITACORA CP: 2" in r.detalle and "GRAFICAS: 1" in r.detalle
+    r = g.revisar_errores(lambda: {"FLOTA CP": 2, "GRAFICAS": 1})
+    assert r.estado == "pendiente" and "FLOTA CP: 2" in r.detalle and "GRAFICAS: 1" in r.detalle
 
 
 def test_una_pestana_opcional_que_nuvia_elimino_se_anota_y_no_falla():
@@ -180,13 +180,21 @@ def test_una_pestana_opcional_con_celdas_con_error_si_hace_fallar():
 
 
 def test_las_criticas_incluyen_lo_que_usan_las_automatizaciones_y_no_hay_repetidas():
-    assert {"FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO", "BITACORA CP Mes Corriente"} <= set(g.PESTANAS_CRITICAS)
-    assert "BITACORA CP" in g.PESTANAS_OPCIONALES                      # la anterior ya no se actualiza
+    assert {"FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO"} <= set(g.PESTANAS_CRITICAS)
     assert len(set(g.PESTANAS_SIN_ERRORES)) == len(g.PESTANAS_SIN_ERRORES)
     assert not set(g.PESTANAS_CRITICAS) & set(g.PESTANAS_OPCIONALES)
 
 
-# ---------------------------------------------------------------- MKT Leads y Bitácora CP (bloque del mes)
+def test_la_bitacora_cp_no_se_vigila_ni_se_avisa_por_ella():
+    """ADR 0029: la Bitácora CP sigue corriendo a su hora, pero la guardia no la revisa ni falla por sus pestañas."""
+    assert not any("bitacora" in r.directorio for r in g.REVISIONES + (g.CIERRE,))
+    for pestana in ("BITACORA CP", "BITACORA CP Mes Corriente"):
+        assert pestana in g.PESTANAS_OPCIONALES and pestana not in g.PESTANAS_CRITICAS
+    r = g.revisar_errores(lambda: {"BITACORA CP Mes Corriente": g.NO_ENCONTRADA})
+    assert r.estado == "ok" and "sin encontrar (opcionales): BITACORA CP Mes Corriente" in r.detalle
+
+
+# ---------------------------------------------------------------- MKT Leads (bloque del mes)
 BLOQUE_AL_DIA = """2026-10-30 08:20:05,123 INFO Bloque desde 2026-10-01: filas 1994 -> 1994 | nuevas 0
 2026-10-30 08:20:05,124 INFO DRY_RUN: se reescribirían A2:AN1995 (1994 filas) (no se escribió nada).
 2026-10-30 08:20:05,125 INFO Automatización completada con éxito (bloque de 1994 leads desde 2026-10-01)"""
@@ -211,7 +219,7 @@ def test_el_bloque_sin_exito_o_sin_su_linea_no_se_da_por_bueno():
     assert g.pendientes_bloque(BLOQUE_FALTAN_38.replace("completada con éxito", "terminada")) is None
 
 
-def test_mkt_y_bitacora_se_relanzan_si_faltan_filas_y_se_recuperan():
+def test_mkt_se_relanza_si_faltan_filas_y_se_recupera():
     mkt = next(r for r in g.REVISIONES if r.nombre == "MKT Leads")
     rel = Relanzador("success")
     out = g.revisar(mkt, Ejecutor(BLOQUE_FALTAN_38, BLOQUE_AL_DIA), rel)
@@ -313,30 +321,3 @@ def test_errores_avisa_si_una_pestana_ya_no_se_encuentra(monkeypatch):
     monkeypatch.setenv("GOOGLE_CREDS_PATH", "x"); monkeypatch.setenv("SPREADSHEET_ID_TABLERO_CP", "y")
     r = g.contar_errores_tablero()
     assert len(r) == len(g.PESTANAS_SIN_ERRORES) and all("renombraron" in v for v in r.values())
-
-
-# ---------------------------------------------------------------- Bitácora CP: la corrida en seco compara hasta ayer
-def test_la_bitacora_compara_hasta_ayer_dentro_del_mismo_mes():
-    assert g.entorno_bitacora(dt.date(2026, 11, 9)) == {"FECHA_DESDE": "2026-11-01", "FECHA_HASTA": "2026-11-08", "FORZAR": "1"}
-    assert g.entorno_bitacora(dt.date(2026, 11, 2)) == {"FECHA_DESDE": "2026-11-01", "FECHA_HASTA": "2026-11-01", "FORZAR": "1"}
-
-
-def test_el_dia_uno_la_bitacora_compara_ese_mismo_dia_y_no_el_mes_anterior():
-    assert g.entorno_bitacora(dt.date(2026, 11, 1)) == {"FECHA_DESDE": "2026-11-01", "FECHA_HASTA": "2026-11-01", "FORZAR": "1"}
-    assert g.entorno_bitacora(dt.date(2027, 1, 1))["FECHA_DESDE"] == "2027-01-01"
-
-
-def test_solo_la_bitacora_lleva_entorno_extra_y_se_pasa_a_la_corrida_en_seco(monkeypatch):
-    assert [r.nombre for r in g.REVISIONES if r.entorno] == ["Bitácora CP"]
-    for v in ("FORZAR", "FECHA_DESDE", "FECHA_HASTA"):
-        monkeypatch.delenv(v, raising=False)
-    visto = {}
-
-    class R:
-        returncode, stdout, stderr = 0, "ok", ""
-    monkeypatch.setattr(g.subprocess, "run", lambda *a, **k: visto.update(env=k["env"]) or R())
-    bit = next(r for r in g.REVISIONES if r.nombre == "Bitácora CP")
-    g.ejecutar_en_seco(bit)
-    assert visto["env"]["DRY_RUN"] == "1" and visto["env"]["FORZAR"] == "1" and {"FECHA_DESDE", "FECHA_HASTA"} <= set(visto["env"])
-    g.ejecutar_en_seco(NUEVOS)
-    assert visto["env"]["DRY_RUN"] == "1" and not {"FORZAR", "FECHA_DESDE", "FECHA_HASTA"} & set(visto["env"])
