@@ -4,7 +4,7 @@ Fecha: 2026-11-02
 
 ## Contexto
 
-La pestaña `ENVIOS SEMINUEVOS` de la Base LP copia ("Copia de BASE LP_AUTOMATIZADO") tenía los datos del reporte `reporte-dias-seminuevos.php` de Maxinet, pero ningún proceso la actualizaba: su última fecha de ingreso a seminuevos es del 2026-09-08. Se pidió automatizarla, con la regla de reemplazar los datos de la hoja por lo que muestra Maxinet, una vez al día y ligada a las demás automatizaciones de la mañana.
+La pestaña `ENVIOS SEMINUEVOS` de la Base LP copia ("BASE LP_AUTOMATIZADO", antes "Copia de BASE LP_AUTOMATIZADO") tenía los datos del reporte `reporte-dias-seminuevos.php` de Maxinet, pero ningún proceso la actualizaba: su última fecha de ingreso a seminuevos es del 2026-09-08. Se pidió automatizarla, con la regla de reemplazar los datos de la hoja por lo que muestra Maxinet, una vez al día y ligada a las demás automatizaciones de la mañana.
 
 La hoja tiene 28 columnas con los nombres del reporte (A:AB) y dos columnas derivadas, `MES` y `AÑO` (AC:AD, fórmulas sobre la fecha de ingreso a seminuevos). La pestaña `GRAFICO` de la misma Base cuenta con `COUNTIFS` sobre esas columnas y sobre `BSite` (mes, año y sucursal), incluyendo años anteriores.
 
