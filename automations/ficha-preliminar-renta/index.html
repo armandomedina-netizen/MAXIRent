@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Ficha Preliminar para Renta Vehicular · MAXIRent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Montserrat:wght@400;500;600;700;800&display=swap">
+<style>
+/* Colores tomados de la "FICHA PRELIMINAR PARA RENTA VEHICULAR.pdf" (valores RGB del archivo).
+   Diseño: una hoja continua con las mismas secciones y orden del PDF. */
+:root{
+  --navy:#05394B;      /* texto, barras, iconos */
+  --orange:#F47721;    /* insignias, franjas, líneas */
+  --orange-t:#EE8022;  /* título del encabezado */
+  --orange-l:#F9A05E;  /* franja clara */
+  --card:#F5FBFD;      /* fondo de cada sección */
+  --field:#E5F4FB;     /* fondo de los campos */
+  --field-bd:#B9D8E8;
+  --note-bg:#FBCEAF;   /* aviso de requisito obligatorio */
+  --red:#920000;       /* aviso y errores */
+  --muted:#3F6272;
+  --paper:#FFFFFF;
+  --head:Impact,'Anton','Arial Narrow',sans-serif;
+  --body:'Montserrat',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);font-size:15px;line-height:1.45;
+  padding:16px max(16px,env(safe-area-inset-right,0px)) 40px max(16px,env(safe-area-inset-left,0px))}
+.wrap{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+
+/* encabezado */
+.hdr{background:var(--navy);color:#fff;border-radius:14px;padding:26px 28px;display:flex;gap:26px;align-items:center;position:relative;overflow:hidden}
+.hdr img{width:190px;height:auto;flex:none;display:block}
+.hdr .sep{width:2px;align-self:stretch;background:#fff;flex:none}
+.hdr h1{font-family:var(--head);font-weight:400;font-size:clamp(26px,4.6vw,40px);line-height:1.02;color:var(--orange-t);margin:0 0 8px;text-transform:uppercase;text-wrap:balance}
+.hdr p{margin:0;max-width:34ch;font-size:15px}
+.bars{position:absolute;pointer-events:none}
+.bars i{position:absolute;top:-10px;bottom:-10px;width:30px;transform:skewX(-24deg)}
+.bars i:first-child{background:var(--orange)}
+.bars i:last-child{background:var(--orange-l)}
+.hdr .bars{right:30px;top:0;bottom:0;width:100px}
+.hdr .bars i:first-child{right:46px}.hdr .bars i:last-child{right:8px}
+@media(max-width:720px){.hdr{flex-wrap:wrap;gap:16px;padding:20px}.hdr .sep,.hdr .bars{display:none}.hdr img{width:150px}}
+
+/* avance */
+.prog{position:sticky;top:0;z-index:20;background:var(--paper);border:1.5px solid var(--field-bd);border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:14px;font-size:13px;font-weight:600}
+.prog .meter{flex:1;height:8px;border-radius:99px;background:var(--field);overflow:hidden;min-width:60px}
+.prog .meter b{display:block;height:100%;width:0;background:var(--orange);transition:width .25s}
+.prog span{white-space:nowrap;font-variant-numeric:tabular-nums}
+.prog .draft{font-size:12px;font-weight:500;color:var(--muted)}
+@media(max-width:560px){.prog .draft{display:none}}
+
+/* secciones */
+.sec{background:var(--card);border-radius:16px;padding:18px 22px 24px;border:1px solid #D6E8F1}
+.sec-h{display:flex;align-items:center;margin-bottom:18px}
+.num{font-family:var(--head);font-size:24px;line-height:1;color:#fff;background:var(--orange);padding:9px 20px 9px 12px;clip-path:polygon(0 0,82% 0,100% 50%,82% 100%,0 100%);min-width:58px;position:relative;z-index:1;margin-right:-8px}
+.bar{background:var(--navy);color:#fff;border-radius:0 10px 10px 0;padding:9px 18px 9px 20px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.bar h2{margin:0;font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:.2px}
+.bar .tag{font-size:12px;font-weight:700;font-style:italic;color:var(--orange);text-transform:uppercase}
+.sec-h hr{flex:1;min-width:24px;border:0;border-top:2px solid var(--orange);margin:0 0 0 18px}
+@media(max-width:560px){.sec-h hr{display:none}.bar{flex:1}}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:14px 20px}
+.grid .full{grid-column:1/-1}
+.grp{border-top:1px dashed var(--field-bd);padding-top:16px;margin-top:18px}
+.sec-h + .grp{border-top:0;padding-top:0;margin-top:0}
+.grp h3{margin:0 0 12px;font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px}
+.grp h3 svg{width:18px;height:18px;flex:none;fill:var(--navy)}
+
+.fld{display:flex;flex-direction:column;gap:5px;min-width:0}
+.fld label{font-size:13px;font-weight:700}
+.fld input[type=text],.fld input[type=tel],.fld input[type=email]{width:100%;font:inherit;font-size:16px;color:var(--navy);background:var(--field);border:1.5px solid var(--field-bd);border-radius:8px;padding:10px 12px;min-height:44px}
+.fld input::placeholder{color:var(--muted);opacity:.6}
+.fld input:focus{outline:3px solid rgba(244,119,33,.45);outline-offset:1px;border-color:var(--orange)}
+.fld .err{font-size:12.5px;font-weight:700;color:var(--red)}
+.fld.bad input{border-color:var(--red)}
+.money-w{position:relative}
+.money-w b{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:700;pointer-events:none}
+.money-w input{padding-left:26px!important;padding-right:52px!important}
+.money-w em{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--muted);font-style:normal;pointer-events:none}
+
+.note{display:flex;gap:12px;align-items:flex-start;background:var(--note-bg);border-radius:12px;padding:12px 16px;margin-bottom:18px;font-size:14px}
+.note svg{width:24px;height:24px;flex:none;fill:var(--red)}
+.note b.k{color:var(--red)}
+.note.disc{background:var(--field);border:1.5px solid var(--orange);margin-bottom:0}
+.note.disc svg{fill:var(--navy)}
+
+.refs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:18px}
+.ref{border:1.5px solid var(--field-bd);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:14px;background:var(--paper)}
+.ref h3{margin:0;display:flex;align-items:center;font-size:14px;font-weight:800;text-transform:uppercase;color:#fff}
+.ref h3 .n{font-family:var(--head);font-weight:400;font-size:20px;background:var(--orange);color:#fff;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;flex:none;position:relative;z-index:1}
+.ref h3 .t{background:var(--navy);padding:9px 16px 9px 22px;margin-left:-14px;border-radius:0 10px 10px 0;flex:1;text-wrap:balance}
+.chip{display:inline-block;font-size:12px;font-weight:700;font-style:italic;color:var(--navy);background:var(--field);border-radius:99px;padding:3px 12px;align-self:flex-start}
+
+/* declaración y firma */
+.decl{display:flex;gap:16px;align-items:flex-start}
+.decl .ico{width:58px;height:58px;border-radius:12px;background:var(--navy);display:grid;place-items:center;flex:none}
+.decl .ico svg{width:36px;height:36px;fill:none;stroke:#fff;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.decl h2{margin:0 0 4px;font-size:18px;font-weight:800}
+.decl p{margin:0;font-size:15px}
+.chk{display:flex;gap:12px;align-items:flex-start;margin-top:18px;padding:12px 14px;border:1.5px solid var(--field-bd);border-radius:10px;cursor:pointer;background:var(--field)}
+.chk input{width:22px;height:22px;margin:1px 0 0;flex:none;accent-color:var(--orange)}
+.chk span{font-size:14px;font-weight:700}
+.chk.bad{border-color:var(--red)}
+.sigrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px;margin-top:18px}
+.sigbox{display:flex;flex-direction:column;gap:6px}
+.sigbox>label{font-size:13px;font-weight:700}
+.pad{position:relative;border:1.5px solid var(--field-bd);border-radius:10px;background:var(--paper);height:150px;overflow:hidden}
+.pad.bad{border-color:var(--red)}
+.pad canvas{width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+.pad .line{position:absolute;left:14px;right:14px;bottom:34px;border-top:1.5px solid #9DB8C6;pointer-events:none}
+.pad .ph{position:absolute;left:0;right:0;bottom:10px;text-align:center;font-size:12px;color:var(--muted);pointer-events:none}
+.pad.has .ph{display:none}
+.sigtools{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.sigtools .err{font-size:12.5px;font-weight:700;color:var(--red)}
+.dateview{font-weight:700;font-size:15px;padding:10px 12px;background:var(--field);border-radius:8px;border:1.5px solid var(--field-bd);min-height:44px;display:flex;align-items:center}
+
+/* botones y estados */
+.btn{font:inherit;font-weight:800;font-size:16px;border:0;border-bottom:4px solid var(--orange);border-radius:10px;padding:12px 28px 10px;min-height:50px;cursor:pointer;background:var(--navy);color:#fff;letter-spacing:.2px}
+.btn:hover{background:#0A4A60}
+.btn:focus-visible,.link:focus-visible{outline:3px solid rgba(244,119,33,.55);outline-offset:2px}
+.btn[disabled]{opacity:.65;cursor:progress}
+.btn.ghost{background:var(--paper);color:var(--navy);border:1.5px solid var(--navy);border-bottom-width:1.5px;padding:12px 24px}
+.link{font:inherit;font-size:13px;font-weight:700;color:var(--navy);background:none;border:0;padding:6px 4px;cursor:pointer;text-decoration:underline}
+.actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.status{font-size:14px;font-weight:700}
+.status.bad{color:var(--red)}
+.panel{background:var(--card);border:1px solid #D6E8F1;border-radius:16px;padding:26px 24px;display:flex;flex-direction:column;gap:14px}
+.panel h2{margin:0;font-family:var(--head);font-weight:400;font-size:32px;text-transform:uppercase;color:var(--orange);line-height:1.05}
+.panel p{margin:0}
+.folio{font-weight:800;font-size:22px;letter-spacing:1px;font-variant-numeric:tabular-nums}
+.panel textarea{width:100%;min-height:180px;font:12.5px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--navy);background:var(--field);border:1.5px solid var(--field-bd);border-radius:10px;padding:12px}
+
+/* pie */
+.foot{background:var(--navy);color:#fff;border-radius:14px;padding:18px 24px 18px 120px;position:relative;overflow:hidden;font-size:13px;font-weight:600;min-height:62px;display:flex;align-items:center}
+.foot .bars{left:24px;top:0;bottom:0;width:80px}
+.foot .bars i:first-child{left:6px}.foot .bars i:last-child{left:44px}
+.foot .bars i{width:26px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header class="hdr">
+    <img alt="MAXIRent Autos y Camionetas" src="logo.png" width="719" height="255">
+    <div class="sep" aria-hidden="true"></div>
+    <div>
+      <h1>Ficha preliminar para renta vehicular</h1>
+      <p>Por favor complete la totalidad de la información requerida con datos legibles y actualizados.</p>
+    </div>
+    <div class="bars" aria-hidden="true"><i></i><i></i></div>
+  </header>
+
+  <div class="prog" role="status" aria-live="polite">
+    <span id="progTxt">0 de 0 campos</span>
+    <div class="meter"><b id="progBar"></b></div>
+    <span class="draft" id="draftTxt"></span>
+  </div>
+
+  <div id="aviso"></div>
+
+  <form id="form" class="wrap" novalidate style="gap:16px" autocomplete="on"></form>
+
+  <footer class="foot" id="foot"><div class="bars" aria-hidden="true"><i></i><i></i></div>MAXIRent · Autos y Camionetas</footer>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  /* Dirección de la aplicación web de Google Apps Script que recibe las fichas (despliegue público).
+     Se pega aquí después de implementarla (ver README.md). Vacío = modo de prueba: no envía nada. */
+  var ENDPOINT = '';
+  /* Cada cliente entra con un enlace personal: https://.../index.html#t=<64 caracteres>. Sirve una sola vez. */
+  var TOKEN = ((location.hash.match(/[#&]t=([a-f0-9]{64})/) || [])[1]) || '';
+  var INFO = null;
+
+  var IC={
+    person:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5Z"/></svg>',
+    warn:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-2h2v2Zm0-4h-2V7h2v6Z"/></svg>',
+    save:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a1 1 0 0 1 1 1v8.6l2.8-2.8a1 1 0 1 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4l2.8 2.8V4a1 1 0 0 1 1-1ZM5 17a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/></svg>',
+    sign:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M14 3l5 5v2M14 3v5h5M8 9h3M8 13h2"/><path d="m13 20 1-3 6-6a1.4 1.4 0 0 1 2 2l-6 6-3 1Z"/></svg>'
+  };
+  var CONTACTS=[
+    {id:'principal',title:'Contacto principal (Solicitante)',f:[['nombre','Nombre completo','text','name'],['puesto','Puesto / Área','text','organization-title'],['tel','Teléfono','tel','tel'],['mail','Correo electrónico','email','email']]},
+    {id:'legal',title:'Representante legal',f:[['nombre','Nombre completo','text'],['tel','Teléfono','tel'],['movil','Teléfono móvil / directo','tel'],['mail','Correo electrónico','email']]},
+    {id:'supervisor',title:'Jefe(a) / Supervisor(a) Departamento de Pagos',f:[['nombre','Nombre del contacto','text'],['tel','Teléfono','tel'],['mail','Correo electrónico','email']]},
+    {id:'pagos',title:'Contacto de pagos',f:[['nombre','Nombre del contacto','text'],['tel','Teléfono','tel'],['mail','Correo electrónico','email']]}
+  ];
+  var REFS=[1,2];
+  var REF_F=[['empresa','Nombre de la empresa proveedora','text'],['contacto','Nombre del contacto','text'],['tel','Teléfono','tel'],['fact','Facturación mensual aprox.','money'],['mail','Correo electrónico','email']];
+
+  var $=function(s,r){return (r||document).querySelector(s)};
+  var form=$('#form'),started=Date.now();
+  var LABELS={};  /* id -> etiqueta completa, para la hoja de resultados */
+
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+  function fld(id,label,type,ac,extra,fullLabel){
+    LABELS[id]=fullLabel||label;
+    var inp;
+    if(type==='money'){
+      inp='<div class="money-w"><b>$</b><input type="text" inputmode="numeric" id="'+id+'" data-f="'+id+'" data-t="money" autocomplete="off" aria-describedby="'+id+'-e"><em>MXN</em></div>';
+    }else{
+      inp='<input type="'+(type==='email'?'email':type==='tel'?'tel':'text')+'" id="'+id+'" data-f="'+id+'" data-t="'+type+'"'+(ac?' autocomplete="'+ac+'"':' autocomplete="off"')+(type==='tel'?' inputmode="tel"':'')+(type==='email'?' inputmode="email" autocapitalize="off" spellcheck="false"':'')+' aria-describedby="'+id+'-e">';
+    }
+    return '<div class="fld'+(extra||'')+'"><label for="'+id+'">'+esc(label)+'</label>'+inp+'<div class="err" id="'+id+'-e" aria-live="polite"></div></div>';
+  }
+  function head(n,t,tag){return '<div class="sec-h"><span class="num">'+n+'</span><div class="bar"><h2>'+t+'</h2>'+(tag?'<span class="tag">'+tag+'</span>':'')+'</div><hr></div>'}
+
+  var h='';
+  h+='<section class="sec">'+head('01','Datos generales del solicitante')+'<div class="grid">'
+    +fld('s_nombre','Nombre completo o razón social','text','organization',' full')
+    +fld('s_giro','Giro o actividad comercial','text')
+    +fld('s_ciudad','Ciudad y estado','text','address-level2')
+    +'</div></section>';
+  h+='<section class="sec">'+head('02','Contactos de la empresa','(Obligatorios)');
+  CONTACTS.forEach(function(c){
+    h+='<div class="grp"><h3>'+IC.person+esc(c.title)+'</h3><div class="grid">';
+    c.f.forEach(function(x){h+=fld('c_'+c.id+'_'+x[0],x[1],x[2],x[3],'',c.title+' – '+x[1]);});
+    h+='</div></div>';
+  });
+  h+='</section>';
+  h+='<section class="sec">'+head('03','Referencias comerciales','(Únicamente proveedores)')
+    +'<div class="note">'+IC.warn+'<div><b class="k">Requisito obligatorio:</b> las referencias deben corresponder exclusivamente a <b>proveedores</b> comerciales activos.</div></div><div class="refs">';
+  REFS.forEach(function(n){
+    h+='<div class="ref"><h3><span class="n">'+n+'</span><span class="t">Proveedor referencia '+n+'</span></h3><span class="chip">Relación comercial: Proveedor</span><div class="grid" style="grid-template-columns:1fr">';
+    REF_F.forEach(function(x){h+=fld('r'+n+'_'+x[0],x[1],x[2],'','','Referencia '+n+' – '+x[1]);});
+    h+='</div></div>';
+  });
+  h+='</div></section>';
+  h+='<section class="sec"><div class="decl"><div class="ico">'+IC.sign+'</div><div><h2>Declaración de veracidad</h2>'
+    +'<p>Declaro bajo protesta de decir verdad que los datos proporcionados son verídicos, corresponden a contactos oficiales y que las referencias indicadas son proveedores comerciales externos a nuestra plantilla laboral.</p></div></div>'
+    +'<label class="chk" id="chkW"><input type="checkbox" id="decl"><span>Acepto y hago esta declaración.</span></label>'
+    +'<div class="sigrow">'
+      +fld('f_firmante','Nombre de quien firma (Solicitante o Rep. Legal)','text','name','','Firmante')
+      +'<div class="sigbox"><label>Fecha de llenado</label><div class="dateview" id="dateView"></div></div>'
+    +'</div>'
+    +'<div class="sigbox" style="margin-top:16px"><label for="sig">Firma del Solicitante o Rep. Legal</label>'
+      +'<div class="pad" id="pad"><canvas id="sig" aria-label="Espacio para firmar con el dedo o el mouse"></canvas><div class="line"></div><div class="ph">Firme aquí con el dedo o el mouse</div></div>'
+      +'<div class="sigtools"><div class="err" id="sig-e"></div><button type="button" class="link" id="sigClear">Borrar firma</button></div></div>'
+    +'</section>';
+  h+='<div class="hp" aria-hidden="true"><label>No llenar este campo<input type="text" id="web" name="web" tabindex="-1" autocomplete="off"></label></div>';
+  h+='<div class="note disc">'+IC.save+'<div><b>Un último paso, con gusto.</b> Al presionar <b>«Guardar y descargar»</b> registraremos su ficha firmada y se descargará una copia en su dispositivo. '
+    +'Le pedimos amablemente que <b>guarde ese archivo y lo envíe junto con los demás documentos y requisitos</b> que le solicitó su ejecutivo de MAXIRent; así podremos dar seguimiento a su trámite sin demoras. '
+    +'¡Muchas gracias por su confianza!</div></div>';
+  h+='<div class="actions"><button type="submit" class="btn" id="send">Guardar y descargar</button><button type="button" class="link" id="wipe">Borrar todo y empezar de nuevo</button><span class="status" id="status" role="status" aria-live="polite"></span></div>';
+  form.innerHTML=h;
+
+  var today=new Date();
+  function isoLocal(d){return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)}
+  var dateLong=today.toLocaleDateString('es-MX',{day:'numeric',month:'long',year:'numeric'});
+  $('#dateView').textContent=dateLong;
+
+  /* ---------- validación ---------- */
+  function digits(v){return String(v).replace(/\D+/g,'')}
+  function tel10(v){var d=digits(v);if(d.length===12&&d.indexOf('52')===0)d=d.slice(2);return d}
+  function fmtTel(v){var d=tel10(v);return d.length===10?(d.slice(0,2)+' '+d.slice(2,6)+' '+d.slice(6)):v}
+  function fmtMoney(v){var d=digits(v);return d?Number(d).toLocaleString('es-MX'):''}
+  function check(el){
+    var t=el.getAttribute('data-t'),v=el.value.trim();
+    if(!v)return 'Este campo es obligatorio.';
+    if(t==='tel'&&tel10(v).length!==10)return 'Escriba 10 dígitos, con lada.';
+    if(t==='email'&&!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v))return 'Escriba un correo válido, como nombre@empresa.com.';
+    if(t==='money'&&!(Number(digits(v))>0))return 'Escriba un monto mayor a cero.';
+    if(t==='text'&&v.length<2)return 'Escriba al menos 2 caracteres.';
+    return '';
+  }
+  function show(el,msg){
+    el.closest('.fld').classList.toggle('bad',!!msg);
+    $('#'+el.id+'-e').textContent=msg;
+    if(msg)el.setAttribute('aria-invalid','true');else el.removeAttribute('aria-invalid');
+  }
+  var inputs=[].slice.call(form.querySelectorAll('[data-f]'));
+  function checkRefs(){
+    var a=$('#r1_empresa'),b=$('#r2_empresa');
+    if(a.value.trim()&&b.value.trim()&&a.value.trim().toLowerCase()===b.value.trim().toLowerCase()){show(b,'La referencia 2 debe ser un proveedor distinto al de la referencia 1.');return false}
+    return true;
+  }
+
+  /* ---------- firma ---------- */
+  var cv=$('#sig'),cx=cv.getContext('2d'),pad=$('#pad'),strokes=[],cur=null,lastW=0;
+  function sizeCanvas(){
+    var r=cv.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,2.5);
+    if(!r.width)return;
+    lastW=r.width;
+    cv.width=Math.round(r.width*dpr);cv.height=Math.round(r.height*dpr);
+    cx.setTransform(dpr,0,0,dpr,0,0);cx.lineWidth=2.2;cx.lineCap='round';cx.lineJoin='round';cx.strokeStyle='#05394B';
+    redraw();
+  }
+  function redraw(){
+    var r=cv.getBoundingClientRect();cx.clearRect(0,0,r.width,r.height);
+    strokes.forEach(function(s){cx.beginPath();s.forEach(function(p,i){i?cx.lineTo(p.x,p.y):cx.moveTo(p.x,p.y)});if(s.length===1)cx.lineTo(s[0].x+.1,s[0].y);cx.stroke()});
+  }
+  function pt(e){var r=cv.getBoundingClientRect();return {x:e.clientX-r.left,y:e.clientY-r.top}}
+  cv.addEventListener('pointerdown',function(e){e.preventDefault();try{cv.setPointerCapture(e.pointerId)}catch(_){}cur=[pt(e)];strokes.push(cur);redraw();pad.classList.add('has')});
+  cv.addEventListener('pointermove',function(e){if(!cur)return;cur.push(pt(e));var n=cur.length;cx.beginPath();cx.moveTo(cur[n-2].x,cur[n-2].y);cx.lineTo(cur[n-1].x,cur[n-1].y);cx.stroke()});
+  function endStroke(){if(cur){cur=null;pad.classList.add('has');pad.classList.remove('bad');$('#sig-e').textContent='';update()}}
+  cv.addEventListener('pointerup',endStroke);cv.addEventListener('pointercancel',endStroke);
+  $('#sigClear').addEventListener('click',function(){strokes=[];redraw();pad.classList.remove('has');update()});
+  window.addEventListener('resize',function(){var w=cv.getBoundingClientRect().width;if(Math.abs(w-lastW)>1)sizeCanvas()});
+  sizeCanvas();
+
+  /* ---------- avance y borrador (sólo en este dispositivo) ---------- */
+  var KEY='maxirent-ficha-'+(TOKEN?TOKEN.slice(0,12):'prueba'),total=inputs.length+2,tmr=null;
+  function update(){
+    var done=inputs.filter(function(i){return i.value.trim()}).length+($('#decl').checked?1:0)+(strokes.length?1:0);
+    $('#progTxt').textContent=done+' de '+total+' campos';
+    $('#progBar').style.width=Math.round(done/total*100)+'%';
+  }
+  function saveDraft(){
+    clearTimeout(tmr);
+    tmr=setTimeout(function(){
+      try{var o={};inputs.forEach(function(i){if(i.value.trim())o[i.id]=i.value});localStorage.setItem(KEY,JSON.stringify(o));$('#draftTxt').textContent='Borrador guardado en este dispositivo'}catch(_){}
+    },500);
+  }
+  try{var d0=JSON.parse(localStorage.getItem(KEY)||'null');if(d0){inputs.forEach(function(i){if(typeof d0[i.id]==='string')i.value=d0[i.id]});$('#draftTxt').textContent='Borrador recuperado'}}catch(_){}
+  update();
+
+  form.addEventListener('input',function(e){
+    var el=e.target;
+    if(el.matches('[data-t=money]'))el.value=fmtMoney(el.value);
+    if(el.matches('[data-f]')&&el.closest('.fld').classList.contains('bad'))show(el,check(el));
+    update();saveDraft();
+  });
+  form.addEventListener('focusout',function(e){
+    var el=e.target;if(!el.matches||!el.matches('[data-f]'))return;
+    if(el.getAttribute('data-t')==='tel'&&tel10(el.value).length===10)el.value=fmtTel(el.value);
+    if(el.getAttribute('data-t')==='money')el.value=fmtMoney(el.value);
+    if(el.value.trim()||el.closest('.fld').classList.contains('bad'))show(el,check(el));
+    if(el.id==='r2_empresa'||el.id==='r1_empresa')checkRefs();
+  });
+  $('#decl').addEventListener('change',function(){if(this.checked)$('#chkW').classList.remove('bad');update()});
+
+  /* ---------- documento descargable ----------
+     La ficha llenada se dibuja en hojas A4 (canvas) y se empaqueta como PDF en el propio navegador:
+     no se usa ningún servicio externo ni librería, y nada sale del dispositivo para generarlo. */
+  var PW=1240,PH=1754,MX=72,CW=PW-2*MX,TOP2=150,BOT=PH-140;
+  var FONT="Montserrat,'Segoe UI',Arial,sans-serif",HEAD="Impact,Anton,'Arial Narrow',sans-serif";
+  var mg=document.createElement('canvas').getContext('2d');
+  function wrapText(t,font,maxW){
+    mg.font=font;var out=[];
+    String(t).split('\n').forEach(function(par){
+      var line='';
+      par.split(/\s+/).forEach(function(w){
+        while(mg.measureText(w).width>maxW){var k=w.length;while(k>1&&mg.measureText(w.slice(0,k)).width>maxW)k--;if(line){out.push(line);line=''}out.push(w.slice(0,k));w=w.slice(k)}
+        var tst=line?line+' '+w:w;
+        if(mg.measureText(tst).width<=maxW)line=tst;else{if(line)out.push(line);line=w}
+      });
+      out.push(line);
+    });
+    return out;
+  }
+  function fmtVal(c){var t=c[2];return typeof t==='number'?'$'+t.toLocaleString('es-MX')+' MXN':(/^\d{10}$/.test(t)&&/tel|movil/.test(c[0])?fmtTel(t):t)}
+  function drawFicha(cs,folio){
+    var val={};cs.forEach(function(c){val[c[0]]=fmtVal(c)});
+    var pages=[],cv2,g,y,logo=$('.hdr img'),titulo='FICHA PRELIMINAR PARA RENTA VEHICULAR';
+    function rr(x,yy,w,h,r){g.beginPath();g.moveTo(x+r,yy);g.arcTo(x+w,yy,x+w,yy+h,r);g.arcTo(x+w,yy+h,x,yy+h,r);g.arcTo(x,yy+h,x,yy,r);g.arcTo(x,yy,x+w,yy,r);g.closePath()}
+    function txt(s,x,yy,font,color,align){g.font=font;g.fillStyle=color||'#05394B';g.textAlign=align||'left';g.textBaseline='top';g.fillText(s,x,yy)}
+    function newPage(first){
+      cv2=document.createElement('canvas');cv2.width=PW;cv2.height=PH;g=cv2.getContext('2d');
+      g.fillStyle='#fff';g.fillRect(0,0,PW,PH);pages.push(cv2);
+      if(first){
+        g.fillStyle='#05394B';rr(56,56,PW-112,210,26);g.fill();
+        g.fillStyle='#F47721';g.save();g.beginPath();g.rect(56,56,PW-112,210);g.clip();
+        [[PW-190,0],[PW-150,1]].forEach(function(b){g.fillStyle=b[1]?'#F9A05E':'#F47721';g.beginPath();g.moveTo(b[0]+40,40);g.lineTo(b[0]+78,40);g.lineTo(b[0]+38,282);g.lineTo(b[0],282);g.closePath();g.fill()});
+        g.restore();
+        if(logo&&logo.complete&&logo.naturalWidth){var lh=118,lw=lh*logo.naturalWidth/logo.naturalHeight;g.drawImage(logo,92,56+(210-lh)/2,lw,lh)}
+        g.fillStyle='#fff';g.fillRect(470,86,3,150);
+        var tl=wrapText(titulo,'400 54px '+HEAD,PW-540-170);
+        var ty=56+(210-tl.length*58)/2;
+        tl.forEach(function(l,i){txt(l,496,ty+i*58,'400 54px '+HEAD,'#EE8022')});
+        txt((folio?'Folio '+folio+'  ·  ':'')+'Fecha de llenado: '+dateLong,MX,292,'700 24px '+FONT,'#05394B');
+        y=346;
+      }else{
+        g.fillStyle='#05394B';rr(56,56,PW-112,54,14);g.fill();
+        txt(titulo+(folio?'  ·  '+folio:''),92,70,'700 22px '+FONT,'#fff');
+        y=TOP2;
+      }
+    }
+    function ensure(h){if(y+h>BOT)newPage(false)}
+    function section(n,t,tag){
+      ensure(130);
+      g.fillStyle='#05394B';rr(MX+70,y,CW-70,56,12);g.fill();
+      g.fillStyle='#F47721';g.beginPath();g.moveTo(MX,y);g.lineTo(MX+92,y);g.lineTo(MX+112,y+28);g.lineTo(MX+92,y+56);g.lineTo(MX,y+56);g.closePath();g.fill();
+      txt(n,MX+14,y+11,'400 34px '+HEAD,'#fff');
+      txt(t.toUpperCase(),MX+134,y+14,'800 24px '+FONT,'#fff');
+      if(tag){g.font='800 24px '+FONT;var tw=g.measureText(t.toUpperCase()).width;txt(tag.toUpperCase(),MX+134+tw+16,y+17,'700 19px '+FONT,'#F47721')}
+      y+=56+26;
+    }
+    function sub(t){
+      ensure(60+80);
+      g.fillStyle='#05394B';g.beginPath();g.arc(MX+10,y+16,8,0,7);g.fill();
+      txt(t,MX+30,y,'800 26px '+FONT,'#05394B');y+=44;
+    }
+    /* campos en una fila: 1 o 2 columnas */
+    function row(list){
+      var gap=24,w=(CW-gap*(list.length-1))/list.length,hs=[],i;
+      var L=list.map(function(f){return {lab:wrapText(f[0],'700 21px '+FONT,w),val:wrapText(f[1]||'—','500 24px '+FONT,w-28)}});
+      L.forEach(function(l){hs.push(l.lab.length*28+l.val.length*32+26)});
+      var h=Math.max.apply(null,hs);ensure(h+16);
+      L.forEach(function(l,k){
+        var x=MX+k*(w+gap);
+        l.lab.forEach(function(s,j){txt(s,x,y+j*28,'700 21px '+FONT,'#05394B')});
+        var by=y+l.lab.length*28+4,bh=h-l.lab.length*28-4;
+        g.fillStyle='#E5F4FB';rr(x,by,w,bh,10);g.fill();g.strokeStyle='#B9D8E8';g.lineWidth=2;g.stroke();
+        l.val.forEach(function(s,j){txt(s,x+14,by+11+j*32,'500 24px '+FONT,'#05394B')});
+      });
+      y+=h+16;
+    }
+    function grid(list){for(var i=0;i<list.length;i+=2){row(list.slice(i,i+2))}}
+    function V(id){return val[id]||''}
+    newPage(true);
+    section('01','Datos generales del solicitante');
+    row([['Nombre completo o razón social',V('s_nombre')]]);
+    row([['Giro o actividad comercial',V('s_giro')],['Ciudad y estado',V('s_ciudad')]]);
+    y+=10;section('02','Contactos de la empresa','(Obligatorios)');
+    CONTACTS.forEach(function(c){
+      sub(c.title);
+      var l=c.f.map(function(x){return [x[1],V('c_'+c.id+'_'+x[0])]});
+      grid(l);y+=6;
+    });
+    y+=4;section('03','Referencias comerciales','(Únicamente proveedores)');
+    REFS.forEach(function(n){
+      sub('Proveedor referencia '+n);
+      var p='r'+n+'_';
+      row([[REF_F[0][1],V(p+'empresa')]]);
+      grid([[REF_F[1][1],V(p+'contacto')],[REF_F[2][1],V(p+'tel')],[REF_F[3][1],V(p+'fact')],[REF_F[4][1],V(p+'mail')]]);y+=6;
+    });
+    /* declaración y firma */
+    var dec='Declaro bajo protesta de decir verdad que los datos proporcionados son verídicos, corresponden a contactos oficiales y que las referencias indicadas son proveedores comerciales externos a nuestra plantilla laboral.';
+    var dl=wrapText(dec,'500 24px '+FONT,CW);
+    ensure(60+dl.length*34+70+300);
+    txt('Declaración de veracidad',MX,y,'800 30px '+FONT,'#05394B');y+=50;
+    dl.forEach(function(s){txt(s,MX,y,'500 24px '+FONT,'#05394B');y+=34});
+    y+=12;
+    g.fillStyle='#F47721';rr(MX,y,34,34,7);g.fill();
+    g.strokeStyle='#fff';g.lineWidth=5;g.lineCap='round';g.lineJoin='round';g.beginPath();g.moveTo(MX+8,y+18);g.lineTo(MX+15,y+25);g.lineTo(MX+27,y+10);g.stroke();
+    txt('Declaración aceptada por el firmante.',MX+50,y+3,'700 23px '+FONT,'#05394B');y+=62;
+    txt('Firma del Solicitante o Rep. Legal',MX,y,'700 21px '+FONT,'#05394B');y+=32;
+    var bw=CW,bh=210;
+    g.fillStyle='#fff';rr(MX,y,bw,bh,12);g.fill();g.strokeStyle='#B9D8E8';g.lineWidth=2.5;g.stroke();
+    var sw=cv.width,sh=cv.height,k=Math.min((bw-40)/sw,(bh-40)/sh);
+    g.drawImage(cv,MX+(bw-sw*k)/2,y+(bh-sh*k)/2,sw*k,sh*k);
+    y+=bh+22;
+    row([['Nombre de quien firma',$('#f_firmante').value.trim()],['Fecha de llenado',dateLong]]);
+    ensure(80);
+    wrapText('Copia para el solicitante generada el '+new Date().toLocaleString('es-MX',{dateStyle:'long',timeStyle:'short'}).replace(/\.$/,'')+'. Conserve este archivo y envíelo junto con los demás requisitos que le solicitó MAXIRent.','500 19px '+FONT,CW).forEach(function(s){txt(s,MX,y,'500 19px '+FONT,'#3F6272');y+=27});
+    /* pie de cada hoja */
+    pages.forEach(function(pc,i){
+      g=pc.getContext('2d');
+      g.fillStyle='#05394B';rr(56,PH-110,PW-112,54,14);g.fill();
+      txt('MAXIRent · Autos y Camionetas',92,PH-97,'700 22px '+FONT,'#fff');
+      txt('Hoja '+(i+1)+' de '+pages.length,PW-92,PH-97,'700 22px '+FONT,'#fff','right');
+    });
+    return pages;
+  }
+  function hex16(s){var o='FEFF';for(var i=0;i<s.length;i++)o+=('0000'+s.charCodeAt(i).toString(16)).slice(-4);return '<'+o+'>'}
+  function buildPdf(pages,title){
+    var enc=new TextEncoder(),chunks=[],pos=0,offs=[],n=pages.length;
+    function put(x){var b=typeof x==='string'?enc.encode(x):x;chunks.push(b);pos+=b.length}
+    function obj(num,body){offs[num]=pos;put(num+' 0 obj\n'+body+'\nendobj\n')}
+    put('%PDF-1.4\n');
+    var kids=[];for(var i=0;i<n;i++)kids.push((4+3*i)+' 0 R');
+    obj(1,'<</Type/Catalog/Pages 2 0 R>>');
+    obj(2,'<</Type/Pages/Count '+n+'/Kids['+kids.join(' ')+']>>');
+    obj(3,'<</Title '+hex16(title)+'/Producer '+hex16('MAXIRent')+'>>');
+    pages.forEach(function(pc,i){
+      var jb=atob(pc.toDataURL('image/jpeg',0.9).split(',')[1]),jpg=new Uint8Array(jb.length);
+      for(var k=0;k<jb.length;k++)jpg[k]=jb.charCodeAt(k);
+      var pn=4+3*i,im=pn+1,ct=pn+2,cs2='q 595.28 0 0 841.89 0 0 cm /Im0 Do Q';
+      obj(pn,'<</Type/Page/Parent 2 0 R/MediaBox[0 0 595.28 841.89]/Resources<</XObject<</Im0 '+im+' 0 R>>>>/Contents '+ct+' 0 R>>');
+      offs[im]=pos;put(im+' 0 obj\n<</Type/XObject/Subtype/Image/Width '+pc.width+'/Height '+pc.height+'/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length '+jpg.length+'>>\nstream\n');put(jpg);put('\nendstream\nendobj\n');
+      obj(ct,'<</Length '+cs2.length+'>>\nstream\n'+cs2+'\nendstream');
+    });
+    var total=3+3*n+1,xr=pos;
+    put('xref\n0 '+total+'\n0000000000 65535 f \n');
+    for(var j=1;j<total;j++)put(('0000000000'+offs[j]).slice(-10)+' 00000 n \n');
+    put('trailer\n<</Size '+total+'/Root 1 0 R/Info 3 0 R>>\nstartxref\n'+xr+'\n%%EOF');
+    var all=new Uint8Array(pos),o=0;chunks.forEach(function(c){all.set(c,o);o+=c.length});
+    return new Blob([all],{type:'application/pdf'});
+  }
+  var lastPdf=null;
+  function nombreArchivo(){
+    var base=(INFO&&INFO.folio?INFO.folio+' - ':'')+'Ficha preliminar de renta - '+($('#s_nombre').value.trim()||'cliente');
+    return base.replace(/[\\\/:*?"<>|\r\n]+/g,' ').replace(/\s+/g,' ').trim().slice(0,120)+' - '+isoLocal(today)+'.pdf';
+  }
+  async function crearPdf(cs){
+    try{await Promise.race([Promise.all([document.fonts.load('500 24px Montserrat'),document.fonts.load('700 24px Montserrat'),document.fonts.load('800 24px Montserrat')]),new Promise(function(r){setTimeout(r,2500)})])}catch(_){}
+    var blob=buildPdf(drawFicha(cs,INFO&&INFO.folio),'Ficha preliminar para renta vehicular');
+    lastPdf={blob:blob,name:nombreArchivo()};
+    return lastPdf;
+  }
+  function descargar(){
+    if(!lastPdf)return false;
+    var url=URL.createObjectURL(lastPdf.blob),a=document.createElement('a');
+    a.href=url;a.download=lastPdf.name;a.rel='noopener';a.style.display='none';document.body.appendChild(a);a.click();
+    setTimeout(function(){a.remove();URL.revokeObjectURL(url)},60000);
+    return true;
+  }
+
+  /* ---------- envío ---------- */
+  function validateAll(){
+    var first=null,bad=0;
+    inputs.forEach(function(i){var m=check(i);show(i,m);if(m){bad++;if(!first)first=i}});
+    if(!checkRefs()){bad++;if(!first)first=$('#r2_empresa')}
+    if(!$('#decl').checked){$('#chkW').classList.add('bad');bad++;if(!first)first=$('#decl')}
+    if(!strokes.length){pad.classList.add('bad');$('#sig-e').textContent='Falta la firma.';bad++;if(!first)first=cv}
+    return {bad:bad,first:first};
+  }
+  function campos(){
+    return inputs.map(function(i){
+      var t=i.getAttribute('data-t'),v=i.value.trim();
+      return [i.id,LABELS[i.id],t==='tel'?tel10(v):t==='money'?Number(digits(v)):v];
+    });
+  }
+  function summary(folio,cs){
+    var L=['FICHA PRELIMINAR PARA RENTA VEHICULAR — MAXIRent'];
+    if(folio)L.push('Folio: '+folio);
+    L.push('Fecha de llenado: '+dateLong,'');
+    cs.forEach(function(c){L.push(c[1]+': '+(typeof c[2]==='number'?'$'+c[2].toLocaleString('es-MX')+' MXN':c[2]))});
+    L.push('','Declaración de veracidad aceptada y firmada.');
+    return L.join('\n');
+  }
+  function copy(text,btn,ta){
+    var fb=function(){ta.focus();ta.select();btn.textContent='Seleccione y copie el texto'};
+    try{navigator.clipboard.writeText(text).then(function(){btn.textContent='Copiado ✓'},fb)}catch(_){fb()}
+  }
+  function resetAll(){
+    inputs.forEach(function(i){i.value='';show(i,'')});
+    $('#decl').checked=false;strokes=[];redraw();pad.classList.remove('has','bad');$('#sig-e').textContent='';
+    $('#draftTxt').textContent='';$('#status').textContent='';started=Date.now();update();
+  }
+  function finish(ok,folio,txt,why,pdfOk){
+    var p=document.createElement('div');p.className='panel';
+    var aviso=pdfOk
+      ?'<div class="note disc">'+IC.save+'<div><b>Su documento ya se descargó</b> (revise la carpeta de Descargas de su dispositivo). Le pedimos amablemente que lo conserve y lo envíe junto con los demás documentos y requisitos que le solicitó su ejecutivo de MAXIRent. Si no lo encuentra, puede descargarlo de nuevo con el botón de abajo.</div></div>'
+      :'<div class="note"><div><b>No pudimos generar el archivo para descargar.</b> Puede copiar el resumen de abajo y conservarlo, o pedir a su ejecutivo de MAXIRent que le haga llegar una copia.</div></div>';
+    p.innerHTML=(ok
+      ?'<h2>Ficha recibida</h2><p>Gracias. Su ficha quedó firmada y registrada'+(INFO&&INFO.ejecutivo?'. '+esc(INFO.ejecutivo)+', su ejecutivo de MAXIRent, la recibió y le dará seguimiento':'')+'.</p><p>Folio de su ficha:<br><span class="folio">'+esc(folio)+'</span></p>'
+      :'<h2>La ficha no se pudo enviar</h2><p>'+esc(why)+' <b>Sus datos siguen en esta página</b>: puede intentarlo de nuevo, o copiar el resumen y enviarlo al área de Validaciones de MAXIRent.</p>')
+      +aviso
+      +'<textarea readonly aria-label="Resumen de la ficha"></textarea>'
+      +'<div class="actions">'+(pdfOk?'<button type="button" class="btn" id="dl">Descargar de nuevo mi ficha</button>':'')+'<button type="button" class="btn ghost" id="cp">Copiar resumen</button>'+(ok?'':'<button type="button" class="btn ghost" id="again">Volver a la ficha</button>')+'</div>';
+    var ta=$('textarea',p);ta.value=txt;
+    form.style.display='none';$('.prog').style.display='none';
+    $('#app').insertBefore(p,$('#foot'));
+    $('#cp',p).addEventListener('click',function(){copy(txt,this,ta)});
+    var dl=$('#dl',p);if(dl)dl.addEventListener('click',descargar);
+    var again=$('#again',p);
+    if(again)again.addEventListener('click',function(){p.remove();form.style.display='';$('.prog').style.display='';window.scrollTo(0,0);sizeCanvas()});
+    if(ok){try{localStorage.removeItem(KEY)}catch(_){}}
+    window.scrollTo(0,0);
+  }
+  $('#wipe').addEventListener('click',function(){
+    var b=this;
+    if(b.getAttribute('data-arm')!=='1'){b.setAttribute('data-arm','1');b.textContent='Toque otra vez para confirmar';setTimeout(function(){b.setAttribute('data-arm','0');b.textContent='Borrar todo y empezar de nuevo'},4000);return}
+    b.setAttribute('data-arm','0');b.textContent='Borrar todo y empezar de nuevo';
+    try{localStorage.removeItem(KEY)}catch(_){}resetAll();
+  });
+
+  form.addEventListener('submit',async function(e){
+    e.preventDefault();
+    var st=$('#status'),btn=$('#send');
+    var v=validateAll();
+    if(v.bad){
+      st.className='status bad';st.textContent='Faltan '+v.bad+' dato'+(v.bad>1?'s':'')+' por completar o corregir.';
+      v.first.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(function(){try{v.first.focus({preventScroll:true})}catch(_){}},350);
+      return;
+    }
+    st.className='status';st.textContent='';btn.disabled=true;btn.textContent='Guardando…';
+    var cs=campos(),firmante=$('#f_firmante').value.trim();
+    /* Primero se descarga la copia del cliente (compromiso de conservarla); si falla, igual se envía la ficha. */
+    var pdfOk=false;
+    try{await crearPdf(cs);pdfOk=descargar()}catch(err){pdfOk=false}
+    var payload={token:TOKEN,campos:cs,firmante:firmante,firma:cv.toDataURL('image/png'),fechaLlenado:isoLocal(today),
+      tiempoMs:Date.now()-started,web:$('#web').value};
+    var ok=false,folio='',why='';
+    if(!ENDPOINT){why='Esta página está en modo de prueba y todavía no tiene un destino configurado.'}
+    else{
+      try{
+        var res=await fetch(ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)});
+        var j=await res.json();
+        if(j&&j.ok&&j.folio){ok=true;folio=j.folio}else{why=(j&&j.mensaje)||'El servidor no aceptó la ficha.'}
+      }catch(err){why='No hubo conexión con el servidor.'}
+    }
+    btn.disabled=false;btn.textContent='Guardar y descargar';
+    finish(ok,folio,summary(folio,cs),why,pdfOk);
+  });
+
+  /* ---------- verificación del enlace ---------- */
+  var aviso=$('#aviso'),prog=$('.prog');
+  function ocultarForm(v){form.style.display=v?'none':'';prog.style.display=v?'none':''}
+  function bloquear(titulo,texto){ocultarForm(true);aviso.innerHTML='<div class="panel"><h2>'+esc(titulo)+'</h2><p>'+esc(texto)+'</p></div>'}
+  function nota(html){aviso.innerHTML='<div class="note">'+IC.warn+'<div>'+html+'</div></div>'}
+  var TITULOS={FIRMADA:'Esta ficha ya fue firmada',VENCIDA:'El enlace venció',CANCELADA:'Enlace cancelado',INVALIDO:'Enlace no válido'};
+  (async function(){
+    if(!ENDPOINT){nota('<b>Modo de prueba.</b> Esta página todavía no está conectada al receptor: puede llenarla, pero no se enviará nada.');return}
+    if(!TOKEN){bloquear('Necesita el enlace de su ejecutivo','Esta ficha se llena desde el enlace personal que le envió su ejecutivo de MAXIRent. Si no lo tiene, pídaselo.');return}
+    ocultarForm(true);aviso.innerHTML='<div class="note"><div>Verificando su enlace…</div></div>';
+    try{
+      var res=await fetch(ENDPOINT+'?accion=consultar&t='+TOKEN);
+      var j=await res.json();
+      if(!j||!j.ok){bloquear(TITULOS[j&&j.estado]||TITULOS.INVALIDO,(j&&j.mensaje)||'Pida uno nuevo a su ejecutivo de MAXIRent.');return}
+      INFO=j;
+      var vence=new Date(j.vence).toLocaleDateString('es-MX',{day:'numeric',month:'long',year:'numeric'});
+      nota('Ficha <b>'+esc(j.folio)+'</b> preparada por <b>'+esc(j.ejecutivo)+'</b>. Este enlace sirve una sola vez y vence el '+esc(vence)+'.');
+      var sn=$('#s_nombre');if(!sn.value.trim()&&j.cliente){sn.value=j.cliente;update()}
+      ocultarForm(false);
+    }catch(err){bloquear('No pudimos verificar su enlace','Revise su conexión e intente de nuevo. Si el problema sigue, avise a su ejecutivo de MAXIRent.')}
+  })();
+})();
+</script>
+</body>
+</html>
