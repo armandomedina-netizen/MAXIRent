@@ -66,7 +66,7 @@ const run=(s)=>vm.runInContext(s,ctx);
 const png='data:image/png;base64,'+Buffer.from('png').toString('base64');
 function campos(razon='ACME SA de CV'){const c=[];const add=(i,l,v)=>c.push([i,l,v]);
  add('s_nombre','Nombre completo o razón social',razon);add('s_giro','Giro','Transporte');add('s_ciudad','Ciudad','MTY');
- [['principal',['nombre','puesto','tel','mail']],['legal',['nombre','tel','movil','mail']],['supervisor',['nombre','tel','mail']],['cobranza',['nombre','tel','mail']],['pagos',['nombre','tel','mail']]].forEach(([r,fs])=>fs.forEach(f=>add('c_'+r+'_'+f,r+' – '+f,f==='tel'||f==='movil'?'8112345678':f==='mail'?'a@b.com':'Dato')));
+ [['principal',['nombre','puesto','tel','mail']],['legal',['nombre','tel','movil','mail']],['supervisor',['nombre','tel','mail']],['pagos',['nombre','tel','mail']]].forEach(([r,fs])=>fs.forEach(f=>add('c_'+r+'_'+f,r+' – '+f,f==='tel'||f==='movil'?'8112345678':f==='mail'?'a@b.com':'Dato')));
  [1,2].forEach(n=>{add('r'+n+'_empresa','R'+n+' – Empresa','Prov '+n);add('r'+n+'_contacto','R'+n+' – Contacto','X');add('r'+n+'_tel','R'+n+' – Tel','8187654321');add('r'+n+'_fact','R'+n+' – Facturación',125000);add('r'+n+'_mail','R'+n+' – Correo','p@q.com')});
  add('f_firmante','Firmante','Ana Cliente');return c}
 const payload=(token,over={})=>Object.assign({token,campos:campos(),firmante:'Ana Cliente',firma:png,fechaLlenado:'2026-11-10',tiempoMs:60000,web:''},over);
@@ -105,7 +105,7 @@ assert.strictEqual(pdfs.length,2);assert(pdfs.map(p=>p.folder.name).sort().join(
 const enl=sheets.Enlaces.grid;const hdr=enl[0];const fila=enl[1];
 assert.strictEqual(fila[hdr.indexOf('Estado')],'FIRMADA');assert(fila[hdr.indexOf('PDF (enlace)')].includes('drive'));
 const fh=sheets.Fichas.grid[0],ff=sheets.Fichas.grid[1];
-assert.strictEqual(ff[fh.indexOf('Ejecutivo')],'ana@example.test');assert.strictEqual(JSON.parse(ff[fh.indexOf('Datos (JSON)')]).length,31);
+assert.strictEqual(ff[fh.indexOf('Ejecutivo')],'ana@example.test');assert.strictEqual(JSON.parse(ff[fh.indexOf('Datos (JSON)')]).length,28);
 assert(state.mails[0].to==='ana@example.test'&&state.mails[0].s.includes(e1.folio));
 console.log('archivo final:',firmado.name);
 // 5) el enlace no se reutiliza

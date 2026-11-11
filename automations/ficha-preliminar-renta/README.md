@@ -6,13 +6,14 @@ ni tener cuenta de ningún servicio. El documento firmado queda guardado en la c
 ejecutivo que lo envió, directo en su propio Drive, y cambia de nombre al firmarse, para usarlo como histórico.
 
 Decisión técnica y alternativas: [ADR 0030](../../docs/decisions/0030-ficha-preliminar-renta-formulario-web.md).
+Puesta en marcha detallada, con el nombre de cada código: **[GUIA_PASO_A_PASO.md](GUIA_PASO_A_PASO.md)**.
 
 ## Cómo funciona
 
 1. **El ejecutivo** abre el panel, escribe el cliente y pulsa "Generar enlace". Se crea el
    documento `FP-AAAAMMDD-NNN - PENDIENTE DE FIRMA - Cliente` en la carpeta `Pendientes` de su Drive.
 2. **Comparte el enlace** (botón de WhatsApp o copiar). Sirve una sola vez y vence a los 7 días.
-3. **El cliente** abre el enlace, ve la ficha preparada por su ejecutivo, la llena y firma.
+3. **El cliente** abre el enlace, ve la ficha preparada por su ejecutivo, la llena y firma. Antes del botón **Guardar y descargar** ve un aviso amable que le pide conservar el archivo y enviarlo con los demás requisitos; al pulsarlo, su ficha se registra y se descarga una copia en PDF, generada en su propio navegador.
 4. **Al firmar**, el mismo documento se completa con los datos y la firma, se renombra a
    `FP-AAAAMMDD-NNN - FIRMADA - Razón social - AAAA-MM-DD`, pasa a la carpeta `Firmadas` del
    ejecutivo y se guarda su PDF ahí y en `Historial`. El ejecutivo recibe un correo.
@@ -34,14 +35,15 @@ Decisión técnica y alternativas: [ADR 0030](../../docs/decisions/0030-ficha-pr
 
 | Archivo | Para qué sirve |
 | --- | --- |
-| `index.html` | El formulario del cliente. Lee su enlace de `#t=...`, lo verifica y envía la firma. |
+| `index.html` | El formulario del cliente. Lee su enlace de `#t=...`, lo verifica, envía la firma y descarga la copia en PDF del cliente. |
 | `logo.png` | Logotipo para fondo azul tomado del manual de marca (pág. 15), con fondo transparente. Se publica junto a `index.html`. |
-| `apps-script/Code.gs` | Rutas web, recepción de la firma y validaciones. |
-| `apps-script/Enlaces.gs` | Ejecutivos, creación, consulta y cancelación de enlaces. |
-| `apps-script/Documento.gs` | Carpetas de Drive, documento pendiente y firmado, renombrado y PDF. |
-| `apps-script/Setup.gs` | `configurar()`, `autoprueba()` y `regenerarDocumento()`. |
-| `apps-script/Panel.html` | Panel del ejecutivo. |
-| `apps-script/Logo.gs` | Logotipo en base64 para el documento. Se regenera desde `logo.png`. |
+| `apps-script/Code.gs` (`1-Recepcion`) | Rutas web, recepción de la firma y validaciones. |
+| `apps-script/Enlaces.gs` (`2-Enlaces`) | Ejecutivos, creación, consulta y cancelación de enlaces. |
+| `apps-script/Documento.gs` (`3-Documento`) | Carpetas de Drive, documento pendiente y firmado, renombrado y PDF. |
+| `apps-script/Setup.gs` (`4-Instalacion`) | `configurar()`, `autoprueba()` y `regenerarDocumento()`. |
+| `apps-script/Panel.html` (`Panel`) | Panel del ejecutivo. |
+| `GUIA_PASO_A_PASO.md` | Instalación y verificación, paso por paso. |
+| `apps-script/Logo.gs` (`5-Logotipo`) | Logotipo en base64 para el documento. Se regenera desde `logo.png`. |
 | `apps-script/appsscript.json` | Manifiesto (zona horaria America/Mexico_City, V8). |
 | `apps-script/test/flujo.test.cjs` | Prueba del flujo completo con Google simulado: `node apps-script/test/flujo.test.cjs`. |
 

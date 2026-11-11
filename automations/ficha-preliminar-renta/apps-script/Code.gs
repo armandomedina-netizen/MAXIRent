@@ -1,3 +1,8 @@
+/* =====================================================================
+   CÓDIGO 1 DE 5 · RECEPCIÓN DE FICHAS
+   Nombre del archivo en Apps Script: 1-Recepcion   (tipo: Script, .gs)
+   Rutas web (doGet / doPost), recepción de la firma del cliente, validaciones y aviso al ejecutivo.
+   ===================================================================== */
 /**
  * Ficha preliminar para renta vehicular (MAXIRent): enlaces de firma y receptor.
  *

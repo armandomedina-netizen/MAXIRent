@@ -1,3 +1,8 @@
+/* =====================================================================
+   CÓDIGO 3 DE 5 · CARPETAS Y DOCUMENTO
+   Nombre del archivo en Apps Script: 3-Documento   (tipo: Script, .gs)
+   Carpetas de Drive, documento pendiente, documento firmado (renombrado) y PDF de histórico.
+   ===================================================================== */
 /**
  * Carpetas de Drive y documento de la ficha.
  *
@@ -157,8 +162,8 @@ function armarDocumentoFirmado_(doc, enlace, p, fecha) {
   ]), [190, 342], false);
 
   seccion_(body, '02', 'Contactos de la empresa');
-  var roles = [['principal', 'Contacto principal (Solicitante)'], ['legal', 'Representante legal'], ['supervisor', 'Jefe(a) / Supervisor(a) de cobranza'],
-    ['cobranza', 'Contacto de cobranza'], ['pagos', 'Contacto de pagos']];
+  var roles = [['principal', 'Contacto principal (Solicitante)'], ['legal', 'Representante legal'], ['supervisor', 'Jefe(a) / Supervisor(a) Departamento de Pagos'],
+    ['pagos', 'Contacto de pagos']];
   var filas = [['Contacto', 'Nombre', 'Teléfono', 'Correo electrónico', 'Puesto / Móvil']];
   roles.forEach(function (r) {
     var k = 'c_' + r[0] + '_';

@@ -88,6 +88,8 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
 .note{display:flex;gap:12px;align-items:flex-start;background:var(--note-bg);border-radius:12px;padding:12px 16px;margin-bottom:18px;font-size:14px}
 .note svg{width:24px;height:24px;flex:none;fill:var(--red)}
 .note b.k{color:var(--red)}
+.note.disc{background:var(--field);border:1.5px solid var(--orange);margin-bottom:0}
+.note.disc svg{fill:var(--navy)}
 
 .refs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:18px}
 .ref{border:1.5px solid var(--field-bd);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:14px;background:var(--paper)}
@@ -181,13 +183,13 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
   var IC={
     person:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5Z"/></svg>',
     warn:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-2h2v2Zm0-4h-2V7h2v6Z"/></svg>',
+    save:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a1 1 0 0 1 1 1v8.6l2.8-2.8a1 1 0 1 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4l2.8 2.8V4a1 1 0 0 1 1-1ZM5 17a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"/></svg>',
     sign:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M14 3l5 5v2M14 3v5h5M8 9h3M8 13h2"/><path d="m13 20 1-3 6-6a1.4 1.4 0 0 1 2 2l-6 6-3 1Z"/></svg>'
   };
   var CONTACTS=[
     {id:'principal',title:'Contacto principal (Solicitante)',f:[['nombre','Nombre completo','text','name'],['puesto','Puesto / Área','text','organization-title'],['tel','Teléfono','tel','tel'],['mail','Correo electrónico','email','email']]},
     {id:'legal',title:'Representante legal',f:[['nombre','Nombre completo','text'],['tel','Teléfono','tel'],['movil','Teléfono móvil / directo','tel'],['mail','Correo electrónico','email']]},
-    {id:'supervisor',title:'Jefe(a) / Supervisor(a) de cobranza',f:[['nombre','Nombre del contacto','text'],['tel','Teléfono','tel'],['mail','Correo electrónico','email']]},
-    {id:'cobranza',title:'Contacto de cobranza',f:[['nombre','Nombre del contacto','text'],['tel','Teléfono','tel'],['mail','Correo electrónico','email']]},
+    {id:'supervisor',title:'Jefe(a) / Supervisor(a) Departamento de Pagos',f:[['nombre','Nombre del contacto','text'],['tel','Teléfono','tel'],['mail','Correo electrónico','email']]},
     {id:'pagos',title:'Contacto de pagos',f:[['nombre','Nombre del contacto','text'],['tel','Teléfono','tel'],['mail','Correo electrónico','email']]}
   ];
   var REFS=[1,2];
@@ -243,10 +245,14 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
       +'<div class="sigtools"><div class="err" id="sig-e"></div><button type="button" class="link" id="sigClear">Borrar firma</button></div></div>'
     +'</section>';
   h+='<div class="hp" aria-hidden="true"><label>No llenar este campo<input type="text" id="web" name="web" tabindex="-1" autocomplete="off"></label></div>';
-  h+='<div class="actions"><button type="submit" class="btn" id="send">Enviar ficha</button><button type="button" class="link" id="wipe">Borrar todo y empezar de nuevo</button><span class="status" id="status" role="status" aria-live="polite"></span></div>';
+  h+='<div class="note disc">'+IC.save+'<div><b>Un último paso, con gusto.</b> Al presionar <b>«Guardar y descargar»</b> registraremos su ficha firmada y se descargará una copia en su dispositivo. '
+    +'Le pedimos amablemente que <b>guarde ese archivo y lo envíe junto con los demás documentos y requisitos</b> que le solicitó su ejecutivo de MAXIRent; así podremos dar seguimiento a su trámite sin demoras. '
+    +'¡Muchas gracias por su confianza!</div></div>';
+  h+='<div class="actions"><button type="submit" class="btn" id="send">Guardar y descargar</button><button type="button" class="link" id="wipe">Borrar todo y empezar de nuevo</button><span class="status" id="status" role="status" aria-live="polite"></span></div>';
   form.innerHTML=h;
 
   var today=new Date();
+  function isoLocal(d){return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)}
   var dateLong=today.toLocaleDateString('es-MX',{day:'numeric',month:'long',year:'numeric'});
   $('#dateView').textContent=dateLong;
 
@@ -330,6 +336,173 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
   });
   $('#decl').addEventListener('change',function(){if(this.checked)$('#chkW').classList.remove('bad');update()});
 
+  /* ---------- documento descargable ----------
+     La ficha llenada se dibuja en hojas A4 (canvas) y se empaqueta como PDF en el propio navegador:
+     no se usa ningún servicio externo ni librería, y nada sale del dispositivo para generarlo. */
+  var PW=1240,PH=1754,MX=72,CW=PW-2*MX,TOP2=150,BOT=PH-140;
+  var FONT="Montserrat,'Segoe UI',Arial,sans-serif",HEAD="Impact,Anton,'Arial Narrow',sans-serif";
+  var mg=document.createElement('canvas').getContext('2d');
+  function wrapText(t,font,maxW){
+    mg.font=font;var out=[];
+    String(t).split('\n').forEach(function(par){
+      var line='';
+      par.split(/\s+/).forEach(function(w){
+        while(mg.measureText(w).width>maxW){var k=w.length;while(k>1&&mg.measureText(w.slice(0,k)).width>maxW)k--;if(line){out.push(line);line=''}out.push(w.slice(0,k));w=w.slice(k)}
+        var tst=line?line+' '+w:w;
+        if(mg.measureText(tst).width<=maxW)line=tst;else{if(line)out.push(line);line=w}
+      });
+      out.push(line);
+    });
+    return out;
+  }
+  function fmtVal(c){var t=c[2];return typeof t==='number'?'$'+t.toLocaleString('es-MX')+' MXN':(/^\d{10}$/.test(t)&&/tel|movil/.test(c[0])?fmtTel(t):t)}
+  function drawFicha(cs,folio){
+    var val={};cs.forEach(function(c){val[c[0]]=fmtVal(c)});
+    var pages=[],cv2,g,y,logo=$('.hdr img'),titulo='FICHA PRELIMINAR PARA RENTA VEHICULAR';
+    function rr(x,yy,w,h,r){g.beginPath();g.moveTo(x+r,yy);g.arcTo(x+w,yy,x+w,yy+h,r);g.arcTo(x+w,yy+h,x,yy+h,r);g.arcTo(x,yy+h,x,yy,r);g.arcTo(x,yy,x+w,yy,r);g.closePath()}
+    function txt(s,x,yy,font,color,align){g.font=font;g.fillStyle=color||'#05394B';g.textAlign=align||'left';g.textBaseline='top';g.fillText(s,x,yy)}
+    function newPage(first){
+      cv2=document.createElement('canvas');cv2.width=PW;cv2.height=PH;g=cv2.getContext('2d');
+      g.fillStyle='#fff';g.fillRect(0,0,PW,PH);pages.push(cv2);
+      if(first){
+        g.fillStyle='#05394B';rr(56,56,PW-112,210,26);g.fill();
+        g.fillStyle='#F47721';g.save();g.beginPath();g.rect(56,56,PW-112,210);g.clip();
+        [[PW-190,0],[PW-150,1]].forEach(function(b){g.fillStyle=b[1]?'#F9A05E':'#F47721';g.beginPath();g.moveTo(b[0]+40,40);g.lineTo(b[0]+78,40);g.lineTo(b[0]+38,282);g.lineTo(b[0],282);g.closePath();g.fill()});
+        g.restore();
+        if(logo&&logo.complete&&logo.naturalWidth){var lh=118,lw=lh*logo.naturalWidth/logo.naturalHeight;g.drawImage(logo,92,56+(210-lh)/2,lw,lh)}
+        g.fillStyle='#fff';g.fillRect(470,86,3,150);
+        var tl=wrapText(titulo,'400 54px '+HEAD,PW-540-170);
+        var ty=56+(210-tl.length*58)/2;
+        tl.forEach(function(l,i){txt(l,496,ty+i*58,'400 54px '+HEAD,'#EE8022')});
+        txt((folio?'Folio '+folio+'  ·  ':'')+'Fecha de llenado: '+dateLong,MX,292,'700 24px '+FONT,'#05394B');
+        y=346;
+      }else{
+        g.fillStyle='#05394B';rr(56,56,PW-112,54,14);g.fill();
+        txt(titulo+(folio?'  ·  '+folio:''),92,70,'700 22px '+FONT,'#fff');
+        y=TOP2;
+      }
+    }
+    function ensure(h){if(y+h>BOT)newPage(false)}
+    function section(n,t,tag){
+      ensure(130);
+      g.fillStyle='#05394B';rr(MX+70,y,CW-70,56,12);g.fill();
+      g.fillStyle='#F47721';g.beginPath();g.moveTo(MX,y);g.lineTo(MX+92,y);g.lineTo(MX+112,y+28);g.lineTo(MX+92,y+56);g.lineTo(MX,y+56);g.closePath();g.fill();
+      txt(n,MX+14,y+11,'400 34px '+HEAD,'#fff');
+      txt(t.toUpperCase(),MX+134,y+14,'800 24px '+FONT,'#fff');
+      if(tag){g.font='800 24px '+FONT;var tw=g.measureText(t.toUpperCase()).width;txt(tag.toUpperCase(),MX+134+tw+16,y+17,'700 19px '+FONT,'#F47721')}
+      y+=56+26;
+    }
+    function sub(t){
+      ensure(60+80);
+      g.fillStyle='#05394B';g.beginPath();g.arc(MX+10,y+16,8,0,7);g.fill();
+      txt(t,MX+30,y,'800 26px '+FONT,'#05394B');y+=44;
+    }
+    /* campos en una fila: 1 o 2 columnas */
+    function row(list){
+      var gap=24,w=(CW-gap*(list.length-1))/list.length,hs=[],i;
+      var L=list.map(function(f){return {lab:wrapText(f[0],'700 21px '+FONT,w),val:wrapText(f[1]||'—','500 24px '+FONT,w-28)}});
+      L.forEach(function(l){hs.push(l.lab.length*28+l.val.length*32+26)});
+      var h=Math.max.apply(null,hs);ensure(h+16);
+      L.forEach(function(l,k){
+        var x=MX+k*(w+gap);
+        l.lab.forEach(function(s,j){txt(s,x,y+j*28,'700 21px '+FONT,'#05394B')});
+        var by=y+l.lab.length*28+4,bh=h-l.lab.length*28-4;
+        g.fillStyle='#E5F4FB';rr(x,by,w,bh,10);g.fill();g.strokeStyle='#B9D8E8';g.lineWidth=2;g.stroke();
+        l.val.forEach(function(s,j){txt(s,x+14,by+11+j*32,'500 24px '+FONT,'#05394B')});
+      });
+      y+=h+16;
+    }
+    function grid(list){for(var i=0;i<list.length;i+=2){row(list.slice(i,i+2))}}
+    function V(id){return val[id]||''}
+    newPage(true);
+    section('01','Datos generales del solicitante');
+    row([['Nombre completo o razón social',V('s_nombre')]]);
+    row([['Giro o actividad comercial',V('s_giro')],['Ciudad y estado',V('s_ciudad')]]);
+    y+=10;section('02','Contactos de la empresa','(Obligatorios)');
+    CONTACTS.forEach(function(c){
+      sub(c.title);
+      var l=c.f.map(function(x){return [x[1],V('c_'+c.id+'_'+x[0])]});
+      grid(l);y+=6;
+    });
+    y+=4;section('03','Referencias comerciales','(Únicamente proveedores)');
+    REFS.forEach(function(n){
+      sub('Proveedor referencia '+n);
+      var p='r'+n+'_';
+      row([[REF_F[0][1],V(p+'empresa')]]);
+      grid([[REF_F[1][1],V(p+'contacto')],[REF_F[2][1],V(p+'tel')],[REF_F[3][1],V(p+'fact')],[REF_F[4][1],V(p+'mail')]]);y+=6;
+    });
+    /* declaración y firma */
+    var dec='Declaro bajo protesta de decir verdad que los datos proporcionados son verídicos, corresponden a contactos oficiales y que las referencias indicadas son proveedores comerciales externos a nuestra plantilla laboral.';
+    var dl=wrapText(dec,'500 24px '+FONT,CW);
+    ensure(60+dl.length*34+70+300);
+    txt('Declaración de veracidad',MX,y,'800 30px '+FONT,'#05394B');y+=50;
+    dl.forEach(function(s){txt(s,MX,y,'500 24px '+FONT,'#05394B');y+=34});
+    y+=12;
+    g.fillStyle='#F47721';rr(MX,y,34,34,7);g.fill();
+    g.strokeStyle='#fff';g.lineWidth=5;g.lineCap='round';g.lineJoin='round';g.beginPath();g.moveTo(MX+8,y+18);g.lineTo(MX+15,y+25);g.lineTo(MX+27,y+10);g.stroke();
+    txt('Declaración aceptada por el firmante.',MX+50,y+3,'700 23px '+FONT,'#05394B');y+=62;
+    txt('Firma del Solicitante o Rep. Legal',MX,y,'700 21px '+FONT,'#05394B');y+=32;
+    var bw=CW,bh=210;
+    g.fillStyle='#fff';rr(MX,y,bw,bh,12);g.fill();g.strokeStyle='#B9D8E8';g.lineWidth=2.5;g.stroke();
+    var sw=cv.width,sh=cv.height,k=Math.min((bw-40)/sw,(bh-40)/sh);
+    g.drawImage(cv,MX+(bw-sw*k)/2,y+(bh-sh*k)/2,sw*k,sh*k);
+    y+=bh+22;
+    row([['Nombre de quien firma',$('#f_firmante').value.trim()],['Fecha de llenado',dateLong]]);
+    ensure(80);
+    wrapText('Copia para el solicitante generada el '+new Date().toLocaleString('es-MX',{dateStyle:'long',timeStyle:'short'}).replace(/\.$/,'')+'. Conserve este archivo y envíelo junto con los demás requisitos que le solicitó MAXIRent.','500 19px '+FONT,CW).forEach(function(s){txt(s,MX,y,'500 19px '+FONT,'#3F6272');y+=27});
+    /* pie de cada hoja */
+    pages.forEach(function(pc,i){
+      g=pc.getContext('2d');
+      g.fillStyle='#05394B';rr(56,PH-110,PW-112,54,14);g.fill();
+      txt('MAXIRent · Autos y Camionetas',92,PH-97,'700 22px '+FONT,'#fff');
+      txt('Hoja '+(i+1)+' de '+pages.length,PW-92,PH-97,'700 22px '+FONT,'#fff','right');
+    });
+    return pages;
+  }
+  function hex16(s){var o='FEFF';for(var i=0;i<s.length;i++)o+=('0000'+s.charCodeAt(i).toString(16)).slice(-4);return '<'+o+'>'}
+  function buildPdf(pages,title){
+    var enc=new TextEncoder(),chunks=[],pos=0,offs=[],n=pages.length;
+    function put(x){var b=typeof x==='string'?enc.encode(x):x;chunks.push(b);pos+=b.length}
+    function obj(num,body){offs[num]=pos;put(num+' 0 obj\n'+body+'\nendobj\n')}
+    put('%PDF-1.4\n');
+    var kids=[];for(var i=0;i<n;i++)kids.push((4+3*i)+' 0 R');
+    obj(1,'<</Type/Catalog/Pages 2 0 R>>');
+    obj(2,'<</Type/Pages/Count '+n+'/Kids['+kids.join(' ')+']>>');
+    obj(3,'<</Title '+hex16(title)+'/Producer '+hex16('MAXIRent')+'>>');
+    pages.forEach(function(pc,i){
+      var jb=atob(pc.toDataURL('image/jpeg',0.9).split(',')[1]),jpg=new Uint8Array(jb.length);
+      for(var k=0;k<jb.length;k++)jpg[k]=jb.charCodeAt(k);
+      var pn=4+3*i,im=pn+1,ct=pn+2,cs2='q 595.28 0 0 841.89 0 0 cm /Im0 Do Q';
+      obj(pn,'<</Type/Page/Parent 2 0 R/MediaBox[0 0 595.28 841.89]/Resources<</XObject<</Im0 '+im+' 0 R>>>>/Contents '+ct+' 0 R>>');
+      offs[im]=pos;put(im+' 0 obj\n<</Type/XObject/Subtype/Image/Width '+pc.width+'/Height '+pc.height+'/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length '+jpg.length+'>>\nstream\n');put(jpg);put('\nendstream\nendobj\n');
+      obj(ct,'<</Length '+cs2.length+'>>\nstream\n'+cs2+'\nendstream');
+    });
+    var total=3+3*n+1,xr=pos;
+    put('xref\n0 '+total+'\n0000000000 65535 f \n');
+    for(var j=1;j<total;j++)put(('0000000000'+offs[j]).slice(-10)+' 00000 n \n');
+    put('trailer\n<</Size '+total+'/Root 1 0 R/Info 3 0 R>>\nstartxref\n'+xr+'\n%%EOF');
+    var all=new Uint8Array(pos),o=0;chunks.forEach(function(c){all.set(c,o);o+=c.length});
+    return new Blob([all],{type:'application/pdf'});
+  }
+  var lastPdf=null;
+  function nombreArchivo(){
+    var base=(INFO&&INFO.folio?INFO.folio+' - ':'')+'Ficha preliminar de renta - '+($('#s_nombre').value.trim()||'cliente');
+    return base.replace(/[\\\/:*?"<>|\r\n]+/g,' ').replace(/\s+/g,' ').trim().slice(0,120)+' - '+isoLocal(today)+'.pdf';
+  }
+  async function crearPdf(cs){
+    try{await Promise.race([Promise.all([document.fonts.load('500 24px Montserrat'),document.fonts.load('700 24px Montserrat'),document.fonts.load('800 24px Montserrat')]),new Promise(function(r){setTimeout(r,2500)})])}catch(_){}
+    var blob=buildPdf(drawFicha(cs,INFO&&INFO.folio),'Ficha preliminar para renta vehicular');
+    lastPdf={blob:blob,name:nombreArchivo()};
+    return lastPdf;
+  }
+  function descargar(){
+    if(!lastPdf)return false;
+    var url=URL.createObjectURL(lastPdf.blob),a=document.createElement('a');
+    a.href=url;a.download=lastPdf.name;a.rel='noopener';a.style.display='none';document.body.appendChild(a);a.click();
+    setTimeout(function(){a.remove();URL.revokeObjectURL(url)},60000);
+    return true;
+  }
+
   /* ---------- envío ---------- */
   function validateAll(){
     var first=null,bad=0;
@@ -362,17 +535,22 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
     $('#decl').checked=false;strokes=[];redraw();pad.classList.remove('has','bad');$('#sig-e').textContent='';
     $('#draftTxt').textContent='';$('#status').textContent='';started=Date.now();update();
   }
-  function finish(ok,folio,txt,why){
+  function finish(ok,folio,txt,why,pdfOk){
     var p=document.createElement('div');p.className='panel';
+    var aviso=pdfOk
+      ?'<div class="note disc">'+IC.save+'<div><b>Su documento ya se descargó</b> (revise la carpeta de Descargas de su dispositivo). Le pedimos amablemente que lo conserve y lo envíe junto con los demás documentos y requisitos que le solicitó su ejecutivo de MAXIRent. Si no lo encuentra, puede descargarlo de nuevo con el botón de abajo.</div></div>'
+      :'<div class="note"><div><b>No pudimos generar el archivo para descargar.</b> Puede copiar el resumen de abajo y conservarlo, o pedir a su ejecutivo de MAXIRent que le haga llegar una copia.</div></div>';
     p.innerHTML=(ok
       ?'<h2>Ficha recibida</h2><p>Gracias. Su ficha quedó firmada y registrada'+(INFO&&INFO.ejecutivo?'. '+esc(INFO.ejecutivo)+', su ejecutivo de MAXIRent, la recibió y le dará seguimiento':'')+'.</p><p>Folio de su ficha:<br><span class="folio">'+esc(folio)+'</span></p>'
       :'<h2>La ficha no se pudo enviar</h2><p>'+esc(why)+' <b>Sus datos siguen en esta página</b>: puede intentarlo de nuevo, o copiar el resumen y enviarlo al área de Validaciones de MAXIRent.</p>')
+      +aviso
       +'<textarea readonly aria-label="Resumen de la ficha"></textarea>'
-      +'<div class="actions"><button type="button" class="btn" id="cp">Copiar resumen</button>'+(ok?'':'<button type="button" class="btn ghost" id="again">Volver a la ficha</button>')+'</div>';
+      +'<div class="actions">'+(pdfOk?'<button type="button" class="btn" id="dl">Descargar de nuevo mi ficha</button>':'')+'<button type="button" class="btn ghost" id="cp">Copiar resumen</button>'+(ok?'':'<button type="button" class="btn ghost" id="again">Volver a la ficha</button>')+'</div>';
     var ta=$('textarea',p);ta.value=txt;
     form.style.display='none';$('.prog').style.display='none';
     $('#app').insertBefore(p,$('#foot'));
     $('#cp',p).addEventListener('click',function(){copy(txt,this,ta)});
+    var dl=$('#dl',p);if(dl)dl.addEventListener('click',descargar);
     var again=$('#again',p);
     if(again)again.addEventListener('click',function(){p.remove();form.style.display='';$('.prog').style.display='';window.scrollTo(0,0);sizeCanvas()});
     if(ok){try{localStorage.removeItem(KEY)}catch(_){}}
@@ -394,9 +572,12 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
       v.first.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(function(){try{v.first.focus({preventScroll:true})}catch(_){}},350);
       return;
     }
-    st.className='status';st.textContent='';btn.disabled=true;btn.textContent='Enviando…';
+    st.className='status';st.textContent='';btn.disabled=true;btn.textContent='Guardando…';
     var cs=campos(),firmante=$('#f_firmante').value.trim();
-    var payload={token:TOKEN,campos:cs,firmante:firmante,firma:cv.toDataURL('image/png'),fechaLlenado:today.toISOString().slice(0,10),
+    /* Primero se descarga la copia del cliente (compromiso de conservarla); si falla, igual se envía la ficha. */
+    var pdfOk=false;
+    try{await crearPdf(cs);pdfOk=descargar()}catch(err){pdfOk=false}
+    var payload={token:TOKEN,campos:cs,firmante:firmante,firma:cv.toDataURL('image/png'),fechaLlenado:isoLocal(today),
       tiempoMs:Date.now()-started,web:$('#web').value};
     var ok=false,folio='',why='';
     if(!ENDPOINT){why='Esta página está en modo de prueba y todavía no tiene un destino configurado.'}
@@ -407,8 +588,8 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
         if(j&&j.ok&&j.folio){ok=true;folio=j.folio}else{why=(j&&j.mensaje)||'El servidor no aceptó la ficha.'}
       }catch(err){why='No hubo conexión con el servidor.'}
     }
-    btn.disabled=false;btn.textContent='Enviar ficha';
-    finish(ok,folio,summary(folio,cs),why);
+    btn.disabled=false;btn.textContent='Guardar y descargar';
+    finish(ok,folio,summary(folio,cs),why,pdfOk);
   });
 
   /* ---------- verificación del enlace ---------- */

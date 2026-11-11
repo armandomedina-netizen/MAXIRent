@@ -25,6 +25,14 @@ Quien la llena es un cliente externo: no tiene cuenta de monday ni de Google.
 - **Enlace único por cliente.** Un ejecutivo autorizado (hoja `Ejecutivos`) genera el enlace
   desde un panel. El enlace tiene folio `FP-AAAAMMDD-NNN`, sirve una sola vez, vence a los 7
   días y se puede cancelar.
+- **Copia para el cliente.** El botón es «Guardar y descargar»: antes de él se muestra un aviso cordial
+  que pide al cliente conservar el archivo y enviarlo con los demás requisitos. Al pulsarlo se genera un
+  PDF de la ficha firmada **en el navegador** (hojas dibujadas en canvas y empaquetadas como PDF, sin
+  librerías ni servicios externos), se descarga y después se envía la ficha. Si el PDF falla, la ficha se
+  envía igual y se avisa al cliente. El PDF de este paso es la copia del cliente; el documento oficial
+  firmado sigue generándose en el servidor.
+- **Contactos de pagos.** La sección de contactos queda con cuatro: principal, representante legal,
+  Jefe(a) / Supervisor(a) Departamento de Pagos y contacto de pagos (se eliminó el contacto de cobranza).
 - **Un solo documento que cambia de estado.** Al generar el enlace se crea un Google
   Doc `... - PENDIENTE DE FIRMA - Cliente` en la carpeta `Pendientes` del Drive del ejecutivo. Al firmar
   se completa con los datos y la firma, se renombra a `... - FIRMADA - Razón social - fecha`,

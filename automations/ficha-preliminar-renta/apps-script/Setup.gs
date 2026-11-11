@@ -1,3 +1,8 @@
+/* =====================================================================
+   CÓDIGO 4 DE 5 · INSTALACIÓN Y AUTOPRUEBA
+   Nombre del archivo en Apps Script: 4-Instalacion   (tipo: Script, .gs)
+   configurar(), autoprueba() y regenerarDocumento(). Se ejecutan a mano desde el editor.
+   ===================================================================== */
 /**
  * Configuración inicial, autoprueba y reparaciones. Se ejecutan a mano desde el editor de Apps Script.
  */
@@ -38,8 +43,7 @@ function autoprueba() {
   add('s_ciudad', 'Ciudad y estado', 'Monterrey, Nuevo León');
   [['principal', 'Contacto principal (Solicitante)', ['nombre', 'puesto', 'tel', 'mail']],
    ['legal', 'Representante legal', ['nombre', 'tel', 'movil', 'mail']],
-   ['supervisor', 'Jefe(a) / Supervisor(a) de cobranza', ['nombre', 'tel', 'mail']],
-   ['cobranza', 'Contacto de cobranza', ['nombre', 'tel', 'mail']],
+   ['supervisor', 'Jefe(a) / Supervisor(a) Departamento de Pagos', ['nombre', 'tel', 'mail']],
    ['pagos', 'Contacto de pagos', ['nombre', 'tel', 'mail']]].forEach(function (r) {
     r[2].forEach(function (f) {
       add('c_' + r[0] + '_' + f, r[1] + ' – ' + f, f === 'tel' || f === 'movil' ? '8112345678' : f === 'mail' ? 'prueba@example.test' : 'Dato de prueba');

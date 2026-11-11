@@ -1,3 +1,8 @@
+/* =====================================================================
+   CÓDIGO 2 DE 5 · EJECUTIVOS Y ENLACES
+   Nombre del archivo en Apps Script: 2-Enlaces   (tipo: Script, .gs)
+   Alta de ejecutivos, carpeta propia en Drive, creación, consulta y cancelación de enlaces de firma.
+   ===================================================================== */
 /**
  * Ejecutivos y enlaces de firma.
  *
