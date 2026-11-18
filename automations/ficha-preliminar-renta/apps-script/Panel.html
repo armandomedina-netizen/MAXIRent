@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="es-MX">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<!-- PANEL DEL EJECUTIVO · Nombre del archivo en Apps Script: Panel (tipo: HTML). Debe llamarse exactamente "Panel". -->
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--navy:#05394B;--orange:#F47721;--card:#F5FBFD;--field:#E5F4FB;--bd:#B9D8E8;--red:#920000;--ok:#1B6B3A;--muted:#3F6272}
+*{box-sizing:border-box}
+body{margin:0;font-family:Montserrat,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:14px;color:var(--navy);background:#fff}
+.top{background:var(--navy);color:#fff;padding:18px 20px}
+.top h1{margin:0;font-size:19px;font-weight:800;letter-spacing:.2px}
+.top p{margin:4px 0 0;font-size:13px;opacity:.9}
+.top i{display:inline-block;width:26px;height:4px;background:var(--orange);margin-bottom:8px;transform:skewX(-24deg)}
+main{max-width:860px;margin:0 auto;padding:18px 16px 40px;display:flex;flex-direction:column;gap:18px}
+section{background:var(--card);border:1px solid #D6E8F1;border-radius:14px;padding:16px 18px}
+h2{margin:0 0 10px;font-size:15px;font-weight:800;text-transform:uppercase}
+label{display:block;font-weight:700;font-size:13px;margin-bottom:5px}
+input{width:100%;font:inherit;font-size:16px;color:var(--navy);background:var(--field);border:1.5px solid var(--bd);border-radius:8px;padding:10px 12px;min-height:44px}
+input:focus{outline:3px solid rgba(244,119,33,.45);border-color:var(--orange)}
+button{font:inherit;font-weight:800;border:0;border-radius:9px;padding:10px 18px;min-height:44px;cursor:pointer;background:var(--navy);color:#fff;border-bottom:3px solid var(--orange)}
+button.ghost{background:#fff;color:var(--navy);border:1.5px solid var(--navy)}
+button.small{min-height:34px;padding:5px 12px;font-size:12.5px}
+button[disabled]{opacity:.6;cursor:progress}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.row>.grow{flex:1;min-width:220px}
+.msg{font-weight:700;margin-top:8px}.msg.bad{color:var(--red)}
+.res{margin-top:12px;border:1.5px solid var(--orange);border-radius:12px;padding:14px;background:#fff}
+.res .url{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all;background:var(--field);padding:10px;border-radius:8px;margin:8px 0}
+.res .acts{display:flex;gap:8px;flex-wrap:wrap}
+.hint{font-size:12.5px;color:var(--muted);margin:6px 0 0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:12px;text-transform:uppercase;background:var(--field);padding:8px}
+td{padding:8px;border-top:1px solid var(--bd);vertical-align:top}
+.wrap{overflow-x:auto}
+.chip{display:inline-block;font-weight:800;font-size:11.5px;border-radius:99px;padding:2px 10px;background:var(--field)}
+.chip.PENDIENTE{background:#FBCEAF;color:#7a3400}.chip.FIRMADA{background:#D6F0DE;color:var(--ok)}
+.chip.VENCIDA,.chip.CANCELADA{background:#E6E6E6;color:#444}
+a{color:var(--navy);font-weight:700}
+ol{margin:6px 0 10px;padding-left:20px}ol li{margin:3px 0}
+.ok{color:var(--ok);font-weight:800}
+.empty{color:var(--muted);padding:8px 0}
+</style>
+</head>
+<body>
+<div class="top"><i></i><h1>Fichas de firma · MAXIRent</h1><p id="quien">Cargando…</p></div>
+<main>
+  <section>
+    <h2>Nueva ficha para un cliente</h2>
+    <div class="row">
+      <div class="grow"><label for="cliente">Cliente o razón social</label><input id="cliente" maxlength="120" autocomplete="off" placeholder="Ej. Transportes del Norte SA de CV"></div>
+      <button id="crear" type="button">Generar enlace</button>
+    </div>
+    <p class="hint">El enlace sirve una sola vez. Envíelo al cliente por WhatsApp o correo; al firmar, el documento queda guardado en su carpeta.</p>
+    <div class="msg" id="msg" role="status"></div>
+    <div class="res" id="res" hidden>
+      <b id="resTit"></b>
+      <div class="url" id="resUrl"></div>
+      <div class="acts">
+        <button class="small" id="copiar" type="button">Copiar enlace</button>
+        <button class="small ghost" id="wa" type="button">Abrir en WhatsApp</button>
+      </div>
+      <div class="hint" id="resVence"></div>
+    </div>
+  </section>
+  <section>
+    <h2>Mi carpeta en Drive</h2>
+    <div id="carpeta"><div class="empty">Cargando…</div></div>
+  </section>
+  <section>
+    <h2>Mis fichas</h2>
+    <div class="wrap" id="lista"><div class="empty">Cargando…</div></div>
+  </section>
+</main>
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var run=function(){return google.script.run};
+  function fecha(iso){if(!iso)return '';var d=new Date(iso);return isNaN(d)?'':d.toLocaleString('es-MX',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})}
+  function pintar(fichas){
+    var cont=$('#lista');cont.textContent='';
+    if(!fichas.length){var e=document.createElement('div');e.className='empty';e.textContent='Todavía no ha generado fichas.';cont.appendChild(e);return}
+    var t=document.createElement('table');
+    t.innerHTML='<tr><th>Folio</th><th>Cliente</th><th>Estado</th><th>Creada</th><th>Archivos</th><th></th></tr>';
+    fichas.forEach(function(f){
+      var tr=document.createElement('tr');
+      function td(txt){var c=document.createElement('td');c.textContent=txt;tr.appendChild(c);return c}
+      td(f.folio);td(f.cliente);
+      var c=document.createElement('td');var ch=document.createElement('span');ch.className='chip '+f.estado;ch.textContent=f.estado;c.appendChild(ch);
+      if(f.estado==='FIRMADA'&&f.firmado){var s=document.createElement('div');s.className='hint';s.textContent=fecha(f.firmado);c.appendChild(s)}
+      if(f.estado==='PENDIENTE'&&f.vence){var s2=document.createElement('div');s2.className='hint';s2.textContent='vence '+fecha(f.vence);c.appendChild(s2)}
+      tr.appendChild(c);
+      td(fecha(f.creado));
+      var ar=document.createElement('td');
+      [['Documento',f.documento],['PDF',f.pdf]].forEach(function(x){if(x[1]){var a=document.createElement('a');a.href=x[1];a.target='_blank';a.rel='noopener';a.textContent=x[0];ar.appendChild(a);ar.appendChild(document.createTextNode(' '))}});
+      tr.appendChild(ar);
+      var ac=document.createElement('td');
+      if(f.estado==='PENDIENTE'){var b=document.createElement('button');b.className='small ghost';b.textContent='Cancelar';b.addEventListener('click',function(){
+        if(b.getAttribute('data-arm')!=='1'){b.setAttribute('data-arm','1');b.textContent='Confirmar';return}
+        b.disabled=true;run().withSuccessHandler(pintar).withFailureHandler(function(e){b.disabled=false;msg(e.message,true)}).cancelarEnlace(f.folio)});ac.appendChild(b)}
+      tr.appendChild(ac);t.appendChild(tr);
+    });
+    var w=document.createElement('div');w.appendChild(t);cont.appendChild(w);
+  }
+  function msg(t,bad){var m=$('#msg');m.textContent=t||'';m.className='msg'+(bad?' bad':'')}
+  function pintarCarpeta(c){
+    var el=$('#carpeta');el.textContent='';
+    function p(txt,cls){var d=document.createElement('div');if(cls)d.className=cls;d.textContent=txt;el.appendChild(d);return d}
+    if(c.conectada){
+      p('Conectada: sus fichas se guardan directo en su Drive.','ok');
+      var a=document.createElement('a');a.href=c.url;a.target='_blank';a.rel='noopener';a.textContent='Abrir mi carpeta';
+      var d=document.createElement('div');d.className='hint';d.appendChild(a);el.appendChild(d);
+      p('Dentro encontrará Pendientes (esperando firma) y Firmadas (documento y PDF).','hint');
+      return;
+    }
+    p(c.perdida?'Su carpeta ya no es accesible. Conéctela de nuevo; mientras tanto sus fichas se guardan en una carpeta compartida con usted.':'Todavía no conecta su carpeta. Mientras tanto, sus fichas se guardan en una carpeta compartida con usted (sólo lectura).');
+    var ol=document.createElement('ol');
+    ['En su Drive, cree una carpeta (por ejemplo "Fichas MAXIRent").','Compártala como Editor con '+c.dueno+'.','Pegue aquí el enlace de la carpeta y pulse Conectar.'].forEach(function(t){var li=document.createElement('li');li.textContent=t;ol.appendChild(li)});
+    el.appendChild(ol);
+    var row=document.createElement('div');row.className='row';
+    row.innerHTML='<div class="grow"><label for="carpetaUrl">Enlace de su carpeta</label><input id="carpetaUrl" autocomplete="off" placeholder="https://drive.google.com/drive/folders/..."></div><button id="conectar" type="button">Conectar</button>';
+    el.appendChild(row);
+    var m=document.createElement('div');m.className='msg';m.id='msgCarpeta';m.setAttribute('role','status');el.appendChild(m);
+    $('#conectar').addEventListener('click',function(){
+      var b=this,v=$('#carpetaUrl').value.trim();
+      if(!v){m.textContent='Pegue el enlace de su carpeta.';m.className='msg bad';return}
+      b.disabled=true;b.textContent='Conectando…';m.textContent='';
+      run().withSuccessHandler(pintarCarpeta).withFailureHandler(function(e){b.disabled=false;b.textContent='Conectar';m.textContent=e.message;m.className='msg bad'}).conectarCarpeta(v);
+    });
+  }
+  var ultimo=null;
+  run().withSuccessHandler(function(d){$('#quien').textContent=d.nombre+' · '+d.correo;pintarCarpeta(d.carpeta);pintar(d.fichas)})
+    .withFailureHandler(function(e){$('#quien').textContent='Sin acceso';$('#lista').textContent='';$('#carpeta').textContent='';msg(e.message,true);$('#crear').disabled=true}).panelInicial();
+  $('#crear').addEventListener('click',function(){
+    var cli=$('#cliente').value.trim();
+    if(cli.length<2){msg('Escriba el nombre o razón social del cliente.',true);return}
+    var b=this;b.disabled=true;b.textContent='Generando…';msg('');
+    run().withSuccessHandler(function(r){
+      ultimo=r;b.disabled=false;b.textContent='Generar enlace';
+      $('#resTit').textContent='Ficha '+r.folio+' para '+r.cliente;$('#resUrl').textContent=r.url;
+      $('#resVence').textContent='Vigente hasta '+fecha(r.vence);$('#res').hidden=false;$('#cliente').value='';
+      run().withSuccessHandler(function(d){pintar(d.fichas)}).panelInicial();
+    }).withFailureHandler(function(e){b.disabled=false;b.textContent='Generar enlace';msg(e.message,true)}).crearEnlace(cli);
+  });
+  $('#copiar').addEventListener('click',function(){
+    var b=this,txt=ultimo&&ultimo.url;if(!txt)return;
+    var fb=function(){var r=document.createRange();r.selectNodeContents($('#resUrl'));var s=getSelection();s.removeAllRanges();s.addRange(r);b.textContent='Seleccione y copie (Ctrl+C)'};
+    try{navigator.clipboard.writeText(txt).then(function(){b.textContent='Copiado ✓'},fb)}catch(_){fb()}
+  });
+  $('#wa').addEventListener('click',function(){
+    if(!ultimo)return;
+    var t='Hola, le comparto la ficha preliminar para su renta con MAXIRent. Por favor llénela y fírmela en este enlace (sirve una sola vez): '+ultimo.url;
+    window.open('https://wa.me/?text='+encodeURIComponent(t),'_blank','noopener');
+  });
+})();
+</script>
+</body>
+</html>
