@@ -36,6 +36,7 @@ Puesta en marcha detallada, con el nombre de cada código: **[GUIA_PASO_A_PASO.m
 | Archivo | Para qué sirve |
 | --- | --- |
 | `index.html` | El formulario del cliente. Lee su enlace de `#t=...`, lo verifica, envía la firma y descarga la copia en PDF del cliente. |
+| `guia-cliente.html` | Guía pública para el cliente, con pantallas de ejemplo (datos ficticios). Se publica en Pages como `/guia.html`, junto al formulario; el ejecutivo puede enviar su dirección con el enlace de la ficha. No contiene direcciones ni datos internos. |
 | `logo.png` | Logotipo para fondo azul tomado del manual de marca (pág. 15), con fondo transparente. Se publica junto a `index.html`. |
 | `apps-script/Code.gs` (`1-Recepcion`) | Rutas web, recepción de la firma y validaciones. |
 | `apps-script/Enlaces.gs` (`2-Enlaces`) | Ejecutivos, creación, consulta y cancelación de enlaces. |

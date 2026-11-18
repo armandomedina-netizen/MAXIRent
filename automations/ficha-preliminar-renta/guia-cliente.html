@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="es-MX">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#05394B">
+<title>Guía para completar su ficha preliminar de renta · MAXIRent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap">
+<style>
+/* Guía pública del cliente. Encabezado azul MAXIRent; lectura en una columna con índice lateral y pasos numerados. */
+:root{
+  --navy:#05394B;      /* azul MAXIRent (encabezado, siempre oscuro) */
+  --orange:#F47721;    /* naranja de marca */
+  --bg:#FFFFFF;
+  --surface:#F5FBFD;
+  --field:#E5F4FB;
+  --line:#B9D8E8;
+  --fg:#05394B;
+  --muted:#3F6272;
+  --accent:#C85A0C;    /* naranja con contraste suficiente sobre fondo claro */
+  --accent-soft:#FBCEAF;
+  --ok:#1B6B3A; --ok-bg:#D6F0DE;
+  --warn:#7A3400; --warn-bg:#FBE3CF;
+  --bad:#920000; --bad-bg:#F8DADA;
+  --code-bg:#E5F4FB;
+  --font-body:'Montserrat',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --font-display:Impact,'Haettenschweiler','Arial Narrow Bold','Montserrat',sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0A1A21; --surface:#10262F; --field:#143340; --line:#265063; --fg:#E6F1F5; --muted:#9FBFCC;
+    --accent:#F58A3F; --accent-soft:#4A2A12;
+    --ok:#7FD9A0; --ok-bg:#163A25; --warn:#F7B27C; --warn-bg:#3F2410; --bad:#FF9C9C; --bad-bg:#3E1717;
+    --code-bg:#143340; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0A1A21; --surface:#10262F; --field:#143340; --line:#265063; --fg:#E6F1F5; --muted:#9FBFCC;
+  --accent:#F58A3F; --accent-soft:#4A2A12;
+  --ok:#7FD9A0; --ok-bg:#163A25; --warn:#F7B27C; --warn-bg:#3F2410; --bad:#FF9C9C; --bad-bg:#3E1717;
+  --code-bg:#143340; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:15px;line-height:1.6;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--navy)}
+img{max-width:100%}
+a{color:var(--accent);font-weight:600}
+.wrap{max-width:1040px;margin:0 auto}
+
+/* encabezado */
+.top{margin-left:calc(-1*max(16px,env(safe-area-inset-left,0px)));margin-right:calc(-1*max(16px,env(safe-area-inset-right,0px)));
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  background:var(--navy);color:#fff;position:sticky;top:env(safe-area-inset-top,0px);z-index:20}
+.top .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;padding-block:12px}
+.top img{height:44px;width:auto;display:block}
+.brand{display:flex;flex-direction:column;min-width:0}
+.brand b{font-family:var(--font-display);font-weight:400;font-size:22px;letter-spacing:.8px;text-transform:uppercase;line-height:1.1}
+.brand span{font-size:12.5px;opacity:.88}
+.tabs{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.tab{font:inherit;font-weight:700;font-size:13.5px;color:#fff;background:transparent;border:1.5px solid rgba(255,255,255,.45);
+  border-radius:999px;padding:8px 16px;cursor:pointer;min-height:40px}
+.tab[aria-selected="true"]{background:var(--orange);border-color:var(--orange);color:#1b1000}
+.tab:focus-visible,.btn:focus-visible,summary:focus-visible,.toc a:focus-visible{outline:3px solid var(--orange);outline-offset:2px}
+
+/* diseño de lectura */
+.layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:34px;padding-block:28px 60px}
+.toc{position:sticky;top:calc(84px + env(safe-area-inset-top,0px));align-self:start;font-size:13.5px}
+.toc b{display:block;font-size:11.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+.toc ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.toc a{display:block;padding:6px 10px;border-radius:8px;color:var(--fg);text-decoration:none;font-weight:600}
+.toc a:hover{background:var(--field)}
+article{min-width:0}
+article>section{padding-block:6px 30px;scroll-margin-top:calc(90px + env(safe-area-inset-top,0px))}
+h2{font-family:var(--font-display);font-weight:400;font-size:30px;letter-spacing:.6px;text-transform:uppercase;margin:6px 0 4px;line-height:1.1;text-wrap:balance}
+h3{font-size:16px;font-weight:800;margin:22px 0 8px}
+.lead{font-size:16px;color:var(--muted);margin:6px 0 16px;max-width:66ch}
+p{max-width:70ch;margin:8px 0}
+.kicker{font-size:11.5px;font-weight:800;letter-spacing:1.3px;text-transform:uppercase;color:var(--accent)}
+
+.hero{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:22px 24px;margin-bottom:8px}
+.hero h1{font-family:var(--font-display);font-weight:400;font-size:34px;letter-spacing:.7px;text-transform:uppercase;margin:4px 0 6px;line-height:1.05;text-wrap:balance}
+.hero p{color:var(--muted);margin:0}
+
+/* flujo */
+.flow{list-style:none;margin:14px 0 6px;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.flow li{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;position:relative;font-size:13.5px}
+.flow li b{display:block;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--accent);margin-bottom:4px}
+.flow li:not(:last-child)::after{content:"";position:absolute;right:-11px;top:50%;width:10px;height:10px;border-top:3px solid var(--orange);border-right:3px solid var(--orange);transform:translateY(-50%) rotate(45deg)}
+
+/* pasos */
+.steps{list-style:none;margin:14px 0;padding:0;display:flex;flex-direction:column;gap:12px;counter-reset:paso}
+.steps>li{counter-increment:paso;display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.steps>li::before{content:counter(paso);font-family:var(--font-display);font-size:34px;line-height:1;color:var(--orange);text-align:center;padding-top:2px}
+.steps>li>div{min-width:0}
+.steps strong.t{display:block;font-size:15.5px;margin-bottom:2px}
+.steps p{margin:4px 0}
+
+.note{border-radius:12px;padding:12px 16px;margin:14px 0;font-size:14px;max-width:70ch}
+.note.tip{background:var(--field);border:1px solid var(--line)}
+.note.warn{background:var(--warn-bg);color:var(--warn)}
+.note.bad{background:var(--bad-bg);color:var(--bad)}
+.note b{font-weight:800}
+.check{list-style:none;margin:10px 0;padding:0;display:grid;gap:8px}
+.check li{position:relative;padding-left:32px;max-width:70ch}
+.check li::before{content:"";position:absolute;left:0;top:4px;width:18px;height:18px;border:2px solid var(--orange);border-radius:5px;background:var(--bg)}
+
+.urlbox{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--code-bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0}
+.urlbox code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all;flex:1 1 260px;min-width:0}
+.btn{font:inherit;font-weight:800;font-size:13px;border:0;border-radius:9px;padding:9px 16px;min-height:40px;cursor:pointer;background:var(--navy);color:#fff;border-bottom:3px solid var(--orange)}
+.btn.ghost{background:transparent;color:var(--fg);border:1.5px solid var(--navy);border-bottom-width:1.5px}
+:root[data-theme="dark"] .btn.ghost{border-color:var(--line)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.ghost{border-color:var(--line)}}
+.msg{background:var(--field);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:10px 0;font-size:14px;white-space:pre-wrap;max-width:70ch}
+
+.tbl{overflow-x:auto;margin:12px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
+th{text-align:left;font-size:11.5px;letter-spacing:1px;text-transform:uppercase;background:var(--field);padding:9px 12px}
+td{padding:10px 12px;border-top:1px solid var(--line);vertical-align:top}
+.chip{display:inline-block;font-weight:800;font-size:11.5px;border-radius:999px;padding:2px 10px}
+.chip.p{background:var(--accent-soft);color:var(--warn)}.chip.f{background:var(--ok-bg);color:var(--ok)}.chip.n{background:var(--field);color:var(--muted)}
+
+details{background:var(--surface);border:1px solid var(--line);border-radius:12px;margin:8px 0;padding:0}
+summary{cursor:pointer;font-weight:700;padding:12px 16px;list-style:none;display:flex;gap:10px;align-items:center;justify-content:space-between;min-height:44px}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"";width:9px;height:9px;border-right:2.5px solid var(--orange);border-bottom:2.5px solid var(--orange);transform:rotate(45deg);flex:none;transition:transform .15s}
+details[open] summary::after{transform:rotate(-135deg)}
+details .body{padding:0 16px 14px;font-size:14px}
+details .body p{margin:6px 0}
+
+.share{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;background:var(--accent-soft);border-radius:14px;padding:14px 18px;margin:0 0 14px}
+.share p{margin:0;font-size:14px;color:var(--fg)}
+:root:not([data-theme="dark"]) .share p{color:#3a1b00}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .share p{color:var(--fg)}}
+.foot{border-top:1px solid var(--line);padding-block:18px 40px;color:var(--muted);font-size:13px}
+
+@media (max-width:820px){
+  .layout{grid-template-columns:minmax(0,1fr);gap:8px}
+  .toc{position:static}
+  .toc ul{flex-direction:row;flex-wrap:wrap;gap:6px}
+  .toc a{background:var(--field);padding:7px 12px}
+  .flow{grid-template-columns:minmax(0,1fr)}
+  .flow li:not(:last-child)::after{right:auto;left:50%;top:auto;bottom:-11px;transform:translateX(-50%) rotate(135deg)}
+  .top .wrap{flex-wrap:wrap;gap:8px 12px;padding-block:8px}
+  .top img{height:34px}
+  .brand{flex:1 1 0}
+  .brand b{font-size:19px}
+  .brand span{display:none}
+  .tabs{margin-left:0;width:100%}
+  .tab{flex:1;min-height:38px;padding:6px 12px}
+  h2{font-size:26px}.hero h1{font-size:28px}
+  .steps>li{grid-template-columns:32px minmax(0,1fr);padding:14px}
+  .steps>li::before{font-size:28px}
+}
+@media (prefers-reduced-motion:reduce){summary::after{transition:none}}
+
+.hero .small{font-size:13px;margin-top:8px}
+
+/* ====== pantallas de ejemplo: reproducen la interfaz real y no cambian con el tema ====== */
+:root{--m-navy:#05394B;--m-or:#F47721;--m-card:#F5FBFD;--m-field:#E5F4FB;--m-bd:#B9D8E8;--m-red:#920000;--m-ok:#1B6B3A;--m-mut:#3F6272}
+figure.shot{margin:14px 0 6px;max-width:640px}
+figure.shot.side{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;max-width:none}
+figure.shot.side figcaption{flex:1 1 200px;min-width:0;margin-top:0}
+.shots{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start}
+figure.shot:not(.side) .shots>.frame{flex:1 1 100%;min-width:0}
+.frame{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff;color:var(--m-navy);font-family:var(--font-body);font-size:12.5px;line-height:1.4;box-shadow:0 10px 28px rgba(5,57,75,.14)}
+.chrome{display:flex;align-items:center;gap:5px;background:#E3EAEE;padding:7px 10px}
+.chrome i{width:9px;height:9px;border-radius:50%;background:#B9C5CB;flex:none}
+.chrome .addr{margin-left:8px;flex:1;min-width:0;background:#fff;border-radius:99px;padding:3px 11px;font-size:11px;color:#4d5f68;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cap{display:block;font-size:11.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+figure.shot figcaption{margin-top:10px;font-size:13.5px;color:var(--fg)}
+.leg{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.leg li{display:flex;gap:9px;align-items:flex-start;max-width:62ch}
+.pin{display:inline-grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:var(--m-or);color:#1b1000;font:800 11px/1 var(--font-body);box-shadow:0 0 0 2px #fff}
+.leg .pin{box-shadow:none;margin-top:1px}
+.pt{position:relative}
+.pt>.pin{position:absolute;z-index:3}
+.pt>.pin.tl{top:-9px;left:-9px}.pt>.pin.tr{top:-9px;right:-9px}
+.pt>.pin.in{position:static;display:inline-grid;vertical-align:middle;margin-right:7px;box-shadow:none}
+.frame b,.phone b{font-weight:800}
+
+/* panel del ejecutivo */
+.p-top{background:var(--m-navy);color:#fff;padding:14px 16px}
+.p-top i{display:inline-block;width:22px;height:4px;background:var(--m-or);margin-bottom:6px;transform:skewX(-24deg)}
+.p-top b{display:block;font-size:15px}.p-top span{display:inline-block;font-size:12px;opacity:.92;margin-top:2px}
+.p-main{padding:14px 14px 16px;display:flex;flex-direction:column;gap:12px;background:#fff}
+.p-sec{background:var(--m-card);border:1px solid #D6E8F1;border-radius:10px;padding:12px 14px}
+.p-sec h4{margin:0 0 8px;font-size:12.5px;font-weight:800;text-transform:uppercase}
+.p-lab{display:block;font-weight:700;font-size:12px;margin-bottom:4px}
+.p-in{background:var(--m-field);border:1.5px solid var(--m-bd);border-radius:7px;padding:8px 10px;min-height:34px;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-in.ph{color:#6a8794}
+.p-btn{display:inline-block;background:var(--m-navy);color:#fff;font-weight:800;border-radius:7px;padding:8px 14px;border-bottom:3px solid var(--m-or);font-size:12.5px;white-space:nowrap}
+.p-btn.ghost{background:#fff;color:var(--m-navy);border:1.5px solid var(--m-navy)}
+.p-btn.sm{padding:5px 10px;font-size:11.5px}
+.p-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.p-row .g{flex:1;min-width:150px}
+.p-hint{font-size:11.5px;color:var(--m-mut);margin-top:5px}
+.p-ok{color:var(--m-ok);font-weight:800}
+.p-a{font-weight:700;text-decoration:underline;color:var(--m-navy)}
+.p-empty{color:var(--m-mut);padding:4px 0}
+.p-ol{margin:6px 0 10px;padding-left:20px;overflow-wrap:anywhere}.p-ol li{margin:3px 0;max-width:none}
+.p-res{margin-top:12px;border:1.5px solid var(--m-or);border-radius:10px;padding:12px;background:#fff}
+.p-url{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;background:var(--m-field);padding:8px;border-radius:7px;margin:8px 0;word-break:break-all}
+.p-res .acts{display:flex;gap:8px;flex-wrap:wrap}
+.p-scroll{overflow-x:auto}
+.shot .p-tbl{min-width:560px;width:100%;border-collapse:collapse;font-size:11px}
+.shot .p-tbl th{font-size:10px;letter-spacing:.3px;background:var(--m-field);color:var(--m-navy);padding:6px;text-align:left;text-transform:uppercase}
+.shot .p-tbl td{padding:6px;border-top:1px solid var(--m-bd);vertical-align:top}
+.p-chip{display:inline-block;font-weight:800;font-size:10.5px;border-radius:99px;padding:2px 9px}
+.p-chip.PENDIENTE{background:#FBCEAF;color:#7a3400}.p-chip.FIRMADA{background:#D6F0DE;color:var(--m-ok)}
+.p-chip.VENCIDA,.p-chip.CANCELADA{background:#E6E6E6;color:#444}
+
+/* Google Drive (referencial) */
+.g-split{display:flex;flex-wrap:wrap;gap:12px;padding:14px;background:#F1F3F4;font-family:Roboto,'Segoe UI',system-ui,sans-serif;color:#202124}
+.g-split.one{justify-content:center;padding:18px 14px}
+.g-pane{flex:1 1 200px;min-width:0;position:relative}
+.g-sidebar{padding:2px 0 8px}
+.g-newbtn{display:inline-block;background:#fff;border-radius:16px;padding:9px 18px;font-weight:500;box-shadow:0 1px 3px rgba(60,64,67,.3)}
+.g-menu{background:#fff;border-radius:8px;box-shadow:0 2px 10px rgba(60,64,67,.3);padding:6px 0;max-width:220px}
+.g-mi{display:flex;gap:10px;align-items:center;padding:8px 14px;font-size:13px}
+.g-mi.hl{background:#E8F0FE}
+.ic{flex:none}
+.g-dlg{background:#fff;border-radius:12px;box-shadow:0 4px 18px rgba(60,64,67,.35);padding:18px 18px 14px;width:100%;max-width:420px;font-size:13px}
+.g-dlg.sm{max-width:300px}
+.g-title{font-size:16px;margin-bottom:12px}
+.g-sub{font-size:12px;font-weight:500;margin:12px 0 4px}
+.g-input{border:1px solid #747775;border-radius:6px;padding:9px 10px;margin-bottom:10px}
+.g-chip{display:inline-block;background:#E8EAED;border-radius:14px;padding:3px 10px;font-size:12px;word-break:break-all}
+.g-role{display:inline-block;border:1px solid #747775;border-radius:6px;padding:6px 12px;margin-bottom:10px;font-weight:500}
+.g-chk{display:flex;gap:8px;align-items:center;margin:0 0 6px}
+.box{display:inline-grid;place-items:center;width:16px;height:16px;border:2px solid #5f6368;border-radius:3px;font-size:11px;line-height:1;color:#fff}
+.box.on{background:#1a73e8;border-color:#1a73e8}
+.g-actions{display:flex;gap:12px;align-items:center;justify-content:flex-end;margin-top:14px}
+.g-actions.sp{justify-content:space-between}
+.g-link{color:#1a73e8;font-weight:500}
+.g-primary{background:#1a73e8;color:#fff;border-radius:16px;padding:7px 18px;font-weight:500}
+.g-outline{border:1px solid #747775;color:#1a73e8;border-radius:16px;padding:6px 14px;font-weight:500}
+.g-person{display:flex;gap:10px;align-items:center;padding:5px 0}
+.g-person .av{width:28px;height:28px;border-radius:50%;background:#7e57c2;color:#fff;display:grid;place-items:center;font-size:12px;flex:none}
+.g-person .av.b{background:#1a73e8}.g-person .av.g{background:#E8EAED;font-size:13px}
+.g-person .nm{flex:1;min-width:0;word-break:break-all}.g-person small{color:#5f6368;font-size:11px}
+.g-person .rl{color:#5f6368;font-size:12px;white-space:nowrap}
+.g-list{background:#fff;font-family:Roboto,'Segoe UI',system-ui,sans-serif;color:#202124;font-size:12.5px;padding-bottom:8px}
+.g-crumb{padding:10px 14px;border-bottom:1px solid #E8EAED;color:#5f6368}
+.g-row{display:flex;gap:9px;align-items:center;padding:8px 14px;border-bottom:1px solid #F1F3F4;word-break:break-word}
+
+/* WhatsApp-like (genérico) */
+.phone{width:272px;max-width:100%;flex:none;border:7px solid #1d2a31;border-radius:30px;background:#fff;overflow:hidden;box-shadow:0 10px 28px rgba(5,57,75,.18);color:var(--m-navy);font-family:var(--font-body);font-size:11.5px;line-height:1.35}
+.island{height:18px;background:#fff;display:grid;place-items:center}.island i{width:64px;height:6px;border-radius:9px;background:#1d2a31}
+.chat-h{background:#075E54;color:#fff;padding:9px 12px;font-weight:600;font-size:12.5px}
+.chat-b{background:#ECE5DD;padding:14px 10px 40px;min-height:210px}
+.bubble{background:#DCF8C6;color:#1f2a2e;border-radius:10px 10px 2px 10px;padding:8px 10px;margin-left:22px;word-break:break-word;box-shadow:0 1px 1px rgba(0,0,0,.12)}
+.bubble u{color:#0b57d0}.bubble .hr{display:block;text-align:right;font-size:10px;color:#667781;margin-top:3px}
+.chat-f{display:flex;gap:8px;align-items:center;padding:8px;background:#F0F2F5}
+.chat-f .in{flex:1;background:#fff;border-radius:16px;padding:7px 12px;color:#667781}
+.chat-f .send{width:30px;height:30px;border-radius:50%;background:#075E54;color:#fff;display:grid;place-items:center;font-size:13px}
+
+/* formulario del cliente */
+.scr{padding:4px 9px 12px;display:flex;flex-direction:column;gap:8px;background:#fff}
+.c-hdr{background:var(--m-navy);border-radius:9px;padding:11px 12px;display:flex;flex-direction:column;gap:7px}
+.c-hdr img{width:auto;height:22px;align-self:flex-start}
+.c-hdr b{font-family:var(--font-display);font-weight:400;font-size:17px;line-height:1.05;text-transform:uppercase;color:#F58A3F;letter-spacing:.3px}
+.c-prog{border:1.5px solid var(--m-bd);border-radius:9px;padding:6px 10px;display:flex;gap:8px;align-items:center;font-weight:600;font-size:11px}
+.c-prog span{white-space:nowrap}.meter{flex:1;height:7px;border-radius:9px;background:var(--m-field);overflow:hidden}.meter b{display:block;height:100%;background:var(--m-or)}
+.c-note{display:block;background:#FBCEAF;border-radius:9px;padding:8px 10px;font-size:11px}
+.c-note.disc{background:var(--m-field);border:1.5px solid var(--m-or)}
+.c-sec{background:var(--m-card);border:1px solid #D6E8F1;border-radius:11px;padding:10px 9px 10px;display:flex;flex-direction:column;gap:9px}
+.c-sech{display:flex;align-items:center;margin-bottom:2px}
+.c-sech .num{font-family:var(--font-display);font-size:14px;line-height:1;color:#fff;background:var(--m-or);padding:7px 11px 7px 8px;clip-path:polygon(0 0,82% 0,100% 50%,82% 100%,0 100%);margin-right:-6px;position:relative;z-index:1}
+.c-sech .bar{background:var(--m-navy);color:#fff;border-radius:0 7px 7px 0;padding:6px 8px 6px 11px;font-size:9.5px;font-weight:800;text-transform:uppercase;line-height:1.2}
+.c-sech .bar em{display:block;font-style:italic;color:var(--m-or);font-size:9px}
+.c-grp{font-size:11px;font-weight:800;border-top:1px dashed var(--m-bd);padding-top:7px}
+.c-fld{display:flex;flex-direction:column;gap:3px}
+.c-fld .l{font-size:10.5px;font-weight:700}
+.c-in{background:var(--m-field);border:1.5px solid var(--m-bd);border-radius:7px;padding:7px 9px;min-height:30px;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.c-in.ph,.c-in.dim{color:#6a8794}.c-in.bad{border-color:var(--m-red)}
+.c-fld .e{font-size:10.5px;font-weight:700;color:var(--m-red)}
+.c-warn{background:#FBCEAF;border-radius:9px;padding:8px 10px;font-size:10.5px}.c-warn b{color:var(--m-red)}
+.c-ref{border:1.5px solid var(--m-bd);border-radius:10px;padding:9px;background:#fff;display:flex;flex-direction:column;gap:8px}
+.c-ref .rh{display:flex;align-items:center;color:#fff;font-weight:800;text-transform:uppercase;font-size:10px}
+.c-ref .n{font-family:var(--font-display);background:var(--m-or);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;position:relative;z-index:1;font-size:14px}
+.c-ref .t{background:var(--m-navy);padding:6px 10px 6px 18px;margin-left:-10px;border-radius:0 7px 7px 0;flex:1}
+.c-chip{align-self:flex-start;background:var(--m-field);border-radius:99px;padding:2px 9px;font-style:italic;font-weight:700;font-size:10px}
+.c-decl{display:flex;gap:9px}.c-decl .ico{width:36px;height:36px;border-radius:9px;background:var(--m-navy);color:#fff;display:grid;place-items:center;flex:none;font-size:17px}
+.c-decl b{font-size:13px;display:block;margin-bottom:2px}.c-decl .tx{font-size:10.5px}
+.c-chk{display:flex;gap:9px;align-items:center;border:1.5px solid var(--m-bd);background:var(--m-field);border-radius:9px;padding:9px 10px;font-size:11px}
+.c-chk .box{width:18px;height:18px;border-color:var(--m-or);background:var(--m-or)}
+.c-pad{position:relative;height:96px;border:1.5px solid var(--m-bd);border-radius:9px;background:#fff;overflow:hidden;padding:12px 10px 0}
+.c-pad .ln{position:absolute;left:12px;right:12px;bottom:22px;border-top:1.5px solid #9DB8C6}
+.c-tools{display:flex;justify-content:space-between;align-items:center}
+.c-lnk{font-size:11px;font-weight:700;text-decoration:underline;padding:3px 2px}
+.c-actions{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.c-btn{display:block;width:100%;text-align:center;background:var(--m-navy);color:#fff;font-weight:800;font-size:12.5px;border-bottom:4px solid var(--m-or);border-radius:9px;padding:10px 12px 8px}
+.c-btn.ghost{background:#fff;color:var(--m-navy);border:1.5px solid var(--m-navy);padding:9px 12px}
+.c-panel{background:var(--m-card);border:1px solid #D6E8F1;border-radius:12px;padding:14px 12px;display:flex;flex-direction:column;gap:10px}
+.c-panel .h{font-family:var(--font-display);font-size:25px;line-height:1.05;text-transform:uppercase;color:var(--m-or)}
+.c-panel .folio{display:inline-block;font-weight:800;font-size:17px;letter-spacing:.6px;margin-top:2px}
+@media (max-width:820px){.p-top b{font-size:14px}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <img src="logo.png" alt="MAXIRent Autos y Camionetas" width="124" height="44">
+    <div class="brand"><b>Ficha preliminar de renta</b><span>Guía para el cliente</span></div>
+  </div>
+</header>
+
+<main class="wrap">
+<div class="layout">
+  <nav class="toc" aria-label="Contenido de la guía">
+    <b>En esta guía</b>
+    <ul>
+      <li><a href="#c-que">Qué es</a></li>
+      <li><a href="#c-tenga">Tenga a la mano</a></li>
+      <li><a href="#c-paso">Paso a paso</a></li>
+      <li><a href="#c-despues">Después de firmar</a></li>
+      <li><a href="#c-preguntas">Preguntas frecuentes</a></li>
+    </ul>
+  </nav>
+  <article id="guia-cliente">
+    <div class="hero">
+      <span class="kicker">Guía del cliente · MAXIRent Autos y Camionetas</span>
+      <h1>Cómo completar su ficha preliminar de renta</h1>
+      <p>Gracias por elegir MAXIRent. Esta ficha nos permite iniciar su trámite de renta de vehículos. Se llena en línea y se firma en la pantalla, sin imprimir ni escanear nada.</p><p class="small">Las pantallas son ilustraciones con datos de ejemplo.</p>
+    </div>
+
+    <section id="c-que">
+      <h2>Qué es y qué recibirá</h2>
+      <p>Su ejecutivo de MAXIRent le envió un <b>enlace personal</b>. Al abrirlo verá la ficha preliminar de renta vehicular. Funciona en celular, tableta o computadora.</p>
+      <p>El enlace sirve <b>una sola vez</b> y tiene una fecha de vencimiento, que aparece en la parte superior de la ficha. Si no alcanza a terminarlo a tiempo, avise a su ejecutivo y le enviará otro.</p>
+    </section>
+
+    <section id="c-tenga">
+      <h2>Tenga a la mano</h2>
+      <p>Para llenarla de una sola vez, reúna esta información:</p>
+      <ul class="check">
+        <li><b>Datos de la empresa:</b> nombre completo o razón social, giro o actividad comercial, y ciudad y estado.</li>
+        <li><b>Cuatro contactos:</b> el contacto principal (solicitante), el representante legal, el jefe(a) o supervisor(a) del Departamento de Pagos y un contacto de pagos. De cada uno: nombre, teléfono y correo electrónico.</li>
+        <li><b>Dos referencias comerciales, únicamente proveedores:</b> empresas proveedoras activas y externas a su plantilla laboral. De cada una: nombre de la empresa, contacto, teléfono, correo y facturación mensual aproximada.</li>
+        <li><b>Quién firma:</b> el solicitante o el representante legal.</li>
+      </ul>
+    </section>
+
+    <section id="c-paso">
+      <h2>Paso a paso</h2>
+      <ol class="steps">
+        <li><div><strong class="t">Abra el enlace</strong>
+          <p>Toque o haga clic en el enlace que le envió su ejecutivo. Arriba verá su folio y la fecha de vencimiento.</p><figure class="shot side"><div class="shots"><div class="phone" aria-hidden="true"><div class="island"><i></i></div><div class="scr"><div class="c-hdr"><img data-logo alt="" height="22"><b>Ficha preliminar para renta vehicular</b></div><div class="c-prog pt"><span class="pin tl" aria-hidden="true">2</span><span>1 de 30 campos</span><div class="meter"><b style="width:3%"></b></div></div><div class="c-note pt"><span class="pin tl" aria-hidden="true">1</span>Ficha <b>FP-20261118-002</b> preparada por <b>Nombre del ejecutivo</b>. Este enlace sirve una sola vez y vence el <b>25 de noviembre de 2026</b>.</div><div class="c-sec"><div class="c-sech pt"><span class="num">01</span><span class="bar">Datos generales del solicitante</span></div><div class="c-fld pt"><span class="pin tr" aria-hidden="true">3</span><span class="l">Nombre completo o razón social</span><div class="c-in">Constructora Aldama SA de CV</div></div><div class="c-fld pt"><span class="l">Giro o actividad comercial</span><div class="c-in ph">&nbsp;</div></div></div></div></div></div><figcaption><span class="cap">Pantalla de ejemplo · al abrir el enlace</span><ol class="leg"><li><span class="pin">1</span><span>El folio, quién preparó la ficha y la fecha en que vence el enlace.</span></li><li><span class="pin">2</span><span>El contador de avance: indica cuántos campos lleva completos.</span></li><li><span class="pin">3</span><span>Su nombre o razón social ya viene escrito; sólo revíselo.</span></li></ol></figcaption></figure></div></li>
+        <li><div><strong class="t">Llene las tres secciones</strong>
+          <p>Datos generales, contactos de la empresa y referencias comerciales. Arriba hay un contador que muestra cuántos de los 30 campos lleva completos. Todos son obligatorios.</p><figure class="shot"><div class="shots"><div class="phone" aria-hidden="true"><div class="island"><i></i></div><div class="scr"><div class="c-prog pt"><span class="pin tl" aria-hidden="true">1</span><span>6 de 30 campos</span><div class="meter"><b style="width:20%"></b></div></div><div class="c-sec"><div class="c-sech pt"><span class="pin tl" aria-hidden="true">2</span><span class="num">01</span><span class="bar">Datos generales del solicitante</span></div><div class="c-fld pt"><span class="l">Giro o actividad comercial</span><div class="c-in">Construcción</div></div><div class="c-fld pt"><span class="l">Ciudad y estado</span><div class="c-in">Monterrey, Nuevo León</div></div></div><div class="c-sec"><div class="c-sech pt"><span class="num">02</span><span class="bar">Contactos de la empresa<em>(Obligatorios)</em></span></div><div class="c-grp">Contacto principal (Solicitante)</div><div class="c-fld pt"><span class="l">Nombre completo</span><div class="c-in dim">Nombre y apellidos</div></div><div class="c-fld pt"><span class="pin tr" aria-hidden="true">3</span><span class="l">Teléfono</span><div class="c-in bad">55 1234</div><span class="e">Escriba 10 dígitos, con lada.</span></div></div></div></div><div class="phone" aria-hidden="true"><div class="island"><i></i></div><div class="scr"><div class="c-prog pt"><span>24 de 30 campos</span><div class="meter"><b style="width:80%"></b></div></div><div class="c-sec"><div class="c-sech pt"><span class="pin tl" aria-hidden="true">4</span><span class="num">03</span><span class="bar">Referencias comerciales<em>(Únicamente proveedores)</em></span></div><div class="c-warn pt"><span class="pin tl" aria-hidden="true">5</span><b>Requisito obligatorio:</b> las referencias deben corresponder exclusivamente a <b>proveedores</b> comerciales activos.</div><div class="c-ref"><div class="rh"><span class="n">1</span><span class="t">Proveedor referencia 1</span></div><span class="c-chip">Relación comercial: Proveedor</span><div class="c-fld pt"><span class="l">Nombre de la empresa proveedora</span><div class="c-in">Aceros del Pacífico SA</div></div><div class="c-fld pt"><span class="l">Facturación mensual aprox.</span><div class="c-in">$ 85,000 MXN</div></div></div></div></div></div></div><figcaption><span class="cap">Pantalla de ejemplo · secciones 01 a 03</span><ol class="leg"><li><span class="pin">1</span><span>Cuántos de los 30 campos lleva completos.</span></li><li><span class="pin">2</span><span>Cada sección tiene su número (01, 02, 03) y todos los campos son obligatorios.</span></li><li><span class="pin">3</span><span>Si un dato está mal (aquí, un teléfono con menos de 10 dígitos) aparece un aviso en rojo junto al campo. Corríjalo y el aviso desaparece.</span></li><li><span class="pin">4</span><span><b>Referencias comerciales:</b> sólo proveedores.</span></li><li><span class="pin">5</span><span>Recuerde: empresas proveedoras activas y externas a su plantilla. La referencia 2 debe ser distinta a la 1.</span></li></ol></figcaption></figure></div></li>
+        <li><div><strong class="t">Lea y acepte la declaración de veracidad</strong>
+          <p>Márquela para confirmar que los datos son verídicos y que las referencias son proveedores comerciales externos.</p><figure class="shot side"><div class="shots"><div class="phone" aria-hidden="true"><div class="island"><i></i></div><div class="scr"><div class="c-sec"><div class="c-decl"><span class="ico">✎</span><div><b>Declaración de veracidad</b><div class="tx">Declaro bajo protesta de decir verdad que los datos proporcionados son verídicos, corresponden a contactos oficiales y que las referencias indicadas son proveedores comerciales externos a nuestra plantilla laboral.</div></div></div><div class="c-chk pt"><span class="pin tl" aria-hidden="true">1</span><span class="box on">✓</span><b>Acepto y hago esta declaración.</b></div></div></div></div></div><figcaption><span class="cap">Pantalla de ejemplo · declaración de veracidad</span><ol class="leg"><li><span class="pin">1</span><span>Marque la casilla para aceptar la declaración. Sin ella no se puede enviar.</span></li></ol></figcaption></figure></div></li>
+        <li><div><strong class="t">Escriba el nombre de quien firma y firme</strong>
+          <p>En el recuadro de firma, dibuje su firma con el dedo (en celular) o con el mouse. Si no le gusta, pulse <b>Borrar firma</b> y vuelva a hacerla.</p><figure class="shot side"><div class="shots"><div class="phone" aria-hidden="true"><div class="island"><i></i></div><div class="scr"><div class="c-sec"><div class="c-fld pt"><span class="pin tr" aria-hidden="true">1</span><span class="l">Nombre de quien firma (Solicitante o Rep. Legal)</span><div class="c-in">Nombre y apellidos de quien firma</div></div><div class="c-fld"><span class="l">Fecha de llenado</span><div class="c-in">18 de noviembre de 2026</div></div><div class="c-fld"><span class="l">Firma del Solicitante o Rep. Legal</span><div class="c-pad pt"><span class="pin tl" aria-hidden="true">2</span><svg viewBox="0 0 220 70" width="100%" height="70" preserveAspectRatio="none"><path d="M14 46 C 26 6, 40 10, 34 42 S 54 54, 64 24 S 86 6, 92 38 S 114 58, 128 22 C 136 6, 150 32, 142 44 S 172 46, 206 20" fill="none" stroke="#05394B" stroke-width="2.2" stroke-linecap="round"/></svg><i class="ln"></i></div><div class="c-tools"><span></span><span class="c-lnk pt"><span class="pin tr" aria-hidden="true">3</span>Borrar firma</span></div></div></div></div></div></div><figcaption><span class="cap">Pantalla de ejemplo · nombre y firma</span><ol class="leg"><li><span class="pin">1</span><span>Escriba el nombre de la persona que firma: el solicitante o el representante legal.</span></li><li><span class="pin">2</span><span>Dibuje la firma dentro del recuadro, con el dedo o el mouse. Mantenga el dedo apoyado mientras traza.</span></li><li><span class="pin">3</span><span>¿No le gustó? Pulse <b>Borrar firma</b> y vuelva a hacerla.</span></li></ol></figcaption></figure></div></li>
+        <li><div><strong class="t">Pulse «Guardar y descargar»</strong>
+          <p>Registraremos su ficha firmada y se descargará una copia en su dispositivo. Espere a ver el mensaje «Ficha recibida» con su folio.</p><figure class="shot"><div class="shots"><div class="phone" aria-hidden="true"><div class="island"><i></i></div><div class="scr"><div class="c-note disc"><div><b>Un último paso, con gusto.</b> Al presionar <b>«Guardar y descargar»</b> registraremos su ficha firmada y se descargará una copia en su dispositivo. …</div></div><div class="c-actions"><span class="c-btn pt"><span class="pin tl" aria-hidden="true">1</span>Guardar y descargar</span><span class="c-lnk">Borrar todo y empezar de nuevo</span></div></div></div><div class="phone" aria-hidden="true"><div class="island"><i></i></div><div class="scr"><div class="c-panel"><div class="h">Ficha recibida</div><div>Gracias. Su ficha quedó firmada y registrada. Nombre del ejecutivo, su ejecutivo de MAXIRent, la recibió y le dará seguimiento.</div><div>Folio de su ficha:<br><span class="folio pt"><span class="pin in" aria-hidden="true">2</span>FP-20261118-002</span></div><div class="c-note disc pt"><span class="pin tl" aria-hidden="true">3</span><div><b>Su documento ya se descargó</b> (revise la carpeta de Descargas de su dispositivo). Le pedimos amablemente que lo conserve y lo envíe junto con los demás documentos y requisitos.</div></div><div class="c-actions"><span class="c-btn pt"><span class="pin tl" aria-hidden="true">4</span>Descargar de nuevo mi ficha</span><span class="c-btn ghost">Copiar resumen</span></div></div></div></div></div><figcaption><span class="cap">Pantalla de ejemplo · enviar y descargar</span><ol class="leg"><li><span class="pin">1</span><span>Al terminar, pulse <b>Guardar y descargar</b> y espere unos segundos.</span></li><li><span class="pin">2</span><span>Aparece <b>Ficha recibida</b> con su <b>folio</b>. Anótelo.</span></li><li><span class="pin">3</span><span>Su copia ya se descargó. Búsquela en la carpeta de <b>Descargas</b> y envíela a su ejecutivo.</span></li><li><span class="pin">4</span><span>Si no la encuentra, pulse <b>Descargar de nuevo mi ficha</b>.</span></li></ol></figcaption></figure></div></li>
+      </ol>
+      <div class="note tip"><b>Si necesita pausar:</b> su avance se guarda en su dispositivo. Puede cerrar la página y continuar después con el mismo enlace, en el mismo navegador y equipo.</div>
+    </section>
+
+    <section id="c-despues">
+      <h2>Después de firmar</h2>
+      <p><b>Guarde el archivo que se descargó</b> (revise la carpeta de Descargas) y <b>envíelo a su ejecutivo junto con los demás documentos y requisitos</b> que le solicitó. Así podremos dar seguimiento a su trámite sin demoras.</p>
+      <p>Su ejecutivo ya recibió la ficha firmada en nuestro sistema. Anote su folio, que aparece en la pantalla de confirmación, por si necesita hacer referencia a ella.</p>
+    </section>
+
+    <section id="c-preguntas">
+      <h2>Preguntas frecuentes</h2>
+      <details><summary>No se descargó mi copia</summary><div class="body">
+        <p>En la pantalla de «Ficha recibida» pulse <b>Descargar de nuevo mi ficha</b>. Si ya cerró la página, avise a su ejecutivo y le compartirá el documento.</p></div></details>
+      <details><summary>El enlace dice que no es válido, que ya fue firmado o que venció</summary><div class="body">
+        <p>Cada enlace funciona una sola vez y por tiempo limitado. Pida un enlace nuevo a su ejecutivo.</p></div></details>
+      <details><summary>Me equivoqué después de enviar</summary><div class="body">
+        <p>Una ficha firmada no se puede modificar. Avise a su ejecutivo para que le envíe un enlace nuevo y llénela otra vez.</p></div></details>
+      <details><summary>No me deja firmar con el dedo</summary><div class="body">
+        <p>Mantenga el dedo sobre el recuadro mientras traza y evite desplazar la pantalla. Si no funciona, pruebe en una computadora con el mouse o actualice la página.</p></div></details>
+      <details><summary>Perdí lo que había escrito</summary><div class="body">
+        <p>Su avance se guarda sólo en el mismo dispositivo y navegador. Si abre el enlace desde otro equipo tendrá que capturar de nuevo.</p></div></details>
+      <details><summary>¿Con quién resuelvo una duda?</summary><div class="body">
+        <p>Con su ejecutivo de MAXIRent, que le dio el enlace.</p></div></details>
+    </section>
+  </article>
+</div>
+</main>
+
+<script>
+(function(){
+  /* El logotipo de las pantallas de ejemplo reutiliza el del encabezado. */
+  var logoSrc=document.querySelector('.top img').src;
+  document.querySelectorAll('img[data-logo]').forEach(function(i){i.src=logoSrc});
+  /* El índice desplaza la página con suavidad. */
+  document.querySelectorAll('.toc a').forEach(function(a){
+    a.addEventListener('click',function(ev){
+      var el=document.getElementById(a.getAttribute('href').slice(1));
+      if(!el) return;
+      ev.preventDefault();
+      el.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'});
+    });
+  });
+})();
+</script>
+</body>
+</html>

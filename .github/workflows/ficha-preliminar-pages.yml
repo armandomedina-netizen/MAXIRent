@@ -1,6 +1,7 @@
 name: Ficha preliminar - publicar formulario
 
-# Publica automations/ficha-preliminar-renta/index.html y logo.png en GitHub Pages.
+# Publica automations/ficha-preliminar-renta/index.html y logo.png en GitHub Pages, junto con la
+# guía pública del cliente (guia-cliente.html, que se sirve como /guia.html).
 # La dirección del receptor (despliegue público de Apps Script) se inyecta desde la
 # variable de repositorio FICHA_ENDPOINT; en el código versionado ENDPOINT queda vacío
 # (ver docs/decisions/0030). Sólo publica desde main.
@@ -10,6 +11,7 @@ on:
     paths:
       - automations/ficha-preliminar-renta/index.html
       - automations/ficha-preliminar-renta/logo.png
+      - automations/ficha-preliminar-renta/guia-cliente.html
       - .github/workflows/ficha-preliminar-pages.yml
   workflow_dispatch: {}
 
@@ -43,6 +45,7 @@ jobs:
           fi
           mkdir _site
           cp automations/ficha-preliminar-renta/index.html automations/ficha-preliminar-renta/logo.png _site/
+          cp automations/ficha-preliminar-renta/guia-cliente.html _site/guia.html
           printf 'User-agent: *\nDisallow: /\n' > _site/robots.txt
           touch _site/.nojekyll
           python3 - <<'PY'
