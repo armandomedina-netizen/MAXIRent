@@ -324,18 +324,17 @@ class HojaCreada:
 
 def test_si_la_pestana_no_existe_se_crea_con_los_encabezados():
     libro = LibroFalso()
-    hoja = m.resolver_pestana(libro, "2DAS Y 3RAS RENTAS")
-    assert libro.creadas[0][:3] == ("2DAS Y 3RAS RENTAS", 2000, 18)
+    hoja = m.resolver_pestana(libro, "2da y 3ra Renta")
+    assert libro.creadas[0][:3] == ("2da y 3ra Renta", 2000, 18)
     assert ("update", "A1:R1", [m.COLUMNAS], "RAW") in hoja.llamadas
     assert hoja.spreadsheet.peticiones                              # el formato se aplica al crearla
 
 
-def test_el_formato_de_la_hoja_sigue_el_de_las_demas_de_la_base():
+def test_el_formato_de_la_hoja_sigue_el_de_las_demas_del_tablero():
     hoja = HojaCreada()
     m.dar_formato_hoja(hoja)
     pedidos = hoja.spreadsheet.peticiones
     props = next(p["updateSheetProperties"] for p in pedidos if "updateSheetProperties" in p)
-    assert props["properties"]["tabColor"] == {"blue": 1}
     assert props["properties"]["gridProperties"] == {"frozenRowCount": 1, "hideGridlines": True}
     enc = next(p["repeatCell"] for p in pedidos if "repeatCell" in p and p["repeatCell"]["range"].get("endRowIndex") == 1)
     assert enc["cell"]["userEnteredFormat"]["textFormat"]["bold"] and enc["cell"]["userEnteredFormat"]["horizontalAlignment"] == "CENTER"
@@ -347,15 +346,15 @@ def test_el_formato_de_la_hoja_sigue_el_de_las_demas_de_la_base():
 
 
 def test_si_la_pestana_existe_no_se_crea_otra():
-    libro = LibroFalso(["2DAS Y 3RAS RENTAS"])
-    m.resolver_pestana(libro, "2DAS Y 3RAS RENTAS")
+    libro = LibroFalso(["2da y 3ra Renta"])
+    m.resolver_pestana(libro, "2da y 3ra Renta")
     assert libro.creadas == []
 
 
 def test_dry_run_no_crea_la_pestana(monkeypatch):
     monkeypatch.setenv("DRY_RUN", "1")
     libro = LibroFalso()
-    assert m.resolver_pestana(libro, "2DAS Y 3RAS RENTAS") is None and libro.creadas == []
+    assert m.resolver_pestana(libro, "2da y 3ra Renta") is None and libro.creadas == []
 
 
 def test_un_gid_que_no_existe_falla_sin_crear_nada():
@@ -366,6 +365,6 @@ def test_un_gid_que_no_existe_falla_sin_crear_nada():
 
 
 def test_nombre_de_pestana_por_defecto_y_por_secret(monkeypatch):
-    assert m._nombre_pestana() == "2DAS Y 3RAS RENTAS"
+    assert m._nombre_pestana() == "2da y 3ra Renta"
     monkeypatch.setenv("WORKSHEET_RENTAS_2_3_NAME", ' "Otra" ')
     assert m._nombre_pestana() == "Otra"

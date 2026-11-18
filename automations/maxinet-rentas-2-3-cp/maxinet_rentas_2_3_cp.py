@@ -1,6 +1,6 @@
 """
 Automatización diaria: login + lectura del reporte "2da - 3ra renta" (Corto Plazo) desde Maxinet vía requests
-(sin navegador) y refresco del bloque del mes en curso en una pestaña de la Sheet "Base" del Tablero CP.
+(sin navegador) y refresco del bloque del mes en curso en la pestaña "2da y 3ra Renta" del Tablero CP (copia).
 
 Endpoint confirmado a partir del JS real de Maxinet (cp-reporte-2-3-rentas.php -> DataTable ajax):
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
@@ -31,8 +31,8 @@ sin escribir (FORZAR=1 la omite).
 
 Variables de entorno (ver .env.example):
     MAXINET_BASE_URL, MAXINET_USER, MAXINET_PASS, GOOGLE_CREDS_PATH,
-    SPREADSHEET_ID_CLIENTES_NUEVOS (mismo Sheet "Base"),
-    WORKSHEET_RENTAS_2_3_NAME (nombre o gid de la pestaña; por defecto "2DAS Y 3RAS RENTAS"),
+    SPREADSHEET_ID_TABLERO_CP (Sheet del Tablero CP copia, el mismo de la Bitácora),
+    WORKSHEET_RENTAS_2_3_NAME (nombre o gid de la pestaña; por defecto "2da y 3ra Renta"),
     FECHA_DESDE, FECHA_HASTA, DRY_RUN, FORZAR (opcionales)
 """
 
@@ -105,7 +105,7 @@ TIPO_RENTA_AMBAS = "0"
 SIN_FILTRO_REGISTRO = "0"
 FILA_INICIO_DATOS = 2
 ULTIMA_COL = gspread.utils.rowcol_to_a1(1, len(COLUMNAS)).rstrip("1")      # "R"
-NOMBRE_PESTANA = "2DAS Y 3RAS RENTAS"
+NOMBRE_PESTANA = "2da y 3ra Renta"
 ZONA = ZoneInfo("America/Mexico_City")
 TIMEOUT_SEG = 600
 REINTENTOS = 3
@@ -278,14 +278,13 @@ def resolver_pestana(libro, referencia: str):
     ws = libro.add_worksheet(title=referencia, rows=2000, cols=len(COLUMNAS))
     ws.update(range_name=f"A1:{ULTIMA_COL}1", values=[COLUMNAS], value_input_option="RAW")
     dar_formato_hoja(ws)
-    log.info("La pestaña no existía: se creó con los %d encabezados y el formato de las demás hojas de la Base", len(COLUMNAS))
+    log.info("La pestaña no existía: se creó con los %d encabezados y el formato de las demás hojas de Maxinet del Tablero", len(COLUMNAS))
     return ws
 
 
-# Formato de las demás hojas de datos de la Base (el de BD ENTREGAS): pestaña azul, cuadrícula oculta, fila 1 fija con el
+# Formato de las demás hojas de datos de Maxinet del Tablero (el de BITACORA CP): cuadrícula oculta, fila 1 fija con el
 # encabezado en negritas sobre naranja y todo centrado en Calibri 11. Se aplica sólo cuando la pestaña se crea, para no
 # pisar los cambios que se le hagan después.
-COLOR_PESTANA = {"blue": 1}
 COLOR_ENCABEZADO = {"red": 1, "green": 0.6}
 ANCHOS = {"No. Cliente": 100, "Cliente": 300, "No.Rentas": 80, "No.Evento": 80, "Email": 260}
 ANCHO_POR_DEFECTO = 125
@@ -293,7 +292,7 @@ FUENTE = {"fontFamily": "Calibri", "fontSize": 11}
 
 
 def dar_formato_hoja(worksheet):
-    """Deja la pestaña con el formato de las demás hojas de datos de la Base."""
+    """Deja la pestaña con el formato de las demás hojas de datos de Maxinet del Tablero."""
     n = len(COLUMNAS)
     sid = worksheet.id
 
@@ -305,9 +304,8 @@ def dar_formato_hoja(worksheet):
 
     pedidos = [
         {"updateSheetProperties": {"properties": {
-            "sheetId": sid, "tabColor": COLOR_PESTANA,
-            "gridProperties": {"frozenRowCount": 1, "hideGridlines": True}},
-            "fields": "tabColor,gridProperties.frozenRowCount,gridProperties.hideGridlines"}},
+            "sheetId": sid, "gridProperties": {"frozenRowCount": 1, "hideGridlines": True}},
+            "fields": "gridProperties.frozenRowCount,gridProperties.hideGridlines"}},
         {"repeatCell": {"range": rango(0, 1), "cell": {"userEnteredFormat": {
             "backgroundColor": COLOR_ENCABEZADO, "horizontalAlignment": "CENTER", "verticalAlignment": "BOTTOM",
             "textFormat": {**FUENTE, "bold": True}}},
@@ -330,7 +328,7 @@ def dar_formato_hoja(worksheet):
 def conectar_sheet():
     creds = service_account.Credentials.from_service_account_file(
         os.environ["GOOGLE_CREDS_PATH"], scopes=["https://www.googleapis.com/auth/spreadsheets"])
-    sh = gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_CLIENTES_NUEVOS"])
+    sh = gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID_TABLERO_CP"])
     return resolver_pestana(sh, _nombre_pestana())
 
 

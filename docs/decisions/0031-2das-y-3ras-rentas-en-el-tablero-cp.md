@@ -1,4 +1,4 @@
-# 0031 - 2das y 3ras rentas en la Base CP
+# 0031 - 2das y 3ras rentas en el Tablero CP
 
 Fecha: 2026-11-18
 
@@ -19,11 +19,12 @@ actualización diaria y ventana de las 8:30.
   que muestra la página.
 - **Filtro de clientes registrados:** se deja sin filtro (`f_registro=0`), como se pidió; se revisará cuando se defina
   el criterio con el tablero.
-- **Destino:** pestaña `2DAS Y 3RAS RENTAS` del libro Base CP (el de `SPREADSHEET_ID_CLIENTES_NUEVOS`). Si no existe, la
-  automatización la crea con los 18 encabezados; los siguientes encabezados se verifican en cada corrida.
-- **Formato:** al crearla (y una vez en la pestaña existente) recibe el formato de las demás hojas de datos de la Base, el de
-  `BD ENTREGAS`: pestaña azul, cuadrícula oculta, fila 1 fija con encabezado en negritas sobre naranja, todo centrado en
-  Calibri 11 y fechas `yyyy-mm-dd`. No se vuelve a aplicar en cada corrida para no pisar cambios manuales.
+- **Destino:** pestaña `2da y 3ra Renta` del Tablero CP copia (`SPREADSHEET_ID_TABLERO_CP`, el mismo libro de la Bitácora y
+  del cierre diario); ya existía con los 18 encabezados. Si no existe, la automatización la crea; los encabezados se
+  verifican en cada corrida.
+- **Formato:** al crearla (y una vez en la pestaña existente) recibe el de `BITACORA CP`, la otra hoja de Maxinet del
+  Tablero: fila 1 fija con encabezado en negritas sobre naranja, cuadrícula oculta, todo centrado en Calibri 11 y fechas
+  `yyyy-mm-dd`. No se vuelve a aplicar en cada corrida para no pisar cambios manuales.
 - **Mes corriente:** de la misma forma que MKT Leads, se reemplaza el bloque del mes (del primer día a ayer, hora CDMX) y
   el mes anterior los primeros 3 días. El bloque se ubica por la **fecha del evento** (2da o 3ra según el No.Evento) y
   queda ordenado por (fecha del evento, No.Evento, No. Cliente). Los meses cerrados no se tocan.

@@ -41,6 +41,6 @@ jobs:
           MAXINET_USER: ${{ secrets.MAXINET_USER }}
           MAXINET_PASS: ${{ secrets.MAXINET_PASS }}
           GOOGLE_CREDS_PATH: ${{ github.workspace }}/automations/maxinet-rentas-2-3-cp/google-creds.json
-          SPREADSHEET_ID_CLIENTES_NUEVOS: ${{ secrets.SPREADSHEET_ID_CLIENTES_NUEVOS }}
+          SPREADSHEET_ID_TABLERO_CP: ${{ secrets.SPREADSHEET_ID_TABLERO_CP }}
           WORKSHEET_RENTAS_2_3_NAME: ${{ secrets.WORKSHEET_RENTAS_2_3_NAME }}
         run: python maxinet_rentas_2_3_cp.py
