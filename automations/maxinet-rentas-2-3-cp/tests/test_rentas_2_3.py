@@ -5,7 +5,7 @@ import gspread
 import pytest
 
 import maxinet_rentas_2_3_cp as m
-from tests.fakes import HojaFalsa, fila_hoja, fila_maxinet
+from tests.fakes import HojaFalsa, Libro, fila_hoja, fila_maxinet
 
 I = m.IDX
 
@@ -306,8 +306,11 @@ class LibroFalso:
 
 
 class HojaCreada:
+    id = 99
+
     def __init__(self):
         self.llamadas = []
+        self.spreadsheet = Libro()
 
     def update(self, range_name, values, value_input_option=None):
         self.llamadas.append(("update", range_name, values, value_input_option))
@@ -323,7 +326,24 @@ def test_si_la_pestana_no_existe_se_crea_con_los_encabezados():
     libro = LibroFalso()
     hoja = m.resolver_pestana(libro, "2DAS Y 3RAS RENTAS")
     assert libro.creadas[0][:3] == ("2DAS Y 3RAS RENTAS", 2000, 18)
-    assert ("update", "A1:R1", [m.COLUMNAS], "RAW") in hoja.llamadas and ("freeze", 1) in hoja.llamadas
+    assert ("update", "A1:R1", [m.COLUMNAS], "RAW") in hoja.llamadas
+    assert hoja.spreadsheet.peticiones                              # el formato se aplica al crearla
+
+
+def test_el_formato_de_la_hoja_sigue_el_de_las_demas_de_la_base():
+    hoja = HojaCreada()
+    m.dar_formato_hoja(hoja)
+    pedidos = hoja.spreadsheet.peticiones
+    props = next(p["updateSheetProperties"] for p in pedidos if "updateSheetProperties" in p)
+    assert props["properties"]["tabColor"] == {"blue": 1}
+    assert props["properties"]["gridProperties"] == {"frozenRowCount": 1, "hideGridlines": True}
+    enc = next(p["repeatCell"] for p in pedidos if "repeatCell" in p and p["repeatCell"]["range"].get("endRowIndex") == 1)
+    assert enc["cell"]["userEnteredFormat"]["textFormat"]["bold"] and enc["cell"]["userEnteredFormat"]["horizontalAlignment"] == "CENTER"
+    anchos = [p["updateDimensionProperties"] for p in pedidos if "updateDimensionProperties" in p]
+    assert len(anchos) == 18 and anchos[1]["properties"]["pixelSize"] == 300
+    fechas = sorted(p["repeatCell"]["range"]["startColumnIndex"] for p in pedidos
+                    if "repeatCell" in p and "numberFormat" in p["repeatCell"]["cell"]["userEnteredFormat"])
+    assert fechas == [4, 7, 10]
 
 
 def test_si_la_pestana_existe_no_se_crea_otra():

@@ -277,10 +277,54 @@ def resolver_pestana(libro, referencia: str):
         return None
     ws = libro.add_worksheet(title=referencia, rows=2000, cols=len(COLUMNAS))
     ws.update(range_name=f"A1:{ULTIMA_COL}1", values=[COLUMNAS], value_input_option="RAW")
-    ws.freeze(rows=1)
-    ws.format(f"A1:{ULTIMA_COL}1", {"textFormat": {"bold": True}})
-    log.info("La pestaña no existía: se creó con los %d encabezados", len(COLUMNAS))
+    dar_formato_hoja(ws)
+    log.info("La pestaña no existía: se creó con los %d encabezados y el formato de las demás hojas de la Base", len(COLUMNAS))
     return ws
+
+
+# Formato de las demás hojas de datos de la Base (el de BD ENTREGAS): pestaña azul, cuadrícula oculta, fila 1 fija con el
+# encabezado en negritas sobre naranja y todo centrado en Calibri 11. Se aplica sólo cuando la pestaña se crea, para no
+# pisar los cambios que se le hagan después.
+COLOR_PESTANA = {"blue": 1}
+COLOR_ENCABEZADO = {"red": 1, "green": 0.6}
+ANCHOS = {"No. Cliente": 100, "Cliente": 300, "No.Rentas": 80, "No.Evento": 80, "Email": 260}
+ANCHO_POR_DEFECTO = 125
+FUENTE = {"fontFamily": "Calibri", "fontSize": 11}
+
+
+def dar_formato_hoja(worksheet):
+    """Deja la pestaña con el formato de las demás hojas de datos de la Base."""
+    n = len(COLUMNAS)
+    sid = worksheet.id
+
+    def rango(fila_ini, fila_fin=None):
+        r = {"sheetId": sid, "startRowIndex": fila_ini, "startColumnIndex": 0, "endColumnIndex": n}
+        if fila_fin is not None:
+            r["endRowIndex"] = fila_fin
+        return r
+
+    pedidos = [
+        {"updateSheetProperties": {"properties": {
+            "sheetId": sid, "tabColor": COLOR_PESTANA,
+            "gridProperties": {"frozenRowCount": 1, "hideGridlines": True}},
+            "fields": "tabColor,gridProperties.frozenRowCount,gridProperties.hideGridlines"}},
+        {"repeatCell": {"range": rango(0, 1), "cell": {"userEnteredFormat": {
+            "backgroundColor": COLOR_ENCABEZADO, "horizontalAlignment": "CENTER", "verticalAlignment": "BOTTOM",
+            "textFormat": {**FUENTE, "bold": True}}},
+            "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}},
+        {"repeatCell": {"range": rango(1), "cell": {"userEnteredFormat": {
+            "horizontalAlignment": "CENTER", "verticalAlignment": "BOTTOM", "textFormat": FUENTE}},
+            "fields": "userEnteredFormat(horizontalAlignment,verticalAlignment,textFormat)"}},
+    ]
+    for j, nombre in enumerate(COLUMNAS):
+        pedidos.append({"updateDimensionProperties": {
+            "range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": j, "endIndex": j + 1},
+            "properties": {"pixelSize": ANCHOS.get(nombre, ANCHO_POR_DEFECTO)}, "fields": "pixelSize"}})
+    for j in FECHAS:
+        pedidos.append({"repeatCell": {"range": {**rango(1), "startColumnIndex": j, "endColumnIndex": j + 1},
+                                       "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE", "pattern": FORMATO_FECHA}}},
+                                       "fields": "userEnteredFormat.numberFormat"}})
+    worksheet.spreadsheet.batch_update({"requests": pedidos})
 
 
 def conectar_sheet():
