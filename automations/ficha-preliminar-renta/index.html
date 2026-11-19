@@ -142,6 +142,21 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
 .foot .bars{left:24px;top:0;bottom:0;width:80px}
 .foot .bars i:first-child{left:6px}.foot .bars i:last-child{left:44px}
 .foot .bars i{width:26px}
+/* guía de llenado: se abre sobre la ficha y no forma parte del documento que se genera */
+.hdr p.help{margin:12px 0 0;font-size:14px}
+.hdr .help button{font:inherit;font-weight:800;color:#fff;background:transparent;border:0;border-bottom:2px solid var(--orange);padding:2px 0;cursor:pointer}
+.prog .guide{font:inherit;font-size:12.5px;font-weight:800;color:var(--navy);background:var(--paper);border:1.5px solid var(--navy);border-radius:99px;padding:4px 12px;min-height:32px;cursor:pointer;white-space:nowrap}
+.hdr .help button:focus-visible,.prog .guide:focus-visible,.guia button:focus-visible,.guia a:focus-visible{outline:3px solid rgba(244,119,33,.8);outline-offset:2px}
+.guia{border:0;padding:0;width:min(980px,calc(100vw - 20px));height:min(92vh,880px);max-height:none;border-radius:16px;background:var(--paper);color:var(--navy);box-shadow:0 20px 60px rgba(5,57,75,.45);overflow:hidden}
+@supports(height:1dvh){.guia{height:min(92dvh,880px)}}
+.guia[open]{display:flex;flex-direction:column}
+.guia::backdrop{background:rgba(5,57,75,.62)}
+.guia .gbar{display:flex;align-items:center;gap:10px 14px;background:var(--navy);color:#fff;padding:10px 12px 10px 18px;border-bottom:3px solid var(--orange)}
+.guia .gbar b{flex:1;font-size:15px;font-weight:800;text-transform:uppercase;letter-spacing:.2px}
+.guia .gbar a{color:#fff;font-size:12.5px;font-weight:700}
+.guia .gbar button{font:inherit;font-size:13px;font-weight:800;color:var(--navy);background:var(--paper);border:0;border-radius:8px;padding:8px 16px;min-height:38px;cursor:pointer}
+@media(max-width:520px){.guia .gbar a{display:none}.guia .gbar b{font-size:14px}}
+.guia iframe{flex:1;width:100%;min-height:0;border:0;background:var(--paper);overscroll-behavior:contain}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -153,6 +168,7 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
     <div>
       <h1>Ficha preliminar para renta vehicular</h1>
       <p>Por favor complete la totalidad de la información requerida con datos legibles y actualizados.</p>
+      <p class="help">¿Es su primera vez? <button type="button" class="js-guia" aria-haspopup="dialog">Vea la guía paso a paso</button></p>
     </div>
     <div class="bars" aria-hidden="true"><i></i><i></i></div>
   </header>
@@ -161,6 +177,7 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
     <span id="progTxt">0 de 0 campos</span>
     <div class="meter"><b id="progBar"></b></div>
     <span class="draft" id="draftTxt"></span>
+    <button type="button" class="guide js-guia" aria-haspopup="dialog">Ver guía</button>
   </div>
 
   <div id="aviso"></div>
@@ -169,6 +186,15 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
 
   <footer class="foot" id="foot"><div class="bars" aria-hidden="true"><i></i><i></i></div>MAXIRent · Autos y Camionetas</footer>
 </div>
+
+<dialog class="guia" id="guiaDlg" aria-labelledby="guiaTit">
+  <div class="gbar">
+    <b id="guiaTit">Guía de llenado</b>
+    <a href="guia.html" target="_blank" rel="noopener">Abrir en otra pestaña</a>
+    <button type="button" id="guiaX">Cerrar</button>
+  </div>
+  <iframe id="guiaFr" title="Guía para llenar la ficha" data-src="guia.html?embed=1"></iframe>
+</dialog>
 
 <script>
 (function(){
@@ -591,6 +617,20 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
     btn.disabled=false;btn.textContent='Guardar y descargar';
     finish(ok,folio,summary(folio,cs),why,pdfOk);
   });
+
+  /* ---------- guía de llenado ----------
+     Se abre en una ventana sobre la ficha: la dirección no cambia (el enlace personal sigue intacto), no se pierde lo
+     escrito y no se toca el formulario. El documento descargable se arma sólo con los datos de los campos, así que la
+     guía no forma parte de él. */
+  var gdlg=$('#guiaDlg'),gfr=$('#guiaFr');
+  function abrirGuia(){
+    if(typeof gdlg.showModal!=='function'){window.open('guia.html','_blank','noopener');return}
+    if(!gfr.getAttribute('src'))gfr.setAttribute('src',gfr.getAttribute('data-src'));
+    gdlg.showModal();
+  }
+  [].forEach.call(document.querySelectorAll('.js-guia'),function(b){b.addEventListener('click',abrirGuia)});
+  $('#guiaX').addEventListener('click',function(){gdlg.close()});
+  gdlg.addEventListener('click',function(e){if(e.target===gdlg)gdlg.close()});
 
   /* ---------- verificación del enlace ---------- */
   var aviso=$('#aviso'),prog=$('.prog');
