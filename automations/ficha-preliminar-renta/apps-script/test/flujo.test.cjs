@@ -25,7 +25,8 @@ function mkFolder(name,parent){const id='fld'+String(state.nextId++).padStart(30
   createFile(b){return mkFile(b.name,f,b)}};folders[id]=f;if(parent)parent.kids.push(f);return f}
 function mkFile(name,folder,blob){const id='fil'+String(state.nextId++).padStart(30,'0');const F={id,name,folder,blob,
   getId:()=>id,getUrl:()=>'https://drive/files/'+id,setName(n){F.name=n;return F},
-  moveTo(t){F.folder.files=F.folder.files.filter(x=>x!==F);F.folder=t;t.files.push(F);return F},
+  moveTo(t){if(state.failMove)return F;F.folder.files=F.folder.files.filter(x=>x!==F);F.folder=t;t.files.push(F);return F},
+  getParents(){const a=[F.folder].filter(Boolean);let i=0;return{hasNext:()=>i<a.length,next:()=>a[i++]}},setTrashed(v){F.trashed=v;return F},
   getAs(m){return mkBlob(F.name+'.pdf',m)},getBlob:()=>F.blob||mkBlob(F.name,'image/png')};folder&&folder.files.push(F);files[id]=F;return F}
 function mkBlob(name,mime,bytes=[1,2,3]){const b={name,mime,getBytes:()=>bytes,setName(n){b.name=n;return b}};return b}
 const rootDrive=mkFolder('<mi unidad>',null);
@@ -67,7 +68,7 @@ const png='data:image/png;base64,'+Buffer.from('png').toString('base64');
 function campos(razon='ACME SA de CV'){const c=[];const add=(i,l,v)=>c.push([i,l,v]);
  add('s_nombre','Nombre completo o razón social',razon);add('s_giro','Giro','Transporte');add('s_ciudad','Ciudad','MTY');
  [['principal',['nombre','puesto','tel','mail']],['legal',['nombre','tel','movil','mail']],['supervisor',['nombre','tel','mail']],['pagos',['nombre','tel','mail']]].forEach(([r,fs])=>fs.forEach(f=>add('c_'+r+'_'+f,r+' – '+f,f==='tel'||f==='movil'?'8112345678':f==='mail'?'a@b.com':'Dato')));
- [1,2].forEach(n=>{add('r'+n+'_empresa','R'+n+' – Empresa','Prov '+n);add('r'+n+'_contacto','R'+n+' – Contacto','X');add('r'+n+'_tel','R'+n+' – Tel','8187654321');add('r'+n+'_fact','R'+n+' – Facturación',125000);add('r'+n+'_mail','R'+n+' – Correo','p@q.com')});
+ [1,2].forEach(n=>{add('r'+n+'_empresa','R'+n+' – Empresa','Prov '+n);add('r'+n+'_contacto','R'+n+' – Contacto','Xavier');add('r'+n+'_tel','R'+n+' – Tel','8187654321');add('r'+n+'_fact','R'+n+' – Facturación',125000);add('r'+n+'_mail','R'+n+' – Correo','p@q.com')});
  add('f_firmante','Firmante','Ana Cliente');return c}
 const payload=(token,over={})=>Object.assign({token,campos:campos(),firmante:'Ana Cliente',firma:png,fechaLlenado:'2026-11-10',tiempoMs:60000,web:''},over);
 const post=(p)=>JSON.parse(ctx.doPost({postData:{contents:JSON.stringify(p)}}).s);
@@ -78,7 +79,8 @@ state.email='owner@example.test';run('configurar()');
 assert(sheets.Ejecutivos&&sheets.Enlaces&&sheets.Fichas,'hojas');
 assert.strictEqual(sheets.Ejecutivos.grid[1][0],'owner@example.test');
 // el dueño da de alta a Ana y a Beto (Beto inactivo)
-sheets.Ejecutivos.grid.push(['ana@example.test','Ana Pérez','SI']);sheets.Ejecutivos.grid.push(['beto@example.test','Beto Ruiz','NO']);
+const anaBase=mkFolder('Fichas base Ana',rootDrive);anaBase.ownerEmail='ana@example.test';
+sheets.Ejecutivos.grid.push(['ana@example.test','Ana Pérez','SI',anaBase.id]);sheets.Ejecutivos.grid.push(['beto@example.test','Beto Ruiz','NO']);
 state.props.URL_FORMULARIO='https://fichas.example.test/index.html';
 // 2) ejecutivo autorizado crea enlace
 state.email='ana@example.test';
@@ -89,8 +91,7 @@ assert(/^FP-\d{8}-001$/.test(e1.folio));assert(/#t=[a-f0-9]{64}$/.test(e1.url));
 const token=e1.url.split('#t=')[1];
 const pend=Object.values(files).find(f=>f.name.startsWith(e1.folio));
 assert.strictEqual(pend.name,e1.folio+' - PENDIENTE DE FIRMA - Acme SA');
-assert.strictEqual(pend.folder.name,'Pendientes');assert.strictEqual(pend.folder.parent.name,'Ana Pérez (ana@example.test)');
-assert.deepStrictEqual(pend.folder.parent.viewers,['ana@example.test']);
+assert.strictEqual(pend.folder.name,'Pendientes');assert.strictEqual(pend.folder.parent,anaBase,'pendiente en la carpeta del ejecutivo');
 // 3) consulta del cliente
 let c=run(`consultarEnlace_('${token}')`);assert(c.ok&&c.ejecutivo==='Ana Pérez'&&c.cliente==='Acme SA');
 assert.strictEqual(run("consultarEnlace_('x')").estado,'INVALIDO');
@@ -99,9 +100,10 @@ assert.strictEqual(run(`consultarEnlace_('${'a'.repeat(64)}')`).estado,'INVALIDO
 let r=post(payload(token));console.log('firma:',r);assert.deepStrictEqual(r,{ok:true,folio:e1.folio,documento:true});
 const firmado=files[pend.id];
 assert.strictEqual(firmado.name,e1.folio+' - FIRMADA - ACME SA de CV - '+/\d{4}-\d{2}-\d{2}/.exec(firmado.name.slice(-10))[0]);
-assert.strictEqual(firmado.folder.name,'Firmadas');assert.strictEqual(firmado.folder.parent.name,'Ana Pérez (ana@example.test)');
+assert(/^ACME SA de CV - \d{4}-\d{2}-\d{2}$/.test(firmado.folder.name),'subcarpeta por cliente y fecha: '+firmado.folder.name);
+assert.strictEqual(firmado.folder.parent.name,'Firmadas');assert.strictEqual(firmado.folder.parent.parent,anaBase);
 const pdfs=Object.values(files).filter(f=>f.name.endsWith('.pdf'));
-assert.strictEqual(pdfs.length,2);assert(pdfs.map(p=>p.folder.name).sort().join()==='Firmadas,Historial');
+assert.strictEqual(pdfs.length,2);assert.deepStrictEqual(pdfs.map(p=>p.folder===firmado.folder?'cliente':p.folder.name).sort(),['Historial','cliente']);
 const enl=sheets.Enlaces.grid;const hdr=enl[0];const fila=enl[1];
 assert.strictEqual(fila[hdr.indexOf('Estado')],'FIRMADA');assert(fila[hdr.indexOf('PDF (enlace)')].includes('drive'));
 const fh=sheets.Fichas.grid[0],ff=sheets.Fichas.grid[1];
@@ -132,6 +134,9 @@ assert.strictEqual(post(payload(t4,{tiempoMs:3000})).ok,false);
 assert.strictEqual(post(payload('zzz')).ok,false);
 assert.strictEqual(post(payload(t4,{firma:'data:image/jpeg;base64,AA'})).ok,false);
 assert.strictEqual(post(payload(t4,{campos:campos().filter(c=>c[0]!=='s_nombre')})).ok,false);
+const cambia=(id,v)=>campos().map(c=>c[0]===id?[c[0],c[1],v]:c);
+['5281000000','8100000000','810000000','0000000000'].forEach(t=>assert.strictEqual(post(payload(t4,{campos:cambia('c_principal_tel',t)})).ok,false,'teléfono '+t));
+['.','..','-','123','x'].forEach(t=>assert.strictEqual(post(payload(t4,{campos:cambia('s_giro',t)})).ok,false,'texto '+t));
 assert.strictEqual(run(`consultarEnlace_('${t4}')`).ok,true,'los rechazos no queman el enlace');
 // 9) falla del documento: los datos se conservan y se puede regenerar
 state.failDocs=true;
@@ -145,7 +150,11 @@ assert(Object.values(files).some(f=>f.name.startsWith(e5.folio+' - FIRMADA - FAL
 
 // 11) carpeta propia en el Drive del ejecutivo
 state.email='ana@example.test';
+const filaAna=sheets.Ejecutivos.grid.find(f=>f[0]==='ana@example.test');filaAna[3]='';   // simula a un ejecutivo sin carpeta conectada
 assert.strictEqual(run('panelInicial()').carpeta.conectada,false);
+const filasAntes=sheets.Enlaces.grid.length;
+assert.throws(()=>run("crearEnlace('Sin carpeta SA')"),/conecte su carpeta/,'sin carpeta no se generan fichas');
+assert.strictEqual(sheets.Enlaces.grid.length,filasAntes,'no se crea fila ni archivo');
 assert.strictEqual(run('panelInicial()').carpeta.dueno,'owner@example.test');
 const suya=mkFolder('Fichas MAXIRent',rootDrive);suya.ownerEmail='ana@example.test';
 const ajena=mkFolder('De Beto',rootDrive);ajena.ownerEmail='beto@example.test';
@@ -162,15 +171,23 @@ const e6=run("crearEnlace('Directo SA')");const t6=e6.url.split('#t=')[1];
 const pend6=Object.values(files).find(f=>f.name.startsWith(e6.folio));
 assert.strictEqual(pend6.folder.parent,suya,'pendiente en su Drive');assert.strictEqual(pend6.folder.name,'Pendientes');
 r=post(payload(t6,{campos:campos('DIRECTO SA')}));assert.strictEqual(r.ok,true);
-assert.strictEqual(files[pend6.id].folder.parent,suya);assert.strictEqual(files[pend6.id].folder.name,'Firmadas');
+const sub6=files[pend6.id].folder;assert.strictEqual(sub6.parent.name,'Firmadas');assert.strictEqual(sub6.parent.parent,suya);assert(/^DIRECTO SA - \d{4}-\d{2}-\d{2}$/.test(sub6.name));
 assert(files[pend6.id].name.startsWith(e6.folder||e6.folio+' - FIRMADA - DIRECTO SA'));
 const pdfs6=Object.values(files).filter(f=>f.name.startsWith(e6.folio)&&f.name.endsWith('.pdf'));
-assert.deepStrictEqual(pdfs6.map(p=>p.folder.name+'@'+(p.folder.parent===suya?'suya':'otra')).sort(),['Firmadas@suya','Historial@otra'].sort());
-// si deja de compartir la carpeta, el servicio no se detiene: usa la carpeta compartida y el panel avisa
+assert.deepStrictEqual(pdfs6.map(p=>p.folder===sub6?'cliente@suya':p.folder.name+'@otra').sort(),['Historial@otra','cliente@suya']);
+// si Drive no deja mover el archivo, no queda suelto: se descarta y se avisa
+state.failMove=true;const nFil=sheets.Enlaces.grid.length;
+assert.throws(()=>run("crearEnlace('Suelto SA')"),/No se pudo guardar el documento/);
+assert.strictEqual(sheets.Enlaces.grid.length,nFil,'sin enlace si el archivo no quedó en la carpeta');
+assert(Object.values(files).some(f=>f.name.includes('Suelto SA')&&f.trashed),'el archivo huérfano va a la papelera');
+state.failMove=false;
+// si deja de compartir la carpeta: no puede generar fichas nuevas, pero la que ya envió se firma sin problema (respaldo)
+const e7=run("crearEnlace('Respaldo SA')");const t7=e7.url.split('#t=')[1];const pend7=Object.values(files).find(f=>f.name.startsWith(e7.folio));
 suya.noAccess=true;
-const e7=run("crearEnlace('Respaldo SA')");const pend7=Object.values(files).find(f=>f.name.startsWith(e7.folio));
-assert.strictEqual(pend7.folder.parent.name,'Ana Pérez (ana@example.test)');
+assert.throws(()=>run("crearEnlace('Otro SA')"),/conecte su carpeta/);
 assert.strictEqual(run('panelInicial()').carpeta.perdida,true);
+assert.strictEqual(post(payload(t7,{campos:campos('RESPALDO SA')})).ok,true);
+assert.strictEqual(files[pend7.id].folder.parent.parent.name,'Ana Pérez (ana@example.test)','respaldo en la carpeta compartida');
 console.log('carpeta propia OK');
 
 // 10) rutas

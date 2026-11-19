@@ -52,3 +52,5 @@ jobs:
 
       - name: Receptor de la ficha preliminar (servicios de Google simulados)
         run: node automations/ficha-preliminar-renta/apps-script/test/flujo.test.cjs
+      - name: Ficha preliminar - validación del formulario
+        run: node automations/ficha-preliminar-renta/apps-script/test/validacion.test.cjs

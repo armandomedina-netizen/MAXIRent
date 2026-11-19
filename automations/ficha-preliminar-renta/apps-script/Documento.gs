@@ -59,6 +59,31 @@ function carpetasEjecutivo_(ej) {
   return { propia: propia, pendientes: carpeta_(propia, 'Pendientes'), firmadas: carpeta_(propia, 'Firmadas'), enSuDrive: false };
 }
 
+/** El archivo está dentro de la carpeta indicada (no sólo "movido": se comprueba en Drive). */
+function estaEn_(archivo, carpeta) {
+  var it = archivo.getParents(), id = carpeta.getId();
+  while (it.hasNext()) { if (it.next().getId() === id) return true; }
+  return false;
+}
+
+/**
+ * Mueve el archivo a la carpeta y verifica que quedó ahí, para no dejar archivos sueltos en el Drive de nadie.
+ * Si no se logra tras dos intentos: con descartar=true (archivo recién creado) lo manda a la papelera y avisa.
+ */
+function moverVerificado_(archivo, carpeta, descartar) {
+  for (var intento = 0; intento < 2; intento++) {
+    try { archivo.moveTo(carpeta); } catch (e) { console.error('No se pudo mover el archivo: ' + e.message); }
+    if (estaEn_(archivo, carpeta)) return archivo;
+  }
+  if (descartar) { try { archivo.setTrashed(true); } catch (_) {} }
+  throw new Error('No se pudo guardar el documento en la carpeta del ejecutivo. Revise que la carpeta siga compartida como Editor con ' + correoDueno_() + '.');
+}
+
+/** Subcarpeta de un cliente dentro de Firmadas: «<razón social> - <fecha de firma>». Ahí va todo lo de esa firma. */
+function subcarpetaCliente_(firmadas, razon, fechaDia) {
+  return carpeta_(firmadas, (nombreSeguro_(razon).slice(0, 80) || 'Cliente') + ' - ' + fechaDia);
+}
+
 function nombreSeguro_(s) {
   return String(s).replace(/[\\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 90);
 }
@@ -106,7 +131,7 @@ function crearDocumentoPendiente_(ej, folio, cliente, vence) {
   cerrarEstilo_(body, titulo);
   doc.saveAndClose();
   var archivo = DriveApp.getFileById(doc.getId());
-  archivo.moveTo(carpetas.pendientes);
+  moverVerificado_(archivo, carpetas.pendientes, true);
   return { id: doc.getId(), url: archivo.getUrl() };
 }
 
@@ -127,13 +152,15 @@ function generarDocumentoFirmado_(enlace, p, fecha) {
 
   var razon = '';
   p.campos.forEach(function (c) { if (c[0] === 's_nombre') razon = String(c[2]); });
-  var nombre = nombreArchivo_(enlace['Folio'], 'FIRMADA', razon, formato_(fecha, 'yyyy-MM-dd'));
+  var dia = formato_(fecha, 'yyyy-MM-dd');
+  var nombre = nombreArchivo_(enlace['Folio'], 'FIRMADA', razon, dia);
   var archivo = DriveApp.getFileById(doc.getId());
   archivo.setName(nombre);
-  archivo.moveTo(carpetas.firmadas);
+  var delCliente = subcarpetaCliente_(carpetas.firmadas, razon || enlace['Cliente'], dia);
+  moverVerificado_(archivo, delCliente, false);
 
   var pdf = archivo.getAs('application/pdf').setName(nombre + '.pdf');
-  var pdfEjecutivo = carpetas.firmadas.createFile(pdf);
+  var pdfEjecutivo = delCliente.createFile(pdf);
   carpeta_(carpetaRaiz_(), 'Historial').createFile(pdf);
   actualizarIdDocumento_(enlace, doc.getId());
   return { docUrl: archivo.getUrl(), pdfUrl: pdfEjecutivo.getUrl() };

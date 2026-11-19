@@ -106,15 +106,16 @@ ol{margin:6px 0 10px;padding-left:20px}ol li{margin:3px 0}
   function msg(t,bad){var m=$('#msg');m.textContent=t||'';m.className='msg'+(bad?' bad':'')}
   function pintarCarpeta(c){
     var el=$('#carpeta');el.textContent='';
+    $('#crear').disabled=!c.conectada;$('#cliente').disabled=!c.conectada;   // sin carpeta conectada no se generan fichas
     function p(txt,cls){var d=document.createElement('div');if(cls)d.className=cls;d.textContent=txt;el.appendChild(d);return d}
     if(c.conectada){
       p('Conectada: sus fichas se guardan directo en su Drive.','ok');
       var a=document.createElement('a');a.href=c.url;a.target='_blank';a.rel='noopener';a.textContent='Abrir mi carpeta';
       var d=document.createElement('div');d.className='hint';d.appendChild(a);el.appendChild(d);
-      p('Dentro encontrará Pendientes (esperando firma) y Firmadas (documento y PDF).','hint');
+      p('Dentro encontrará Pendientes (esperando firma) y Firmadas, con una carpeta por cliente y fecha de firma que contiene su documento y su PDF.','hint');
       return;
     }
-    p(c.perdida?'Su carpeta ya no es accesible. Conéctela de nuevo; mientras tanto sus fichas se guardan en una carpeta compartida con usted.':'Todavía no conecta su carpeta. Mientras tanto, sus fichas se guardan en una carpeta compartida con usted (sólo lectura).');
+    p(c.perdida?'Su carpeta ya no es accesible, por eso no puede generar fichas nuevas. Conéctela de nuevo (las fichas que ya envió se firmarán sin problema).':'Para generar fichas primero conecte su carpeta de Drive: ahí se guardarán las fichas de sus clientes.','msg bad');
     var ol=document.createElement('ol');
     ['En su Drive, cree una carpeta (por ejemplo "Fichas MAXIRent").','Compártala como Editor con '+c.dueno+'.','Pegue aquí el enlace de la carpeta y pulse Conectar.'].forEach(function(t){var li=document.createElement('li');li.textContent=t;ol.appendChild(li)});
     el.appendChild(ol);

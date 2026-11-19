@@ -15,7 +15,7 @@ Puesta en marcha detallada, con el nombre de cada código: **[GUIA_PASO_A_PASO.m
 2. **Comparte el enlace** (botón de WhatsApp o copiar). Sirve una sola vez y vence a los 7 días.
 3. **El cliente** abre el enlace, ve la ficha preparada por su ejecutivo, la llena y firma. Antes del botón **Guardar y descargar** ve un aviso amable que le pide conservar el archivo y enviarlo con los demás requisitos; al pulsarlo, su ficha se registra y se descarga una copia en PDF, generada en su propio navegador.
 4. **Al firmar**, el mismo documento se completa con los datos y la firma, se renombra a
-   `FP-AAAAMMDD-NNN - FIRMADA - Razón social - AAAA-MM-DD`, pasa a la carpeta `Firmadas` del
+   `FP-AAAAMMDD-NNN - FIRMADA - Razón social - AAAA-MM-DD`, pasa a una subcarpeta `Razón social - AAAA-MM-DD` dentro de `Firmadas` del
    ejecutivo y se guarda su PDF ahí y en `Historial`. El ejecutivo recibe un correo.
 
 ### Reglas del receptor
@@ -25,7 +25,7 @@ Puesta en marcha detallada, con el nombre de cada código: **[GUIA_PASO_A_PASO.m
 | Sólo ejecutivos autorizados | Quien genera enlaces debe estar en la hoja `Ejecutivos` con `Activo` distinto de `NO`. Se identifica por su correo de la organización. |
 | Un enlace, una firma | El enlace se marca `FIRMADA` antes de generar nada; un segundo intento se rechaza. Estados: `PENDIENTE`, `FIRMADA`, `VENCIDA`, `CANCELADA`. |
 | Vigencia | 7 días; se cambia con la propiedad `DIAS_VIGENCIA` (1 a 90). |
-| El archivo llega a su Drive | Cada ejecutivo conecta una carpeta propia desde el panel (una vez). Dentro se crean `Pendientes` y `Firmadas`. Sin carpeta conectada, o si deja de compartirla, se usa `Ejecutivos/<Nombre (correo)>/` en la raíz del servicio, compartida con él en modo lectura; el servicio no se detiene. |
+| El archivo llega a su Drive | Cada ejecutivo conecta una carpeta propia desde el panel (una vez); **sin ella no puede generar fichas**. Dentro se crean `Pendientes` y `Firmadas`; al firmar, todo lo de ese cliente va a una subcarpeta `Razón social - AAAA-MM-DD` dentro de `Firmadas`. Tras cada movimiento se comprueba en Drive que el archivo quedó en su carpeta; si no, se descarta y se avisa. Si el ejecutivo deja de compartir la carpeta, no puede generar fichas nuevas, pero las que ya envió se firman con normalidad y se guardan en `Ejecutivos/<nombre>` de la carpeta raíz del servicio. |
 | Cambio de nombre | El mismo archivo pasa de `PENDIENTE DE FIRMA` a `FIRMADA` (o `VENCIDA`, `CANCELADA`) con folio, razón social y fecha. |
 | Histórico | `Historial/` guarda el PDF de toda ficha firmada. `Fichas` (hoja) guarda cada respuesta en columnas y como JSON. |
 | Sin pérdida de datos | Si falla la generación del documento, la ficha ya quedó en la hoja; se rehace con `regenerarDocumento('FP-...')`. |
@@ -38,7 +38,7 @@ Puesta en marcha detallada, con el nombre de cada código: **[GUIA_PASO_A_PASO.m
 | `index.html` | El formulario del cliente. Lee su enlace de `#t=...`, lo verifica, envía la firma y descarga la copia en PDF del cliente. Incluye el botón «Ver guía», que abre la guía del cliente en una ventana sobre la ficha (sin cambiar la dirección ni perder lo escrito); la guía no forma parte del documento, que se arma sólo con los datos de los campos. |
 | `guia-cliente.html` | Guía pública para el cliente, con pantallas de ejemplo (datos ficticios). Se publica en Pages como `/guia.html`, junto al formulario (con `?embed=1` se muestra sin encabezado, como la usa la ventana del formulario); el ejecutivo puede enviar su dirección con el enlace de la ficha. No contiene direcciones ni datos internos. |
 | `logo.png` | Logotipo para fondo azul tomado del manual de marca (pág. 15), con fondo transparente. Se publica junto a `index.html`. |
-| `apps-script/Code.gs` (`1-Recepcion`) | Rutas web, recepción de la firma y validaciones. |
+| `apps-script/Code.gs` (`1-Recepcion`) | Rutas web, recepción de la firma y validaciones. Repite en el servidor los teléfonos reales y los textos sin puntos ni relleno. |
 | `apps-script/Enlaces.gs` (`2-Enlaces`) | Ejecutivos, creación, consulta y cancelación de enlaces. |
 | `apps-script/Documento.gs` (`3-Documento`) | Carpetas de Drive, documento pendiente y firmado, renombrado y PDF. |
 | `apps-script/Setup.gs` (`4-Instalacion`) | `configurar()`, `autoprueba()` y `regenerarDocumento()`. |
@@ -47,6 +47,7 @@ Puesta en marcha detallada, con el nombre de cada código: **[GUIA_PASO_A_PASO.m
 | `apps-script/Logo.gs` (`5-Logotipo`) | Logotipo en base64 para el documento. Se regenera desde `logo.png`. |
 | `apps-script/appsscript.json` | Manifiesto (zona horaria America/Mexico_City, V8). |
 | `apps-script/test/flujo.test.cjs` | Prueba del flujo completo con Google simulado: `node apps-script/test/flujo.test.cjs`. |
+| `apps-script/test/validacion.test.cjs` | Reglas de validación del formulario (teléfonos, textos de relleno, correos y datos repetidos), extraídas de `index.html`: `node apps-script/test/validacion.test.cjs`. |
 
 Colores del formulario: valores RGB del PDF original (azul `#05394B`, naranja `#F47721`,
 título `#EE8022`, claro `#F9A05E`, tarjetas `#F5FBFD`, campos `#E5F4FB`, aviso `#FBCEAF`,
