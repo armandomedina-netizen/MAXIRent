@@ -74,7 +74,7 @@ function autoprueba() {
   var fila = fichasDe_(ej.correo).filter(function (f) { return f.folio === enlace.folio; })[0];
   console.log('Documento firmado: ' + fila.documento);
   console.log('PDF firmado: ' + fila.pdf);
-  console.log('Revise Drive: Ejecutivos > su carpeta > Firmadas. Después borre la ficha de prueba (filas de Enlaces y Fichas y los archivos).');
+  console.log('Revise Drive: su carpeta > Firmadas > «cliente - fecha» (requiere haber conectado su carpeta en el panel). Después borre la ficha de prueba (filas de Enlaces y Fichas y los archivos).');
 }
 
 function recibirFichaRepetida_(token, campos, png) {

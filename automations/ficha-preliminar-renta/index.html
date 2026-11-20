@@ -282,26 +282,111 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
   var dateLong=today.toLocaleDateString('es-MX',{day:'numeric',month:'long',year:'numeric'});
   $('#dateView').textContent=dateLong;
 
-  /* ---------- validación ---------- */
+  /* ---------- validación ----------
+     Las reglas puras (sin DOM) van entre las marcas @validacion para poder probarlas con Node
+     (apps-script/test/validacion.test.cjs). El servidor repite las más importantes en Code.gs. */
+  /* @validacion-inicio */
   function digits(v){return String(v).replace(/\D+/g,'')}
-  function tel10(v){var d=digits(v);if(d.length===12&&d.indexOf('52')===0)d=d.slice(2);return d}
+  /* Teléfono a 10 dígitos (lada + número). Acepta +52, 52, 521, 044/045, 01 y 0052 al inicio. */
+  function tel10(v){
+    var d=digits(v);
+    if(d.indexOf('00')===0&&d.length>10)d=d.slice(2);
+    if(d.length>10&&d.indexOf('52')===0){d=d.slice(2);if(d.length===11&&d.charAt(0)==='1')d=d.slice(1)}
+    else if(d.length===13&&/^04[45]/.test(d))d=d.slice(3);
+    else if(d.length===12&&d.indexOf('01')===0)d=d.slice(2);
+    return d;
+  }
   function fmtTel(v){var d=tel10(v);return d.length===10?(d.slice(0,2)+' '+d.slice(2,6)+' '+d.slice(6)):v}
   function fmtMoney(v){var d=digits(v);return d?Number(d).toLocaleString('es-MX'):''}
+  function telErr(v){
+    var d=tel10(v);
+    if(d.length!==10){
+      if(d.length>=7&&d.length<=9)return 'Falta un dígito o la lada: escriba 10 dígitos (lada + número), por ejemplo 81 1234 5678.';
+      if(d.length>10)return 'Sobran dígitos. Escriba sólo la lada y el número (10 dígitos); no incluya extensión.';
+      return 'Escriba 10 dígitos, con lada. Por ejemplo 81 1234 5678.';
+    }
+    if(d.indexOf('52')===0)return '52 es el código de México, no una lada. Escriba la lada de su ciudad y el número (10 dígitos).';
+    if(/^[01]/.test(d))return 'La lada no puede empezar con 0 ni con 1.';
+    if(/^(\d)\1{9}$/.test(d)||'01234567890'.indexOf(d)>=0||'98765432109'.indexOf(d)>=0)return 'Escriba un teléfono real, no un número de relleno.';
+    var cola=d.slice(2),rep={};cola.split('').forEach(function(c){rep[c]=(rep[c]||0)+1});
+    for(var k in rep)if(rep[k]>=7)return 'Ese número parece de relleno. Escriba un teléfono real.';
+    return '';
+  }
+  var BASURA=['na','n a','no aplica','ninguno','ninguna','nada','sin dato','sin datos','sin nombre','no tiene','no hay','no se','xxx','asdf','asd','qwerty','test'];
+  function sinAcentos(t){return String(t).normalize('NFD').replace(/[̀-ͯ]/g,'')}
+  /* Texto de nombres, giros y ciudades: con letras, sin puntos ni signos de relleno. */
+  function textoErr(v){
+    v=String(v).trim();
+    if(!v)return 'Este campo es obligatorio.';
+    var letras=(v.match(/\p{L}/gu)||[]).length;
+    if(!letras)return 'Escriba la información real: no se aceptan sólo puntos, signos ni números.';
+    if(letras<2||v.length<2)return 'Escriba al menos 2 letras.';
+    var lim=sinAcentos(v).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    if(BASURA.indexOf(lim)>=0||/^(.)\1{2,}$/.test(lim.replace(/ /g,'')))return 'Escriba la información real; no se acepta «'+v+'».';
+    return '';
+  }
+  var DOM_FALSOS=/@(example\.(com|org|net)|ejemplo\.com|test\.com|prueba\.com|correo\.com|email\.com|dominio\.com|xxx\.com|no\.com|na\.com)$/i;
+  function mailErr(v){
+    v=String(v).trim();
+    if(!v)return 'Este campo es obligatorio.';
+    if(!/^[^\s@.]+(\.[^\s@.]+)*@([a-z0-9-]+\.)+[a-z]{2,}$/i.test(v))return 'Escriba un correo válido, como nombre@empresa.com.';
+    if(DOM_FALSOS.test(v)||/^(x+|a+|no|na)@/i.test(v))return 'Escriba el correo real de la persona.';
+    return '';
+  }
+  /* Datos repetidos entre personas distintas. 'personas' = [{id,etq,nombre,tels:[ids],mail:id,externo:bool}],
+     'val' = {id: valor tal como se escribió}. Devuelve {id_del_campo: mensaje}. Una misma persona (mismo nombre)
+     puede figurar en dos roles; los proveedores de referencia nunca pueden repetir datos de la empresa. */
+  function repetidos(personas,val){
+    var out={},vistos={};
+    function norm(t){return sinAcentos(String(t||'')).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()}
+    personas.forEach(function(p){
+      var nom=norm(val[p.nombre]);
+      var claves=[];
+      p.tels.forEach(function(id){var d=tel10(val[id]||'');if(d.length===10)claves.push({id:id,k:'t'+d,t:'teléfono'})});
+      var m=String(val[p.mail]||'').trim().toLowerCase();if(m&&m.indexOf('@')>0)claves.push({id:p.mail,k:'m'+m,t:'correo'});
+      claves.forEach(function(c){
+        var prev=vistos[c.k];
+        if(prev&&prev.p!==p){
+          var mismaPersona=nom&&nom===prev.nom&&!p.externo&&!prev.externo;
+          if(!mismaPersona)out[c.id]='Este '+c.t+' ya se usó en «'+prev.p.etq+'». Escriba el de esta persona'+(p.externo||prev.externo?' (los proveedores deben ser externos a su empresa)':'')+'.';
+        }else if(!prev)vistos[c.k]={p:p,nom:nom,id:c.id};
+      });
+    });
+    return out;
+  }
+  /* @validacion-fin */
   function check(el){
     var t=el.getAttribute('data-t'),v=el.value.trim();
     if(!v)return 'Este campo es obligatorio.';
-    if(t==='tel'&&tel10(v).length!==10)return 'Escriba 10 dígitos, con lada.';
-    if(t==='email'&&!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v))return 'Escriba un correo válido, como nombre@empresa.com.';
+    if(t==='tel')return telErr(v);
+    if(t==='email')return mailErr(v);
     if(t==='money'&&!(Number(digits(v))>0))return 'Escriba un monto mayor a cero.';
-    if(t==='text'&&v.length<2)return 'Escriba al menos 2 caracteres.';
+    if(t==='text')return textoErr(v);
     return '';
   }
+  /* Personas de la ficha para detectar datos repetidos (ids tal como los arma fld()). */
+  var PERSONAS=CONTACTS.map(function(c){
+    return {id:c.id,etq:c.title,nombre:'c_'+c.id+'_nombre',externo:false,
+      tels:c.f.filter(function(x){return x[2]==='tel'}).map(function(x){return 'c_'+c.id+'_'+x[0]}),mail:'c_'+c.id+'_mail'};
+  }).concat(REFS.map(function(n){return {id:'r'+n,etq:'Proveedor referencia '+n,nombre:'r'+n+'_contacto',externo:true,tels:['r'+n+'_tel'],mail:'r'+n+'_mail'}}));
+  function valores(){var o={};inputs.forEach(function(i){o[i.id]=i.value});return o}
+  function dupMsg(el){return repetidos(PERSONAS,valores())[el.id]||''}
   function show(el,msg){
     el.closest('.fld').classList.toggle('bad',!!msg);
     $('#'+el.id+'-e').textContent=msg;
     if(msg)el.setAttribute('aria-invalid','true');else el.removeAttribute('aria-invalid');
   }
   var inputs=[].slice.call(form.querySelectorAll('[data-f]'));
+  /* Al corregir un dato, se quitan o se ponen los avisos de repetido en los demás campos de teléfono y correo. */
+  function revisarRepetidos(el){
+    if(!/(_tel|_movil|_mail)$/.test(el.id))return;
+    var dup=repetidos(PERSONAS,valores());
+    inputs.forEach(function(i){
+      if(i===el||!/(_tel|_movil|_mail)$/.test(i.id)||!i.value.trim())return;
+      var bad=i.closest('.fld').classList.contains('bad'),m=check(i)||dup[i.id]||'';
+      if(m&&(bad||dup[i.id]))show(i,m);else if(bad&&!m)show(i,'');
+    });
+  }
   function checkRefs(){
     var a=$('#r1_empresa'),b=$('#r2_empresa');
     if(a.value.trim()&&b.value.trim()&&a.value.trim().toLowerCase()===b.value.trim().toLowerCase()){show(b,'La referencia 2 debe ser un proveedor distinto al de la referencia 1.');return false}
@@ -350,14 +435,15 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
   form.addEventListener('input',function(e){
     var el=e.target;
     if(el.matches('[data-t=money]'))el.value=fmtMoney(el.value);
-    if(el.matches('[data-f]')&&el.closest('.fld').classList.contains('bad'))show(el,check(el));
+    if(el.matches('[data-f]')&&el.closest('.fld').classList.contains('bad'))show(el,check(el)||dupMsg(el));
     update();saveDraft();
   });
   form.addEventListener('focusout',function(e){
     var el=e.target;if(!el.matches||!el.matches('[data-f]'))return;
     if(el.getAttribute('data-t')==='tel'&&tel10(el.value).length===10)el.value=fmtTel(el.value);
     if(el.getAttribute('data-t')==='money')el.value=fmtMoney(el.value);
-    if(el.value.trim()||el.closest('.fld').classList.contains('bad'))show(el,check(el));
+    if(el.value.trim()||el.closest('.fld').classList.contains('bad'))show(el,check(el)||dupMsg(el));
+    revisarRepetidos(el);
     if(el.id==='r2_empresa'||el.id==='r1_empresa')checkRefs();
   });
   $('#decl').addEventListener('change',function(){if(this.checked)$('#chkW').classList.remove('bad');update()});
@@ -532,7 +618,8 @@ body{margin:0;background:var(--paper);color:var(--navy);font-family:var(--body);
   /* ---------- envío ---------- */
   function validateAll(){
     var first=null,bad=0;
-    inputs.forEach(function(i){var m=check(i);show(i,m);if(m){bad++;if(!first)first=i}});
+    var dup=repetidos(PERSONAS,valores());
+    inputs.forEach(function(i){var m=check(i)||dup[i.id]||'';show(i,m);if(m){bad++;if(!first)first=i}});
     if(!checkRefs()){bad++;if(!first)first=$('#r2_empresa')}
     if(!$('#decl').checked){$('#chkW').classList.add('bad');bad++;if(!first)first=$('#decl')}
     if(!strokes.length){pad.classList.add('bad');$('#sig-e').textContent='Falta la firma.';bad++;if(!first)first=cv}

@@ -90,6 +90,10 @@ function crearEnlace(cliente) {
   if (nombreCliente.length < 2) throw new Error('Escriba el nombre o razón social del cliente.');
   var base = PropertiesService.getScriptProperties().getProperty('URL_FORMULARIO');
   if (!base) throw new Error('Falta configurar la dirección del formulario (propiedad URL_FORMULARIO).');
+  // Sin carpeta propia conectada y accesible no se generan fichas: así nada queda suelto ni fuera de su carpeta.
+  if (!estadoCarpeta_(ej).conectada) {
+    throw new Error('Antes de generar fichas conecte su carpeta de Drive (sección «Mi carpeta en Drive»). Ahí se guardarán las fichas de sus clientes.');
+  }
 
   var lock = LockService.getScriptLock();
   lock.waitLock(25000);

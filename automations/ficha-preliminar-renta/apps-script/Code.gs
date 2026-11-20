@@ -96,6 +96,28 @@ function recibirFicha_(p) {
   return resultado;
 }
 
+/**
+ * Repite en el servidor las reglas más importantes del formulario (index.html, bloque @validacion), para que no se
+ * puedan saltar desde el navegador: teléfonos reales de 10 dígitos y textos con letras (sin puntos ni relleno).
+ * Devuelve un mensaje, o '' si el valor es aceptable.
+ */
+function campoInvalido_(id, v) {
+  if (typeof v === 'number') return '';
+  if (/(^|_)(tel|movil)$/.test(id)) {
+    var d = String(v).replace(/\D+/g, '');
+    var cola = d.slice(2), rep = {}, relleno = false;
+    cola.split('').forEach(function (x) { rep[x] = (rep[x] || 0) + 1; if (rep[x] >= 7) relleno = true; });
+    if (!/^[2-9]\d{9}$/.test(d) || d.indexOf('52') === 0 || relleno || '01234567890'.indexOf(d) >= 0 || '98765432109'.indexOf(d) >= 0) {
+      return 'Revise los teléfonos de la ficha: deben ser reales, de 10 dígitos y con lada.';
+    }
+    return '';
+  }
+  if (/^(s_nombre|s_giro|s_ciudad|f_firmante)$|^c_[a-z]+_(nombre|puesto)$|^r\d_(empresa|contacto)$/.test(id)) {
+    if (!/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ].*[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(v)) return 'Revise la ficha: hay datos con puntos, signos o números donde se esperan palabras.';
+  }
+  return '';
+}
+
 /** Devuelve un mensaje de error, o '' si la ficha es válida. */
 function validar_(p) {
   if (!p || typeof p !== 'object') return 'Solicitud no válida.';
@@ -113,6 +135,8 @@ function validar_(p) {
     var v = c[2];
     if (typeof v === 'number') { if (!isFinite(v)) return 'Solicitud no válida.'; }
     else if (typeof v !== 'string' || !v.trim() || v.length > MAX_TEXTO) return 'Falta información en la ficha.';
+    var malo = campoInvalido_(String(c[0]), v);
+    if (malo) return malo;
   }
   if (!ids['s_nombre']) return 'Falta el nombre o razón social.';
   if (typeof p.firmante !== 'string' || p.firmante.trim().length < 2 || p.firmante.length > MAX_TEXTO) return 'Falta el nombre de quien firma.';
