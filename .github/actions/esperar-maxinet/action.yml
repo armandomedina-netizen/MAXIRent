@@ -1,0 +1,21 @@
+name: Esperar a Maxinet
+description: >
+  Espera a que el servidor de Maxinet acepte conexiones antes de correr la automatización (ADR 0034). Si Maxinet no
+  responde en el tiempo indicado, falla. Requiere haber hecho checkout del repositorio.
+inputs:
+  base-url:
+    description: URL base de Maxinet (secret MAXINET_BASE_URL)
+    required: true
+  minutos:
+    description: Minutos máximos de espera
+    required: false
+    default: "60"
+runs:
+  using: composite
+  steps:
+    - name: Sondear Maxinet
+      shell: bash
+      env:
+        BASE_URL: ${{ inputs.base-url }}
+        MINUTOS: ${{ inputs.minutos }}
+      run: bash "${{ github.action_path }}/esperar.sh"
