@@ -149,13 +149,15 @@ def test_orden_de_las_solicitudes_con_huecos():
 
 # ---------------------------------------------------------------- flujo completo con huecos
 class RecuperadorFalso:
-    def __init__(self, resultados, falla=False):
-        self.resultados, self.falla, self.llamadas = resultados, falla, []
+    def __init__(self, resultados, falla=False, sin_foto=()):
+        self.resultados, self.falla, self.sin_foto, self.llamadas = resultados, falla, set(sin_foto), []
 
     def evaluar(self, formulas, letra, etiquetas, fecha, filas):
         self.llamadas.append((fecha, letra))
         if self.falla:
             raise r.FormulaNoSoportada("x")
+        if fecha in self.sin_foto:
+            raise r.FotoNoDisponible(fecha)
         return {f: self.resultados[fecha][f] for f in filas}
 
 
@@ -277,3 +279,77 @@ def test_descargar_flota_exige_el_ancho_actual_del_reporte(monkeypatch, ancho, o
     else:
         with pytest.raises(RuntimeError, match="se esperaban 42"):
             r.descargar_flota(D22)
+
+# ---------------------------------------------------------------- un día sin foto en Maxinet (21-nov-2026)
+def _columnas_escritas(libro):
+    por_columna = {}
+    for rq in libro.peticiones:
+        if "updateCells" in rq:
+            t = rq["updateCells"]
+            por_columna.setdefault(t["start"]["columnIndex"], []).extend(x["values"][0]["userEnteredValue"]["numberValue"] for x in t["rows"])
+    return por_columna
+
+
+def test_un_dia_sin_foto_en_maxinet_no_bloquea_el_cierre_de_los_demas(caplog):
+    """Maxinet sin la foto del 22: se omite ese día, se rellena el 23, se congela la viva y se crea la del día."""
+    ws, _ = hoja_hueco(False)
+    libro = LibroFalso([ws])
+    fotos = FotosFalsas({(D21, "UNIDADES CP"): {4: 110, 5: 21}})
+    rec = RecuperadorFalso({D21: {4: 110, 5: 21}, D23: {4: 95, 5: 19}}, sin_foto={D22})
+    with caplog.at_level("WARNING"):
+        ok = c.cerrar_pestana(libro, "UNIDADES CP", D24, fotos, dt.date(2026, 10, 25), dry_run=False, recuperador=rec)
+    assert ok is True                                                   # no es un error de la pestaña: la Guardia es quien avisa
+    assert _columnas_escritas(libro) == {4: [95, 19], 2: [110, 21]}     # el 23 reconstruido y el 21 congelado; el 22 (columna D) sin tocar
+    assert any("SIN FOTO DE MAXINET: 2026-10-22;" in m for m in caplog.messages)
+
+
+def test_si_ningun_hueco_tiene_foto_igual_se_congela_y_se_crea_la_columna_del_dia(caplog):
+    ws, _ = hoja_hueco(False)
+    libro = LibroFalso([ws])
+    fotos = FotosFalsas({(D21, "UNIDADES CP"): {4: 110, 5: 21}})
+    rec = RecuperadorFalso({D21: {4: 110, 5: 21}}, sin_foto={D22, D23})
+    with caplog.at_level("WARNING"):
+        ok = c.cerrar_pestana(libro, "UNIDADES CP", D24, fotos, dt.date(2026, 10, 25), dry_run=False, recuperador=rec)
+    assert ok is True and _columnas_escritas(libro) == {2: [110, 21]}
+    assert any("SIN FOTO DE MAXINET: 2026-10-22, 2026-10-23;" in m for m in caplog.messages)
+    assert any("copyPaste" in rq for rq in libro.peticiones)            # la columna del día sí se creó
+
+
+def test_si_el_dia_de_comprobacion_no_tiene_foto_no_se_rellena_nada():
+    """Sin el día conocido no hay con qué comprobar la reconstrucción: sigue siendo un pendiente real."""
+    ws, _ = hoja_hueco(False)
+    libro = LibroFalso([ws])
+    fotos = FotosFalsas({(D21, "UNIDADES CP"): {4: 110, 5: 21}})
+    rec = RecuperadorFalso({D22: {4: 90, 5: 18}, D23: {4: 95, 5: 19}}, sin_foto={D21})
+    ok = c.cerrar_pestana(libro, "UNIDADES CP", D24, fotos, dt.date(2026, 10, 25), dry_run=False, recuperador=rec)
+    assert ok is False and _columnas_escritas(libro) == {2: [110, 21]}
+
+
+def test_un_hueco_omitido_sigue_siendo_hueco_aunque_los_dias_siguientes_ya_esten_llenos():
+    """21 vacío entre el 20 y el 22 llenos: antes sólo contaban los vacíos después de la última columna llena."""
+    cols = {2: col_cerrada("B", D20, [100, 20]), 3: col_vacia("C", D21), 4: col_cerrada("D", D22, [90, 18]),
+            5: col_viva("E", D23), 6: col_vacia("F", D24)}
+    fechas = {2: D20, 3: D21, 4: D22, 5: D23, 6: D24}
+    p = c.planear(cols, fechas, D24, {D23: {4: 95, 5: 19}})
+    assert p["huecos"] == [3] and p["crear_viva"]
+
+
+def test_un_hueco_viejo_ya_no_se_persigue():
+    """Un día vacío a más de VENTANA_HUECOS_DIAS días queda como historia: no se reintenta ni se avisa para siempre."""
+    viejo = dt.date(2026, 10, 2)
+    cols = {2: col_cerrada("B", dt.date(2026, 10, 1), [100, 20]), 3: col_vacia("C", viejo),
+            4: col_cerrada("D", dt.date(2026, 10, 3), [90, 18]), 5: col_cerrada("E", D23, [95, 19]), 6: col_vacia("F", D24)}
+    fechas = {2: dt.date(2026, 10, 1), 3: viejo, 4: dt.date(2026, 10, 3), 5: D23, 6: D24}
+    cols[5] = col_viva("E", D23)
+    p = c.planear(cols, fechas, D24, {D23: {4: 95, 5: 19}})
+    assert p["huecos"] == []
+
+
+def test_un_dia_sin_filas_en_maxinet_es_foto_no_disponible_y_no_un_error_de_ancho(monkeypatch):
+    monkeypatch.setenv("MAXINET_BASE_URL", "http://maxinet.prueba")
+    monkeypatch.setenv("MAXINET_USER", "u")
+    monkeypatch.setenv("MAXINET_PASS", "p")
+    monkeypatch.setattr(r, "_sesion", lambda: _Sesion([]))
+    with pytest.raises(r.FotoNoDisponible, match="2026-10-22") as e:
+        r.descargar_flota(D22)
+    assert e.value.fecha == D22 and isinstance(e.value, RuntimeError)

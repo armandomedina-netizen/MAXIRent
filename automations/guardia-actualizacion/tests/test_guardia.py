@@ -59,8 +59,16 @@ def test_pendientes_frecuentes():
     assert g.pendientes_frecuentes("Sin cambios") is None
 
 
+CIERRE_SIN_FOTO = """2026-10-26 INFO Fecha de los datos de FLOTA CP: 2026-10-25 (1702 filas)
+2026-10-26 INFO UNIDADES CP: datos del 2026-10-25 -> columna YN (ya viva) | crear columna viva: no | columnas a congelar: ninguna | filas de la foto: 32
+2026-10-26 WARNING UNIDADES CP: SIN FOTO DE MAXINET: 2026-10-21; ese día queda vacío y se reintenta en cada corrida mientras esté a 14 días o menos
+2026-10-26 WARNING UTILIZACION POR GRUPO: SIN FOTO DE MAXINET: 2026-10-21, 2026-10-22; ese día queda vacío y se reintenta
+2026-10-26 INFO Cierre diario completado con éxito"""
+CIERRE_PENDIENTE_Y_SIN_FOTO = CIERRE_PENDIENTE.replace("2026-10-26 INFO Cierre diario completado", CIERRE_SIN_FOTO.splitlines()[2] + "\n2026-10-26 INFO Cierre diario completado")
+
+
 def test_leer_cierre():
-    assert g.leer_cierre(CIERRE_AL_DIA) == {"fecha": AYER, "pendientes": 0}
+    assert g.leer_cierre(CIERRE_AL_DIA) == {"fecha": AYER, "pendientes": 0, "sin_foto": []}
     assert g.leer_cierre(CIERRE_PENDIENTE)["pendientes"] == 2          # columna por crear y columna por congelar
     assert g.leer_cierre(CIERRE_CON_ERROR)["pendientes"] == 2          # dos líneas ERROR
     assert g.leer_cierre("nada") == {}
@@ -149,6 +157,25 @@ def test_tablero_con_cierre_pendiente_se_relanza_y_se_recupera():
 def test_tablero_con_cierre_que_sigue_pendiente():
     out = g.revisar_tablero(AYER, Ejecutor(CIERRE_PENDIENTE, CIERRE_PENDIENTE), Relanzador("success"))
     assert out[-1].estado == "pendiente"
+
+
+def test_leer_cierre_reconoce_los_dias_sin_foto_de_maxinet():
+    e = g.leer_cierre(CIERRE_SIN_FOTO)
+    assert e["sin_foto"] == ["2026-10-21", "2026-10-22"] and e["pendientes"] == 0      # no son acciones de cierre: relanzar no las arregla
+
+
+def test_tablero_con_un_dia_sin_foto_avisa_y_no_relanza_el_cierre():
+    rel = Relanzador("success")
+    out = g.revisar_tablero(AYER, Ejecutor(CIERRE_SIN_FOTO), rel)
+    assert [r.estado for r in out] == ["ok", "pendiente"] and rel.llamadas == []
+    assert "2026-10-21" in out[-1].detalle and "Maxinet" in out[-1].detalle and not out[-1].bien
+
+
+def test_tablero_cierra_lo_pendiente_y_sigue_avisando_del_dia_sin_foto():
+    rel = Relanzador("success")
+    out = g.revisar_tablero(AYER, Ejecutor(CIERRE_PENDIENTE_Y_SIN_FOTO, CIERRE_SIN_FOTO), rel)
+    assert [r.estado for r in out] == ["ok", "pendiente"] and rel.llamadas == ["tablero-cp-cierre-diario.yml"]
+    assert "se cerró lo que había" in out[-1].detalle and "2026-10-21" in out[-1].detalle
 
 
 def test_tablero_con_salida_ilegible():

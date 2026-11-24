@@ -102,7 +102,11 @@ def leer_cierre(salida: str) -> dict:
         return {}
     pendientes = (len(re.findall(r"crear columna viva: sí", salida)) + len(re.findall(r"columnas a congelar: \[", salida))
                   + len(re.findall(r"se rellenan \[", salida)) + len(re.findall(r" ERROR ", salida)))
-    return {"fecha": dt.date.fromisoformat(m[1]), "pendientes": pendientes}
+    # Días que Maxinet no tiene (su servidor estuvo caído cuando generaba la foto): el cierre los omite sin fallar, pero siguen
+    # faltando en las columnas por día hasta que Maxinet los regenere. No cuentan como acción de cierre (relanzar no los arregla).
+    sin_foto = sorted({d for lista in re.findall(r"SIN FOTO DE MAXINET: ([^;]+);", salida)
+                       for d in re.findall(r"\d{4}-\d{2}-\d{2}", lista)})
+    return {"fecha": dt.date.fromisoformat(m[1]), "pendientes": pendientes, "sin_foto": sin_foto}
 
 
 # ---------------------------------------------------------------- qué se revisa
@@ -223,6 +227,11 @@ def revisar(rev: Revision, ejecutar=ejecutar_en_seco, relanzar=relanzar_workflow
     return Resultado(rev.nombre, "pendiente", f"faltaban {antes}; tras relanzar aún falta: {despues}")
 
 
+def _detalle_sin_foto(dias: list) -> str:
+    return (f"Maxinet no tiene la foto de flota de {', '.join(dias)}: esos días quedan vacíos en las columnas por día; "
+            f"pedir a Sistemas de Maxinet que la regeneren (el cierre las llena solo en la siguiente corrida)")
+
+
 def revisar_tablero(ayer: dt.date, ejecutar=ejecutar_en_seco, relanzar=relanzar_workflow) -> list:
     """FLOTA CP con la fecha de ayer y cierre diario al día."""
     codigo, salida = ejecutar(CIERRE)
@@ -233,12 +242,17 @@ def revisar_tablero(ayer: dt.date, ejecutar=ejecutar_en_seco, relanzar=relanzar_
         return [Resultado("Datos del día en el Tablero", "sin datos", f"FLOTA CP trae {estado['fecha']} y se esperaba {ayer}"),
                 Resultado(CIERRE.nombre, "no verificado", "no se revisa mientras FLOTA CP no tenga los datos del día")]
     out = [Resultado("Datos del día en el Tablero", "ok", f"FLOTA CP trae {ayer}")]
-    if estado["pendientes"] == 0:
+    sin_foto = estado.get("sin_foto") or []
+    if estado["pendientes"] == 0 and not sin_foto:
         return out + [Resultado(CIERRE.nombre, "ok")]
+    if estado["pendientes"] == 0:
+        return out + [Resultado(CIERRE.nombre, "pendiente", _detalle_sin_foto(sin_foto))]
     conclusion = relanzar(CIERRE.workflow)
     codigo, salida = ejecutar(CIERRE)
     despues = leer_cierre(salida)
     if conclusion == "success" and despues and despues["pendientes"] == 0:
+        if despues.get("sin_foto"):
+            return out + [Resultado(CIERRE.nombre, "pendiente", "se cerró lo que había; " + _detalle_sin_foto(despues["sin_foto"]))]
         return out + [Resultado(CIERRE.nombre, "recuperado", "tenía columnas por cerrar; se relanzó y quedó al día")]
     return out + [Resultado(CIERRE.nombre, "pendiente", f"relanzado: {conclusion}; pendientes: {despues.get('pendientes') if despues else '?'}")]
 
