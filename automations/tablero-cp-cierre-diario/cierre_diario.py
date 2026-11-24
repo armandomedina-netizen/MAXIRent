@@ -76,6 +76,7 @@ FILAS_MAX = 400            # las tablas diarias terminan mucho antes; se lee has
 VENTANA_DIAS = 8           # días hacia atrás que se revisan
 MIN_FILAS_FLOTA = 1000     # filas de FLOTA CP con la fecha del día para dar los datos por cargados
 DIAS_FOTOS = 14
+VENTANA_HUECOS_DIAS = 14   # días hacia atrás en que un día vacío entre columnas llenas se sigue considerando un hueco por rellenar
 ESPERA_MANANA_MIN = 25     # por la mañana, minutos máximos que espera a que FLOTA CP cargue el día de ayer
 SONDEO_ESPERA_SEG = 30     # cada cuánto vuelve a leer la fecha de FLOTA CP mientras espera
 VENTANA_MANANA = (dt.time(7, 55), dt.time(9, 30))     # hora CDMX: el sync que cambia la fecha de FLOTA CP corre a las 8:00
@@ -197,7 +198,12 @@ def planear(columnas: dict, fechas: dict, fecha_datos: dt.date, fotos: dict) -> 
     if llenas:
         ultima_llena = max(llenas)
         plan["col_ref"] = ultima_llena
-        plan["huecos"] = [i for i in sorted(clases) if clases[i] == "vacia" and ultima_llena < i < col_dia]
+        # También cuentan los días vacíos entre columnas llenas de los últimos VENTANA_HUECOS_DIAS días: un día que Maxinet
+        # no tenía y se omitió sigue pendiente aunque ya se hayan llenado los posteriores, y se rellena en cuanto exista.
+        limite = fecha_datos - dt.timedelta(days=VENTANA_HUECOS_DIAS)
+        recientes = [i for i in llenas if fechas[i] >= limite]
+        primera = min(recientes) if recientes else ultima_llena
+        plan["huecos"] = [i for i in sorted(clases) if clases[i] == "vacia" and primera < i < col_dia]
     for c in (v for v in vivas if fechas[v] < fecha_datos):
         filas = patron(c)
         foto = fotos.get(fechas[c])
@@ -422,7 +428,17 @@ def _recuperar_huecos(ws, nombre, plan, columnas, fechas, fecha_datos, fotos_p, 
                   nombre, fecha_ref, len(difieren), len(filas), dias)
         return [], False
     log.info("%s: la reconstrucción del %s coincide en las %d filas; se rellenan %s", nombre, fecha_ref, len(filas), dias)
-    return [(g, recuperador.evaluar(formulas, letra_f, etiquetas, fechas[g], filas)) for g in huecos], True
+    rellenar, sin_foto = [], []
+    for g in huecos:
+        try:
+            rellenar.append((g, recuperador.evaluar(formulas, letra_f, etiquetas, fechas[g], filas)))
+        except recuperar_dias.FotoNoDisponible:              # Maxinet no generó ese día: se deja el hueco, no se inventa
+            sin_foto.append(fechas[g].isoformat())
+    if sin_foto:
+        # La línea con esta marca la lee la Guardia de actualización: el día sigue pendiente hasta que Maxinet lo regenere.
+        log.warning("%s: SIN FOTO DE MAXINET: %s; ese día queda vacío y se reintenta en cada corrida mientras esté a %d días o menos",
+                    nombre, ", ".join(sin_foto), VENTANA_HUECOS_DIAS)
+    return rellenar, True
 
 
 def cerrar_pestana(libro, nombre: str, fecha_datos: dt.date, fotos: Fotos, hoy: dt.date, dry_run: bool,

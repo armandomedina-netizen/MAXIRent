@@ -45,6 +45,16 @@ class FormulaNoSoportada(Exception):
     pass
 
 
+class FotoNoDisponible(RuntimeError):
+    """Maxinet no tiene la foto de flota de ese día (responde 0 filas). Pasa cuando su servidor está caído a la hora en que
+    la genera (sábado 21-nov-2026, 29-oct-2026): no es un error de nuestro lado ni se arregla reintentando, y no debe
+    impedir que se cierren los demás días."""
+
+    def __init__(self, fecha: dt.date):
+        super().__init__(f"Maxinet no tiene la foto de flota del {fecha.isoformat()} (0 filas)")
+        self.fecha = fecha
+
+
 # ---------------------------------------------------------------- utilidades
 def letras(n: int) -> str:
     s = ""
@@ -108,6 +118,8 @@ def descargar_flota(fecha: dt.date) -> list:
     r = s.post(f"{base}/includes/gpsrt/reporte-flota-maxirent.php",
                data={"Desde": fecha.isoformat(), "Hasta": fecha.isoformat()}, timeout=TIMEOUT)
     filas = [f[1:] for f in json.loads(r.content.decode("utf-8-sig"))["data"]]
+    if not filas:
+        raise FotoNoDisponible(fecha)
     anchos = {len(f) for f in filas}
     if anchos != {ANCHO_REPORTE}:
         raise RuntimeError(f"El reporte de flota trae {sorted(anchos)} columnas y se esperaban {ANCHO_REPORTE}")
