@@ -5,16 +5,17 @@ Automatización diaria: login + lectura del reporte "2da - 3ra renta" (Corto Pla
 Endpoint confirmado a partir del JS real de Maxinet (cp-reporte-2-3-rentas.php -> DataTable ajax):
     Login:  POST {MAXINET_BASE_URL}/includes/users/AccessValidate.php
     Datos:  POST {MAXINET_BASE_URL}/includes/reportescp/clientes-2-3-data-v2.php
-            body: Desde=YYYY-MM-DD, Hasta=YYYY-MM-DD, f_registro=0, tiporenta=0
+            body: Desde=YYYY-MM-DD, Hasta=YYYY-MM-DD, f_registro=2, tiporenta=0
             respuesta: {"data": [[18 valores, todo texto], ...]}: las 18 columnas de la tabla de la página.
     tiporenta=0 es "Ambas": entrega una fila por cada evento (No.Evento 2 = segunda renta, 3 = tercera renta), así que
     un mismo cliente puede salir dos veces. Desde/Hasta filtran por la fecha DEL EVENTO: la Fecha 2da renta para las
-    filas de evento 2 y la Fecha 3ra renta para las de evento 3 (Hasta es inclusive). f_registro=0 es "sin filtro de
-    antigüedad del cliente"; por decisión del usuario se deja como está (el filtro definitivo se define con el tablero
-    de 2das y 3ras rentas).
+    filas de evento 2 y la Fecha 3ra renta para las de evento 3 (Hasta es inclusive).
+    f_registro es el filtro "Clientes registrados hace: N mes(es)" de la página (0 = sin filtro; opciones 1 a 6 y 12).
+    Por decisión del usuario (2026-11-26) la automatización usa 2 meses; F_REGISTRO lo cambia sin tocar el código. Con
+    las fechas de la página (1-nov a hoy) y Ambas, f_registro=2 trae el mismo total que muestra la página.
 
-Rango de fechas: del primer día del mes a AYER (hora Ciudad de México); si hoy es día 1, "ayer" cae en el mes anterior
-y el rango es ese mes completo. Durante los primeros 3 días del mes se vuelve a escribir también el mes anterior.
+Rango de fechas (decidido por el usuario): del primer día del mes al día de la consulta, hoy (hora Ciudad de México).
+Durante los primeros 3 días del mes se vuelve a escribir también el mes anterior completo.
 
 Qué se escribe: se REFRESCA el bloque del mes. Cada corrida reemplaza, desde la primera fila cuya fecha de evento sea
 >= inicio del bloque hasta el final, las columnas A:R por lo que entrega Maxinet, ordenado por (fecha del evento,
@@ -33,7 +34,7 @@ Variables de entorno (ver .env.example):
     MAXINET_BASE_URL, MAXINET_USER, MAXINET_PASS, GOOGLE_CREDS_PATH,
     SPREADSHEET_ID_TABLERO_CP (Sheet del Tablero CP copia, el mismo de la Bitácora),
     WORKSHEET_RENTAS_2_3_NAME (nombre o gid de la pestaña; por defecto "2da y 3ra Renta"),
-    FECHA_DESDE, FECHA_HASTA, DRY_RUN, FORZAR (opcionales)
+    F_REGISTRO (opcional: 0, 1 a 6 o 12; por defecto 2), FECHA_DESDE, FECHA_HASTA, DRY_RUN, FORZAR (opcionales)
 """
 
 import os
@@ -102,7 +103,8 @@ FORMATO_FECHA = "yyyy-mm-dd"
 EVENTOS = (2, 3)
 ENDPOINT = "includes/reportescp/clientes-2-3-data-v2.php"
 TIPO_RENTA_AMBAS = "0"
-SIN_FILTRO_REGISTRO = "0"
+F_REGISTRO_DEFECTO = "2"             # "Clientes registrados hace: 2 mes(es)" (decisión del 2026-11-26)
+F_REGISTRO_VALIDOS = ("0", "1", "2", "3", "4", "5", "6", "12")      # opciones de la lista de la página; 0 = sin filtro
 FILA_INICIO_DATOS = 2
 ULTIMA_COL = gspread.utils.rowcol_to_a1(1, len(COLUMNAS)).rstrip("1")      # "R"
 NOMBRE_PESTANA = "2da y 3ra Renta"
@@ -156,11 +158,11 @@ def login_maxinet() -> requests.Session:
 def bloques_a_refrescar() -> list[tuple[str, str]]:
     """Bloques de fechas (desde, hasta) que se vuelven a escribir en cada corrida, del más antiguo al más reciente.
 
-    Principal: del primer día del mes de 'ayer' a ayer (hora CDMX). Durante los primeros DIAS_MES_ANTERIOR días del
+    Principal: del primer día del mes de HOY al día de hoy (hora CDMX). Durante los primeros DIAS_MES_ANTERIOR días del
     mes se refresca además el mes anterior completo. FECHA_DESDE/FECHA_HASTA fijan un solo bloque (pruebas y
     recuperaciones)."""
-    ayer = dt.datetime.now(ZONA).date() - dt.timedelta(days=1)
-    hasta = os.environ.get("FECHA_HASTA") or ayer.isoformat()
+    hoy = dt.datetime.now(ZONA).date()
+    hasta = os.environ.get("FECHA_HASTA") or hoy.isoformat()
     h = dt.date.fromisoformat(hasta)
     if os.environ.get("FECHA_DESDE"):
         return [(os.environ["FECHA_DESDE"], hasta)]
@@ -173,11 +175,20 @@ def bloques_a_refrescar() -> list[tuple[str, str]]:
     return bloques
 
 
+def filtro_registro() -> str:
+    """F_REGISTRO ("Clientes registrados hace: N mes(es)" de la página): por defecto 2. Vacío usa el valor por defecto;
+    un valor fuera de las opciones de la página detiene la corrida."""
+    valor = (os.environ.get("F_REGISTRO") or "").strip().strip("\"'").strip() or F_REGISTRO_DEFECTO
+    if valor not in F_REGISTRO_VALIDOS:
+        raise RuntimeError(f"F_REGISTRO sólo acepta {', '.join(F_REGISTRO_VALIDOS)} (0 = sin filtro).")
+    return valor
+
+
 def descargar_rentas(session: requests.Session, desde: str, hasta: str) -> list[list]:
     base_url = os.environ["MAXINET_BASE_URL"].rstrip("/")
     resp = session.post(
         f"{base_url}/{ENDPOINT}",
-        data={"Desde": desde, "Hasta": hasta, "f_registro": SIN_FILTRO_REGISTRO, "tiporenta": TIPO_RENTA_AMBAS},
+        data={"Desde": desde, "Hasta": hasta, "f_registro": filtro_registro(), "tiporenta": TIPO_RENTA_AMBAS},
         timeout=TIMEOUT_SEG,
     )
     cuerpo = _parse_json_bom(resp)

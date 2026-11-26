@@ -41,3 +41,17 @@ actualización diaria y ventana de las 8:30.
   diaria sólo mantiene el mes en curso.
 - Si se define un filtro de antigüedad del cliente (`f_registro`), cambia una sola constante del módulo.
 - La Guardia de actualización todavía no revisa esta pestaña.
+
+## Actualización 2026-11-26: clientes registrados hace 2 meses y rango hasta hoy
+
+- **Filtro de clientes registrados:** `f_registro=2` ("Clientes registrados hace: 2 mes(es)" de la página), en lugar de
+  sin filtro. Con las fechas de la página (1-nov a hoy) y Ambas, Maxinet devuelve 73 filas (49 de 2da y 24 de 3ra), el mismo total
+  que muestra la página; sin filtro eran 163. `F_REGISTRO` (0, 1 a 6 o 12) lo cambia sin tocar el código; un valor fuera de
+  esas opciones detiene la corrida.
+- **Rango:** del primer día del mes **al día de la consulta** (hoy, hora CDMX), como las demás cargas con ese criterio; antes
+  llegaba hasta ayer. Los primeros 3 días del mes se refresca además el mes anterior completo y el día 1 el rango es el mes
+  anterior más el día 1.
+- **Transición:** al reducirse el conjunto (la hoja tenía 158 filas), la salvaguarda del 80% detiene la primera corrida con el
+  filtro nuevo. Se hizo una vez con `FORZAR=1`; después las corridas normales no lo necesitan.
+- **Pestaña de resumen:** `RESUMEN 2DA Y 3RA RENTA` del Tablero tiene hoy valores escritos, no fórmulas; esta automatización
+  sólo escribe `2da y 3ra Renta`.
