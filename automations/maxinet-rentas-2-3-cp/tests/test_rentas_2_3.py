@@ -16,7 +16,7 @@ def serie(texto):
 
 @pytest.fixture(autouse=True)
 def entorno(monkeypatch):
-    for v in ("FECHA_DESDE", "FECHA_HASTA", "DRY_RUN", "FORZAR", "WORKSHEET_RENTAS_2_3_NAME"):
+    for v in ("FECHA_DESDE", "FECHA_HASTA", "DRY_RUN", "FORZAR", "F_REGISTRO", "WORKSHEET_RENTAS_2_3_NAME"):
         monkeypatch.delenv(v, raising=False)
 
 
@@ -114,19 +114,24 @@ def _fijar_hoy(monkeypatch, fecha):
     monkeypatch.setattr(m.dt, "datetime", FalsoDT)
 
 
-def test_bloque_normal_del_primero_de_mes_a_ayer(monkeypatch):
+def test_bloque_normal_del_primero_de_mes_al_dia_de_la_consulta(monkeypatch):
     _fijar_hoy(monkeypatch, dt.date(2026, 11, 18))
-    assert m.bloques_a_refrescar() == [("2026-11-01", "2026-11-17")]
+    assert m.bloques_a_refrescar() == [("2026-11-01", "2026-11-18")]
 
 
 def test_primeros_tres_dias_incluyen_el_mes_anterior(monkeypatch):
-    _fijar_hoy(monkeypatch, dt.date(2026, 11, 4))                  # ayer = 3
+    _fijar_hoy(monkeypatch, dt.date(2026, 11, 3))
     assert m.bloques_a_refrescar() == [("2026-10-01", "2026-10-31"), ("2026-11-01", "2026-11-03")]
 
 
-def test_dia_uno_refresca_el_mes_anterior_completo(monkeypatch):
+def test_dia_uno_refresca_el_mes_anterior_completo_y_el_dia_uno(monkeypatch):
     _fijar_hoy(monkeypatch, dt.date(2026, 12, 1))
-    assert m.bloques_a_refrescar() == [("2026-11-01", "2026-11-30")]
+    assert m.bloques_a_refrescar() == [("2026-11-01", "2026-11-30"), ("2026-12-01", "2026-12-01")]
+
+
+def test_dia_cuatro_ya_no_incluye_el_mes_anterior(monkeypatch):
+    _fijar_hoy(monkeypatch, dt.date(2026, 12, 4))
+    assert m.bloques_a_refrescar() == [("2026-12-01", "2026-12-04")]
 
 
 def test_fechas_manuales_fijan_un_solo_bloque(monkeypatch):
@@ -150,15 +155,35 @@ class SesionFalsa:
         return RespuestaFalsa(self.cuerpo)
 
 
-def test_descarga_pide_ambas_rentas_sin_filtro_de_registro(monkeypatch):
+def test_descarga_pide_ambas_rentas_con_clientes_registrados_hace_2_meses(monkeypatch):
     import json
     monkeypatch.setenv("MAXINET_BASE_URL", "http://ejemplo.test/maxinetv2/")
     ses = SesionFalsa(json.dumps({"data": [fila_maxinet("#1", 2, "2026-11-10")]}))
     filas = m.descargar_rentas(ses, "2026-11-01", "2026-11-17")
     url, datos = ses.llamadas[0]
     assert url == "http://ejemplo.test/maxinetv2/includes/reportescp/clientes-2-3-data-v2.php"
-    assert datos == {"Desde": "2026-11-01", "Hasta": "2026-11-17", "f_registro": "0", "tiporenta": "0"}
+    assert datos == {"Desde": "2026-11-01", "Hasta": "2026-11-17", "f_registro": "2", "tiporenta": "0"}
     assert len(filas) == 1
+
+
+def test_f_registro_se_puede_cambiar_sin_tocar_el_codigo(monkeypatch):
+    import json
+    monkeypatch.setenv("MAXINET_BASE_URL", "http://ejemplo.test/maxinetv2")
+    monkeypatch.setenv("F_REGISTRO", " 12 ")
+    ses = SesionFalsa(json.dumps({"data": []}))
+    m.descargar_rentas(ses, "2026-11-01", "2026-11-26")
+    assert ses.llamadas[0][1]["f_registro"] == "12"
+    monkeypatch.setenv("F_REGISTRO", "0")                              # 0 = sin filtro
+    assert m.filtro_registro() == "0"
+
+
+def test_f_registro_vacio_usa_el_valor_por_defecto_y_uno_invalido_detiene_la_corrida(monkeypatch):
+    assert m.filtro_registro() == "2"
+    monkeypatch.setenv("F_REGISTRO", "")
+    assert m.filtro_registro() == "2"
+    monkeypatch.setenv("F_REGISTRO", "7")
+    with pytest.raises(RuntimeError, match="F_REGISTRO"):
+        m.filtro_registro()
 
 
 def test_una_respuesta_sin_data_detiene_la_corrida(monkeypatch):
