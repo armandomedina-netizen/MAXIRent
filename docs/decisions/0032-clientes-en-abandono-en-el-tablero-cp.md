@@ -37,4 +37,4 @@ que muestra la hoja, para poder relacionarla fácilmente con el resto del Tabler
 - Un cliente que se registra en un mes y se "abandona" después sólo se actualiza mientras su mes esté en curso (y los
   primeros 3 días del siguiente); los meses cerrados conservan los días sin rentar de su último cierre. Para recalcular un
   mes anterior se usa `FECHA_DESDE`/`FECHA_HASTA`.
-- La Guardia de actualización todavía no revisa esta pestaña.
+- La Guardia de actualización revisa esta pestaña desde el 2026-11-26 (corre su DRY_RUN a las 10:30, relanza el workflow si el bloque del mes tendría clientes de más y vigila errores de celda).

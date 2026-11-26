@@ -131,7 +131,8 @@ def test_una_salida_que_no_se_entiende_no_se_da_por_buena():
 
 def test_cada_automatizacion_tiene_su_lector_y_su_workflow():
     nombres = [r.nombre for r in g.REVISIONES]
-    assert nombres == ["Clientes Nuevos", "Clientes Potenciales", "Encuestas", "Entregas", "Frecuentes Activos", "MKT Leads"]
+    assert nombres == ["Clientes Nuevos", "Clientes Potenciales", "Encuestas", "Entregas", "Frecuentes Activos", "MKT Leads",
+                       "2das y 3ras rentas", "Clientes en abandono"]
     assert all(r.workflow.endswith(".yml") and (g.RAIZ / r.directorio / r.script).exists() for r in g.REVISIONES + (g.CIERRE,))
     assert all((g.RAIZ.parent / ".github" / "workflows" / r.workflow).exists() for r in g.REVISIONES + (g.CIERRE,))
 
@@ -348,3 +349,42 @@ def test_errores_avisa_si_una_pestana_ya_no_se_encuentra(monkeypatch):
     monkeypatch.setenv("GOOGLE_CREDS_PATH", "x"); monkeypatch.setenv("SPREADSHEET_ID_TABLERO_CP", "y")
     r = g.contar_errores_tablero()
     assert len(r) == len(g.PESTANAS_SIN_ERRORES) and all("renombraron" in v for v in r.values())
+
+
+# ---------------------------------------------------------------- 2das y 3ras rentas y Clientes en abandono (bloque del mes)
+LOG_RENTAS = """2026-11-26 08:30:05,123 INFO Bloque desde 2026-11-01: filas 73 -> 76 | nuevas 3
+2026-11-26 08:30:05,124 INFO DRY_RUN: se reescribirían A2:R77 (76 filas) (no se escribió nada).
+2026-11-26 08:30:05,125 INFO Automatización completada con éxito (bloque de 76 filas desde 2026-11-01)"""
+LOG_ABANDONO_AL_DIA = """2026-11-26 08:35:05,123 INFO Bloque desde 2026-11-01: filas 176 -> 176 | nuevas 0
+2026-11-26 08:35:05,124 INFO DRY_RUN: se reescribirían A2:R177 (176 filas) (no se escribió nada).
+2026-11-26 08:35:05,125 INFO Automatización completada con éxito (bloque de 176 clientes desde 2026-11-01)"""
+
+
+@pytest.mark.parametrize("nombre,directorio,workflow", [
+    ("2das y 3ras rentas", "maxinet-rentas-2-3-cp", "maxinet-rentas-2-3-cp.yml"),
+    ("Clientes en abandono", "maxinet-clientes-abandono-cp", "maxinet-clientes-abandono-cp.yml"),
+])
+def test_las_dos_cargas_nuevas_se_revisan_como_bloque_del_mes(nombre, directorio, workflow):
+    rev = next(r for r in g.REVISIONES if r.nombre == nombre)
+    assert rev.directorio == directorio and rev.workflow == workflow and rev.leer is g.pendientes_bloque
+    assert (g.RAIZ / rev.directorio / rev.script).exists() and (g.RAIZ.parent / ".github" / "workflows" / workflow).exists()
+
+
+def test_rentas_se_relanza_si_faltan_filas_y_se_recupera():
+    rev = next(r for r in g.REVISIONES if r.nombre == "2das y 3ras rentas")
+    rel = Relanzador("success")
+    out = g.revisar(rev, Ejecutor(LOG_RENTAS, LOG_ABANDONO_AL_DIA), rel)
+    assert out.estado == "recuperado" and rel.llamadas == ["maxinet-rentas-2-3-cp.yml"] and "faltaban 3" in out.detalle
+
+
+def test_abandono_al_dia_no_relanza():
+    rev = next(r for r in g.REVISIONES if r.nombre == "Clientes en abandono")
+    rel = Relanzador("success")
+    assert g.revisar(rev, Ejecutor(LOG_ABANDONO_AL_DIA), rel).estado == "ok" and rel.llamadas == []
+
+
+def test_las_pestanas_nuevas_se_vigilan_por_errores_sin_ser_criticas():
+    for pestana in ("2da y 3ra Renta", "Clientes en abandono"):
+        assert pestana in g.PESTANAS_OPCIONALES and pestana not in g.PESTANAS_CRITICAS
+    r = g.revisar_errores(lambda: {"2da y 3ra Renta": 2})
+    assert r.estado == "pendiente" and "2da y 3ra Renta: 2" in r.detalle

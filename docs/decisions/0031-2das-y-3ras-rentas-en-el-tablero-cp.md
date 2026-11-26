@@ -40,7 +40,7 @@ actualización diaria y ventana de las 8:30.
 - Una carga inicial histórica (por ejemplo del 1 de enero) se puede hacer con `FECHA_DESDE`/`FECHA_HASTA`; la corrida
   diaria sólo mantiene el mes en curso.
 - Si se define un filtro de antigüedad del cliente (`f_registro`), cambia una sola constante del módulo.
-- La Guardia de actualización todavía no revisa esta pestaña.
+- La Guardia de actualización revisa esta pestaña desde el 2026-11-26 (corre su DRY_RUN a las 10:30, relanza el workflow si el bloque del mes tendría filas de más y vigila errores de celda).
 
 ## Actualización 2026-11-26: clientes registrados hace 2 meses y rango hasta hoy
 
