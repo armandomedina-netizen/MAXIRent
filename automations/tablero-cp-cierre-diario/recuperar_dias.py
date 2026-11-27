@@ -30,8 +30,8 @@ from urllib3.util.retry import Retry
 
 log = logging.getLogger("tablero_cp_cierre_diario")
 
-ANCHO_REPORTE = 42            # Fecha ... Meses uso; el reporte trae antes una columna de acciones
-ANCHO_FLOTA_CP = 41           # Fecha ... EntryDate: lo que importa FLOTA CP (E:AS). "Meses uso" (4-nov-2026) no se importa
+ANCHO_REPORTE = 49            # Fecha ... Remanente ajustado 14% (26-nov-2026); el reporte trae antes una columna de acciones
+ANCHO_FLOTA_CP = 41           # Fecha ... EntryDate: lo que importa FLOTA CP (E:AS). "Meses uso" (4-nov-2026) y las siete columnas de precio y depreciación (26-nov-2026) no se importan
 PRIMERA_CRUDA = 5             # columna E de FLOTA CP
 ESTATICAS = ("D", "AT", "AU", "AW")           # por placa, no cambian entre días
 LATERAL = ("AX", "AY", "AZ", "BA")            # tabla lateral de antigüedad: se toma tal cual de hoy
@@ -108,7 +108,7 @@ def _sesion() -> requests.Session:
 
 
 def descargar_flota(fecha: dt.date) -> list:
-    """Filas del reporte de flota de Maxinet para la fecha (42 valores; armar_columnas usa los 41 primeros)."""
+    """Filas del reporte de flota de Maxinet para la fecha (49 valores; armar_columnas usa los 41 primeros)."""
     base = os.environ["MAXINET_BASE_URL"].rstrip("/")
     s = _sesion()
     r = s.post(f"{base}/includes/users/AccessValidate.php",

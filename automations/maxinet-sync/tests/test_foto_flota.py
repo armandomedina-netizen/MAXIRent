@@ -11,7 +11,7 @@ class _Resp:
         self.content = b"\xef\xbb\xbf" + json.dumps({"data": filas}).encode()
 
 
-def _fila_maxinet(n=42):
+def _fila_maxinet(n=49):
     return ["<a>comentarios</a>"] + [f"v{i}" for i in range(n)]
 
 
@@ -42,7 +42,7 @@ def test_una_foto_sin_filas_es_foto_vacia_y_no_un_cambio_de_estructura(monkeypat
     assert isinstance(e.value, RuntimeError)
 
 
-@pytest.mark.parametrize("ancho", [41, 43])
+@pytest.mark.parametrize("ancho", [42, 48, 50])
 def test_un_ancho_distinto_sigue_siendo_cambio_de_estructura(monkeypatch, ancho):
     _servir(monkeypatch, [_fila_maxinet(ancho)])
     with pytest.raises(RuntimeError, match="cambió la estructura") as e:
@@ -98,7 +98,7 @@ def test_al_agotar_el_tiempo_falla_con_foto_vacia_y_no_escribe_nada(monkeypatch)
 
 
 def test_un_cambio_de_estructura_no_espera(monkeypatch):
-    llamadas = _servir(monkeypatch, [_fila_maxinet(43)])
+    llamadas = _servir(monkeypatch, [_fila_maxinet(50)])
     r = Reloj()
     with pytest.raises(RuntimeError, match="cambió la estructura"):
         m.descargar_datos_flota_esperando(object(), 120, r.reloj, r.dormir)
