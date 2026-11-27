@@ -102,6 +102,11 @@ filtros_sheets.instalar()
 # columnas y el script espera 41". Esa columna no cabe en el bloque B:AP (a su
 # derecha están las fórmulas de la base: AQ:AS) y no se escribe en él: ver
 # COLUMNAS_FUERA_DE_BLOQUE.
+# El 26-nov-2026 agregó siete columnas más al final (49 columnas): Precio Compra,
+# MOI (sin iva), Precio caja, Total MOI, Dep. Mensual, Dep. Acumulada y
+# Remanente ajustado 14%. El sync completo falló con "trae [49] columnas y el
+# script espera 42". Tampoco caben en B:AP: cada una va en la columna de la base
+# que lleve su encabezado (ADR 0035).
 COLUMNAS = [
     "Fecha", "Estado", "Placa", "BSite", "CurrentSite", "Segmento",
     "Estatus Vehiculo", "Geocerca", "Odometro", "Km", "Nombre Geocerca",
@@ -113,6 +118,8 @@ COLUMNAS = [
     "Proxima Reserva", "Cliente Prox. Reserva", "PUDate Prox. Reserva",
     "Memo Reserva actual", "Comentario", "Fecha Ult.Coment.",
     "Responsable Ult.Coment.", "VIN", "EntryDate", "Meses uso",
+    "Precio Compra", "MOI (sin iva)", "Precio caja", "Total MOI",
+    "Dep. Mensual", "Dep. Acumulada", "Remanente ajustado 14%",
 ]
 
 # Columnas del reporte que NO van en el bloque contiguo B:AP de la base: se
@@ -120,7 +127,10 @@ COLUMNAS = [
 # igual, para no pisar las fórmulas de la derecha (ver
 # actualizar_columnas_fuera_del_bloque). El resto, en el orden del reporte, es
 # el bloque B:AP (COL_INICIO:COL_FIN).
-COLUMNAS_FUERA_DE_BLOQUE = ("Meses uso",)
+COLUMNAS_FUERA_DE_BLOQUE = (
+    "Meses uso", "Precio Compra", "MOI (sin iva)", "Precio caja", "Total MOI",
+    "Dep. Mensual", "Dep. Acumulada", "Remanente ajustado 14%",
+)
 COLUMNAS_BLOQUE = [c for c in COLUMNAS if c not in COLUMNAS_FUERA_DE_BLOQUE]
 
 
@@ -406,31 +416,39 @@ def _numero_o_texto(valor):
 
 
 def actualizar_columnas_fuera_del_bloque(worksheet, df_nuevo: pd.DataFrame):
-    """Escribe las columnas del reporte que no caben en el bloque B:AP (hoy sólo
-    "Meses uso") en la columna de la base con ese encabezado, en el mismo orden
-    de filas que el bloque, de modo que cada placa queda alineada con su fila, y
-    como número. Se detiene sin escribir nada si el encabezado no existe, si cae dentro de A:AP
-    (ahí manda el bloque) o si la columna ya trae fórmulas: nunca se pisan.
+    """Escribe las columnas del reporte que no caben en el bloque B:AP ("Meses uso" y las siete
+    columnas de precio y depreciación) en la columna de la base con ese encabezado, en el mismo
+    orden de filas que el bloque, de modo que cada placa queda alineada con su fila, y como número.
+    Cada columna es independiente: una a la que no se le puede escribir (el encabezado no existe, cae
+    dentro de A:AP porque ahí manda el bloque, o ya trae fórmulas, que nunca se pisan) no impide
+    escribir las demás. Al final, si hubo alguna, se avisa con un solo error que las nombra a todas.
     Es un paso auxiliar: la base ya está al día cuando corre."""
     encabezados = worksheet.row_values(1)
     limite = _col_letra_a_indice(COL_FIN)
+    n_filas = len(df_nuevo)
+    sin_encabezado, otros = [], []
     for nombre in COLUMNAS_FUERA_DE_BLOQUE:
         letra = _letra_de_encabezado(encabezados, nombre)
         if letra is None:
-            raise RuntimeError(
-                f"la base no tiene una columna con el encabezado '{nombre}' en la fila 1: se agrega a la "
-                f"derecha de la tabla (después de TIPO DE CUENTA LP) y el siguiente sync la llena")
+            sin_encabezado.append(nombre)
+            continue
         if _col_letra_a_indice(letra) <= limite:
-            raise RuntimeError(f"'{nombre}' está en la columna {letra}, dentro de A:{COL_FIN} (el bloque del reporte)")
+            otros.append(f"'{nombre}' está en la columna {letra}, dentro de A:{COL_FIN} (el bloque del reporte)")
+            continue
         existentes = worksheet.get(
             f"{letra}{FILA_INICIO_DATOS}:{letra}{FILA_INICIO_DATOS + MAX_FILAS_BUFFER}", value_render_option="FORMULA")
         if any(str(f[0]).startswith("=") for f in existentes if f):
-            raise RuntimeError(f"la columna {letra} ('{nombre}') tiene fórmulas: no se sobrescribe")
-        n_filas = len(df_nuevo)
+            otros.append(f"la columna {letra} ('{nombre}') tiene fórmulas: no se sobrescribe")
+            continue
         worksheet.batch_clear([f"{letra}{FILA_INICIO_DATOS}:{letra}{FILA_INICIO_DATOS + MAX_FILAS_BUFFER}"])
         valores = [[_numero_o_texto(v)] for v in df_nuevo[nombre].tolist()]
         worksheet.update(values=valores, range_name=f"{letra}{FILA_INICIO_DATOS}:{letra}{FILA_INICIO_DATOS + n_filas - 1}")
         log.info("'%s': %d filas escritas en la columna %s", nombre, n_filas, letra)
+    if sin_encabezado:
+        otros.insert(0, "la base no tiene columnas con estos encabezados en la fila 1: " + ", ".join(f"'{n}'" for n in sin_encabezado)
+                     + " (se agregan a la derecha de la tabla, sin fórmulas, y el siguiente sync las llena)")
+    if otros:
+        raise RuntimeError("; ".join(otros))
 
 
 # SEGUNDO ARCHIVO DE GOOGLE SHEETS
@@ -2680,7 +2698,7 @@ def _paso_auxiliar(nombre: str, paso) -> None:
     try:
         paso()
     except Exception as e:
-        log.warning("%s: no se pudo completar (%s: %s)", nombre, type(e).__name__, str(e)[:160])
+        log.warning("%s: no se pudo completar (%s: %s)", nombre, type(e).__name__, str(e)[:420])
         print(f"::warning title=Maxinet Sync::{nombre} no se pudo completar ({type(e).__name__})", flush=True)
 
 
@@ -2711,7 +2729,7 @@ def main():
         # depender de que las hojas auxiliares de abajo estén como se esperaba.
         worksheet = conectar_sheet()
         actualizar_sheet(worksheet, df_nuevo)
-        _paso_auxiliar("Meses uso (base)", lambda: actualizar_columnas_fuera_del_bloque(worksheet, df_nuevo))
+        _paso_auxiliar("Columnas fuera del bloque (base)", lambda: actualizar_columnas_fuera_del_bloque(worksheet, df_nuevo))
 
         # Fórmulas por fila de la base (GRUPO en RESERVAS CP&LP): después de
         # reescribir el bloque de datos, para cubrir las filas de hoy. No debe
