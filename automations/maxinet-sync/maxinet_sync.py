@@ -303,9 +303,12 @@ def leer_datos(df: pd.DataFrame) -> pd.DataFrame:
     # Las fórmulas de UTILIZACION V3 comparan texto exacto (ej. COUNTIFS con
     # criterio "EN RENTA CLIENTE LP") y nunca hacían match contra el valor
     # real "EN RENTA CLIENTE LP  " (con espacios) -> se limpia aquí.
+    # Sólo se recortan los textos: en una columna mixta (por ejemplo "Precio caja", que trae el 0 como
+    # número y los demás montos como texto) `.str.strip()` convertía los números en vacío y la base
+    # perdía los ceros (27-nov-2026).
     for col in df.columns:
         if pd.api.types.is_string_dtype(df[col]) or pd.api.types.is_object_dtype(df[col]):
-            df[col] = df[col].str.strip()
+            df[col] = df[col].map(lambda v: v.strip() if isinstance(v, str) else v)
 
     # Regla del equipo: las placas de servicio (empiezan con "&SER") a veces
     # llegan de Maxinet con el Segmento/BSite/CurrentSite equivocado -> se

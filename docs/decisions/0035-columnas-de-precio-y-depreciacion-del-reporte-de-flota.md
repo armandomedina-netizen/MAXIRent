@@ -28,3 +28,7 @@ El candado de ancho hizo lo que debe (no escribir columnas corridas) y falló, s
 
 - Hasta que se agreguen los siete encabezados en la base, las columnas nuevas no se llenan (el reporte sigue al día en lo demás). Con el encabezado, la siguiente corrida las llena sola.
 - Si Maxinet vuelve a agregar columnas, el procedimiento sigue siendo el de `docs/automatizaciones.md`.
+
+## Corrección del 27-nov-2026: ceros de "Precio caja"
+
+La primera corrida real dejó "Precio caja" vacío en 1,311 filas donde Maxinet manda `0`. Causa: `leer_datos` recorta los espacios con `.str.strip()` en toda columna de tipo texto, y "Precio caja" es mixta (el 0 llega como número y los montos como texto); pandas convierte en vacío todo lo que no es texto. Era la única columna afectada (se revisaron las 49). `leer_datos` ahora recorta sólo los valores que son texto. Prueba nueva (`tests/test_leer_datos.py`) que falla sin el cambio. La Base se reescribió a mano con la misma función del sync tras detectarlo: 1,311 ceros y 392 montos, que es lo que trae Maxinet.
