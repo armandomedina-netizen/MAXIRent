@@ -18,12 +18,18 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60    # 15 de la corrida + hasta 40 de espera a Maxinet + 5
     defaults:
       run:
         working-directory: automations/maxinet-balance
     steps:
       - uses: actions/checkout@v4
+
+      - name: Esperar a Maxinet
+        uses: ./.github/actions/esperar-maxinet
+        with:
+          base-url: ${{ secrets.MAXINET_BASE_URL }}
+          minutos: "40"
 
       - uses: actions/setup-python@v5
         with:

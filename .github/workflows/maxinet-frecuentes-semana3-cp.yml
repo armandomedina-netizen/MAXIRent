@@ -17,12 +17,18 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 210    # 25 de la corrida + hasta 180 de espera a Maxinet + 5
     defaults:
       run:
         working-directory: automations/maxinet-frecuentes-activos-cp
     steps:
       - uses: actions/checkout@v4
+
+      - name: Esperar a Maxinet
+        uses: ./.github/actions/esperar-maxinet
+        with:
+          base-url: ${{ secrets.MAXINET_BASE_URL }}
+          minutos: "180"
 
       - uses: actions/setup-python@v5
         with:
