@@ -6,7 +6,7 @@ de las 8:18 de Clientes Nuevos terminó bien con 0 filas porque Maxinet aún no 
 La guardia comprueba el resultado, no la corrida:
 
 1. Para cada automatización del Tablero CP (Clientes Nuevos, Clientes Potenciales, Encuestas, Entregas,
-   Frecuentes Activos, MKT Leads y el cierre diario del Tablero) corre su modo DRY_RUN, que calcula qué le falta a
+   Frecuentes Activos, MKT Leads, 2das y 3ras rentas, Clientes en abandono y el cierre diario del Tablero) corre su modo DRY_RUN, que calcula qué le falta a
    la hoja frente a Maxinet sin escribir nada, y lee cuántas filas, columnas o semanas faltan.
 2. Si falta algo, relanza el workflow de esa automatización (así se serializa con su grupo de
    concurrencia y nunca hay dos procesos agregando filas al mismo tiempo), espera a que termine y
@@ -21,7 +21,8 @@ Apps Script lo avisa por correo. No escribe en las hojas por su cuenta y no regi
 clientes; sólo nombres, conteos y fechas.
 
 Variables de entorno: las de las automatizaciones de CP (MAXINET_*, GOOGLE_CREDS_PATH,
-SPREADSHEET_ID_CLIENTES_NUEVOS, SPREADSHEET_ID_TABLERO_CP y los WORKSHEET_*), y GITHUB_TOKEN con permiso
+SPREADSHEET_ID_CLIENTES_NUEVOS, SPREADSHEET_ID_TABLERO_CP y los WORKSHEET_*, incluidos WORKSHEET_RENTAS_2_3_NAME y
+WORKSHEET_CLIENTES_ABANDONO_NAME), y GITHUB_TOKEN con permiso
 actions:write más GITHUB_REPOSITORY para relanzar. Opcional: SIN_RELANZAR=1 (sólo verifica).
 """
 import os
@@ -50,7 +51,8 @@ ALIAS_PESTANAS = {"UNIDADES CP": ("REPORTE FLOTA CP",), "DETALLE": ("GRAFICOS",)
 # Pestañas de las que dependen nuestras automatizaciones: si ya no existen o traen celdas con error, la guardia falla
 PESTANAS_CRITICAS = ("FLOTA CP", "UNIDADES CP", "UTILIZACION TODOS LOS GRUPO", "UTILIZACION POR GRUPO")
 # Pestañas de Nuvia que sólo se vigilan por si traen errores: si ella las elimina o renombra, se anota y no falla
-PESTANAS_OPCIONALES = ("DETALLE", "GRAFICAS", "Bitácora Entregas / Recolecciones CP", "Ticket Sac/Maxiemergencia", "BITACORA CP", "BITACORA CP Mes Corriente")
+PESTANAS_OPCIONALES = ("DETALLE", "GRAFICAS", "Bitácora Entregas / Recolecciones CP", "Ticket Sac/Maxiemergencia", "BITACORA CP", "BITACORA CP Mes Corriente",
+                       "2da y 3ra Renta", "Clientes en abandono")
 PESTANAS_SIN_ERRORES = PESTANAS_CRITICAS + PESTANAS_OPCIONALES
 NO_ENCONTRADA = "no se encontró la pestaña (¿la renombraron?)"
 ERROR_CELDA = re.compile(r"^#(REF!|N/A|VALUE!|NAME\?|ERROR!|DIV/0!)|^Please use")
@@ -79,7 +81,8 @@ def pendientes_entregas(salida: str):
 
 
 def pendientes_bloque(salida: str):
-    """MKT Leads: filas que el bloque del mes tendría de más (la línea "Bloque desde ... nuevas N"). None si no terminó bien."""
+    """MKT Leads, 2das y 3ras rentas y Clientes en abandono: filas que el bloque del mes tendría de más (la línea
+    "Bloque desde ... nuevas N"). None si no terminó bien."""
     if not _termino_bien(salida):
         return None
     bloques = re.findall(r"Bloque desde \S+: filas \d+ -> \d+ \| nuevas (\d+)", salida)
@@ -126,6 +129,8 @@ REVISIONES = (
     Revision("Entregas", "maxinet-entregas-cp", "maxinet_entregas_cp.py", "maxinet-entregas-cp.yml", pendientes_entregas),
     Revision("Frecuentes Activos", "maxinet-frecuentes-activos-cp", "maxinet_frecuentes_activos_cp.py", "maxinet-frecuentes-activos-cp.yml", pendientes_frecuentes),
     Revision("MKT Leads", "maxinet-mkt-leads-cp", "maxinet_mkt_leads_cp.py", "maxinet-mkt-leads-cp.yml", pendientes_bloque),
+    Revision("2das y 3ras rentas", "maxinet-rentas-2-3-cp", "maxinet_rentas_2_3_cp.py", "maxinet-rentas-2-3-cp.yml", pendientes_bloque),
+    Revision("Clientes en abandono", "maxinet-clientes-abandono-cp", "maxinet_clientes_abandono_cp.py", "maxinet-clientes-abandono-cp.yml", pendientes_bloque),
 )
 CIERRE = Revision("Cierre diario del Tablero", "tablero-cp-cierre-diario", "cierre_diario.py", "tablero-cp-cierre-diario.yml", None)
 
